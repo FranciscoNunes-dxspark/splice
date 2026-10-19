@@ -1,5 +1,5 @@
 export const HELP = `Anywhere
-  1-5 / tab        Graph, Changes, Branches, Stash, Repos (shift+tab goes back)
+  1-6 / tab        Graph, Changes, Branches, Stash, PRs, Repos (shift+tab goes back)
   / or :           Command prompt (slash commands, with completion)
   !                Run any git command, e.g.  !log --stat -5
   f  p  P          Fetch all · Pull · Push (sets the upstream the first time)
@@ -45,6 +45,13 @@ Stash
   ↵                Full diff       s           Stash the current changes
   a  o  x          Apply · Pop · Drop
 
+PRs (GitHub through gh, Azure DevOps through az: your existing sign-in)
+  ◆ asks for your review · ● yours · others below
+  ↵                Full diff       c           Check out its branch
+  a                Approve         C           Comment (/comment <text>)
+  o                Open in the browser
+  n                New pull request from the current branch (/pr <title> [--into <branch>] [--draft])
+
 Repos
   ↵                Open            x           Forget (remove from recent)
   s                Add a folder to scan for repositories
@@ -59,6 +66,7 @@ Slash commands
   /delete <ref>   /merge <ref>   /rebase <ref>     /reset <ref>   /tag <name> [ref]
   /fetch   /pull [--rebase]   /push [--force]   /stash [msg]   /pop
   /continue   /abort   /find <text>   /open <path>   /scan <folder>   /last   /quit
+  /pr <title> [--into <branch>] [--draft]   /comment <text>   /approve
 
 Viewer (diffs, output, this help)
   j k  space  g G  Scroll         n N         Next, previous hunk

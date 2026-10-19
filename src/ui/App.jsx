@@ -18,6 +18,8 @@ import { ChangesView } from './ChangesView.jsx';
 import { GraphView } from './GraphView.jsx';
 import { ReposView } from './ReposView.jsx';
 import { StashView } from './StashView.jsx';
+import { PrView } from './PrView.jsx';
+import { hostFor, openUrl } from '../hosting.js';
 import { TextViewer } from './TextViewer.jsx';
 
 const VIEWS = [
@@ -25,6 +27,7 @@ const VIEWS = [
   { id: 'changes', label: 'Changes' },
   { id: 'branches', label: 'Branches' },
   { id: 'stash', label: 'Stash' },
+  { id: 'prs', label: 'PRs' },
   { id: 'repos', label: 'Repos' },
 ];
 
@@ -33,6 +36,7 @@ const HINTS = {
   changes: 'space stage · ↵ hunks/lines · a all · u unstage all · d discard · c commit · A amend',
   branches: '↵ checkout · n new · m merge · e rebase · d delete',
   stash: '↵ diff · s stash · a apply · o pop · x drop',
+  prs: '↵ diff · c checkout · a approve · C comment · o open in browser · n new PR',
   repos: '↵ open · s scan folder · x forget',
 };
 
@@ -108,6 +112,7 @@ export function App({ initialPath, config: initialConfig }) {
   const [busy, setBusy] = useState(null);
   const [repos, setRepos] = useState([]);
   const [filter, setFilter] = useState('');
+  const [prVersion, setPrVersion] = useState(0);
 
   // Async actions read the latest state through refs, not through stale closures.
   const repoRef = useRef(null);
@@ -176,24 +181,21 @@ export function App({ initialPath, config: initialConfig }) {
     }
   };
 
-  const exec = async (args, { label = 'Running git', refresh = true, quiet = false, quietError = false, anywhere = false, input } = {}) => {
+  // One command at a time, with the spinner, esc to cancel, and a line in the activity log.
+  // `start(signal)` resolves with { stdout, stderr }.
+  const task = async (title, start, { label = 'Working', refresh = true, quiet = false, quietError = false } = {}) => {
     if (busyRef.current) {
       note(`Wait for "${busyRef.current.label}" to finish (esc cancels it).`, 'error');
       return { ok: false, error: new Error('busy') };
     }
     const repo = repoRef.current;
-    if (!repo && !anywhere) {
-      note('Open a repository first.', 'error');
-      return { ok: false, error: new Error('no repository') };
-    }
-    const title = `git ${args.map(showArg).join(' ')}`;
     const controller = new AbortController();
     const b = { label, started: Date.now(), abort: () => controller.abort() };
     busyRef.current = b;
     setBusy(b);
     const id = quiet ? null : addEntry({ title, status: 'running' });
     try {
-      const { stdout, stderr } = await run(repo?.root ?? process.cwd(), args, { signal: controller.signal, input });
+      const { stdout, stderr } = await start(controller.signal);
       const out = [stdout.trimEnd(), stderr.trimEnd()].filter(Boolean).join('\n');
       lastOutput.current = { title, text: out || '(no output)' };
       if (id) updateEntry(id, { status: 'ok', lines: out ? out.split('\n') : ['Done'] });
@@ -211,6 +213,16 @@ export function App({ initialPath, config: initialConfig }) {
       setBusy(null);
       if (refresh && repo) await reload();
     }
+  };
+
+  const exec = (args, { anywhere = false, input, env, ...opts } = {}) => {
+    const repo = repoRef.current;
+    if (!repo && !anywhere) {
+      note('Open a repository first.', 'error');
+      return Promise.resolve({ ok: false, error: new Error('no repository') });
+    }
+    const title = `git ${args.map(showArg).join(' ')}`;
+    return task(title, (signal) => run(repo?.root ?? process.cwd(), args, { signal, input, env }), { label: 'Running git', ...opts });
   };
 
   const confirm = (req) =>
@@ -281,8 +293,18 @@ export function App({ initialPath, config: initialConfig }) {
   const ctx = ctxRef.current;
   Object.assign(ctx, {
     exec,
+    task,
     // A read that doesn't show in the activity lines or block other commands.
     git: (args) => git(repoRef.current.root, args),
+    // The PR host (GitHub or Azure DevOps) of the open repository, kept while the remotes don't change.
+    host: () => {
+      const d = dataRef.current;
+      const key = d ? `${d.root}|${JSON.stringify(d.remoteUrls)}` : null;
+      if (ctx.hostCache?.key !== key) ctx.hostCache = { key, host: d ? hostFor(d) : null };
+      return ctx.hostCache.host;
+    },
+    prsChanged: () => setPrVersion((v) => v + 1),
+    openUrl,
     note,
     confirm,
     prefill,
@@ -295,6 +317,7 @@ export function App({ initialPath, config: initialConfig }) {
     refresh: () => {
       reload();
       refreshRepos();
+      setPrVersion((v) => v + 1);
     },
     loadMore: () => {
       const d = dataRef.current;
@@ -324,6 +347,7 @@ export function App({ initialPath, config: initialConfig }) {
     showLast: () => (lastOutput.current ? setOverlay({ ...lastOutput.current }) : note('No command has run yet.')),
     showPatch: (c) => showAsync(`${c.hash.slice(0, 7)} ${c.subject}`, () => commitPatch(dataRef.current.root, c.hash), { diff: true }),
     showChange: (f) => showAsync(`${f.path} (${f.area})`, () => changeDiff(dataRef.current.root, f), { diff: true }),
+    showPrDiff: (pr) => showAsync(`${pr.label} ${pr.title}`, () => ctx.host().diff(pr), { diff: true }),
     showStash: (s) => showAsync(`${s.ref} ${s.message}`, () => stashPatch(dataRef.current.root, s.ref), { diff: true }),
   });
 
@@ -479,8 +503,8 @@ export function App({ initialPath, config: initialConfig }) {
       </Panel>
     );
   } else {
-    const View = { graph: GraphView, changes: ChangesView, branches: BranchesView, stash: StashView }[view];
-    main = <View data={data} ctx={ctx} width={W} height={mainH} active={viewActive} filter={filter} />;
+    const View = { graph: GraphView, changes: ChangesView, branches: BranchesView, stash: StashView, prs: PrView }[view];
+    main = <View data={data} ctx={ctx} width={W} height={mainH} active={viewActive} filter={filter} prVersion={prVersion} />;
   }
 
   const left = focus === 'prompt' ? 'enter run · tab complete · ↑↓ pick or history · esc back' : overlay ? 'j/k scroll · space page · n/N hunk · esc close' : HINTS[view];

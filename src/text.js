@@ -51,7 +51,8 @@ export function fitSegments(segments, width, pad = true) {
 /** Word-wraps plain text to `width` columns. */
 export function wrap(text, width) {
   const lines = [];
-  for (const para of clean(text.replace(/\r/g, '')).split('\n')) {
+  // Split before cleaning: clean() drops control characters, newlines included.
+  for (const para of text.replace(/\r/g, '').split('\n').map(clean)) {
     let line = '';
     for (const word of para.split(' ')) {
       const next = line ? `${line} ${word}` : word;

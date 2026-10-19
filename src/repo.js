@@ -53,7 +53,7 @@ export async function loadRepo(repo, { graphLimit = 400 } = {}) {
     ]).catch(() => ''),
     git(repo.root, ['for-each-ref', `--format=${REF_FORMAT}`, 'refs/heads', 'refs/remotes', 'refs/tags']),
     git(repo.root, ['stash', 'list', `--format=${STASH_FORMAT}`]).catch(() => ''),
-    git(repo.root, ['remote']).catch(() => ''),
+    git(repo.root, ['remote', '-v']).catch(() => ''),
   ]);
   const status = parseStatus(snap.status);
   const graph = parseGraph(log);
@@ -68,8 +68,18 @@ export async function loadRepo(repo, { graphLimit = 400 } = {}) {
     graphComplete: graph.filter((r) => r.commit).length < graphLimit,
     refs: parseRefs(refs),
     stashes: parseStash(stash),
-    remotes: remotes.split('\n').filter(Boolean),
+    ...parseRemotes(remotes),
   };
+}
+
+/** `git remote -v` → the remote names, and each one's fetch URL. */
+export function parseRemotes(raw) {
+  const remoteUrls = {};
+  for (const line of raw.split('\n')) {
+    const m = line.match(/^(\S+)\t(\S+) \(fetch\)/);
+    if (m) remoteUrls[m[1]] = m[2];
+  }
+  return { remotes: Object.keys(remoteUrls), remoteUrls };
 }
 
 /** Full message, author and changed files of one commit. */

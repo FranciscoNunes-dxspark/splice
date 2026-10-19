@@ -13,7 +13,7 @@ const YES_NO = (yes) => [
 
 function needRepo(ctx) {
   if (ctx.data) return true;
-  ctx.note('Open a repository first: press 5 for Repos, or /open <path>.', 'error');
+  ctx.note('Open a repository first: press 6 for Repos, or /open <path>.', 'error');
   return false;
 }
 
@@ -348,6 +348,94 @@ export async function applyLines(ctx, f, diffText, picks, { discard = false } = 
     diff = parseDiff(await ctx.git(['diff', '--', f.path]));
   }
   return apply(ctx, buildPatch(diff, picks), ['--cached'], 'Staging');
+}
+
+function needHost(ctx) {
+  if (!needRepo(ctx)) return null;
+  const host = ctx.host();
+  if (!host) ctx.note("This repository's remote isn't on GitHub or Azure DevOps, so there are no pull requests to show.", 'error');
+  return host;
+}
+
+// gh and az calls go through the same queue, spinner and activity lines as git.
+const hostTask = (ctx, title, fn, opts) => ctx.task(title, async (signal) => ({ stdout: (await fn(signal)) ?? '', stderr: '' }), opts);
+const cliName = (host) => (host.kind === 'github' ? 'gh pr' : 'az repos pr');
+
+export async function prCheckout(ctx, pr) {
+  const host = needHost(ctx);
+  if (!host || !pr) return;
+  if (host.checkout) return hostTask(ctx, `gh pr checkout ${pr.id}`, (signal) => host.checkout(pr, signal), { label: 'Checking out' });
+  const r = await ctx.exec(['fetch', host.remoteName, `+refs/heads/${pr.source}:refs/remotes/${host.remoteName}/${pr.source}`], { label: 'Fetching' });
+  if (r.ok) return checkout(ctx, `${host.remoteName}/${pr.source}`);
+}
+
+export async function prApprove(ctx, pr) {
+  const host = needHost(ctx);
+  if (!host) return;
+  if (!pr) return ctx.note('Pick a pull request in PRs (5) first.', 'error');
+  if (pr.mine) return ctx.note("That's your own pull request.", 'error');
+  const ok = await ctx.confirm({ title: `Approve ${pr.label} "${pr.title}"?`, detail: `On ${host.name}, as you.`, options: YES_NO('Yes, approve') });
+  if (!ok) return;
+  const r = await hostTask(ctx, `${cliName(host)} approve ${pr.label}`, (signal) => host.approve(pr, signal), { label: 'Approving', refresh: false });
+  if (r.ok) ctx.prsChanged();
+  return r;
+}
+
+export async function prComment(ctx, text) {
+  const host = needHost(ctx);
+  if (!host) return;
+  const pr = ctx.selectedPr;
+  if (!pr) return ctx.note('Pick a pull request in PRs (5) first.', 'error');
+  if (!text) return ctx.prefill('/comment ');
+  const r = await hostTask(ctx, `${cliName(host)} comment ${pr.label}`, (signal) => host.comment(pr, text, signal), { label: 'Commenting', refresh: false });
+  if (r.ok) ctx.prsChanged();
+  return r;
+}
+
+/** `/pr <title> [--into <branch>] [--draft]`: opens a PR from the current branch, pushing it first if needed. */
+export async function createPr(ctx, text) {
+  const host = needHost(ctx);
+  if (!host) return;
+  const { branch } = ctx.data.status;
+  if (!branch.head) return ctx.note('HEAD is detached. Check out the branch you want to open a pull request from.', 'error');
+  const words = splitArgs(text ?? '');
+  let target = null;
+  let draft = false;
+  const titleWords = [];
+  for (let i = 0; i < words.length; i++) {
+    if (words[i] === '--into' || words[i] === '--base') target = words[++i];
+    else if (words[i] === '--draft') draft = true;
+    else titleWords.push(words[i]);
+  }
+  const title = titleWords.join(' ').trim();
+  if (!title) {
+    const last = ctx.data.graph.find((r) => r.commit?.refs.some((x) => x.head))?.commit.subject ?? '';
+    return ctx.prefill(`/pr ${last}`);
+  }
+  try {
+    target ??= await host.defaultBranch();
+  } catch (e) {
+    return ctx.note(`Couldn't read the default branch from ${host.name}: ${e.message.split('\n')[0]}`, 'error');
+  }
+  if (!target) return ctx.note('Say which branch it goes into: /pr <title> --into <branch>', 'error');
+  if (target === branch.head) return ctx.note(`You're on ${target} itself. Switch to the branch with your changes first.`, 'error');
+  const ok = await ctx.confirm({
+    title: `Open a ${draft ? 'draft ' : ''}pull request from ${branch.head} into ${target}?`,
+    detail: `"${title}" on ${host.name}${!branch.upstream || branch.ahead ? '. Pushes the branch first.' : ''}`,
+    options: YES_NO('Yes, open it'),
+  });
+  if (!ok) return;
+  // The server can only see what has been pushed.
+  if (!branch.upstream || branch.ahead) {
+    const pushed = await push(ctx);
+    if (!pushed?.ok) return;
+  }
+  const r = await hostTask(ctx, `${cliName(host)} create "${title}"`, (signal) => host.create({ title, source: branch.head, target, draft }, signal), {
+    label: 'Opening pull request',
+    refresh: false,
+  });
+  if (r.ok) ctx.prsChanged();
+  return r;
 }
 
 /** `!<args>`: any git command. Output longer than a few lines opens in the viewer. */

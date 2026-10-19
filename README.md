@@ -4,7 +4,7 @@ A keyboard-driven git client for the terminal, in the spirit of GitKraken, with 
 
 ```
 ✻ Tiller  │  Keel  ⎇ main → origin/main ↑1  ● 2 changes                              C:\Team\Keel
- 1 Graph   2 Changes 2   3 Branches   4 Stash   5 Repos
+ 1 Graph   2 Changes 2   3 Branches   4 Stash   5 PRs   6 Repos
 ╭─ Commits ────────────────────────────────── 125 ─╮╭─ Commit ──────────────── J/K scroll ─╮
 │❯ ◌  // WIP  2 changed files                      ││4e9f0080cb  19/10/2026, 15:14:35      │
 │  ●    ● main ⇅ origin  Compact view on the Pro…  ││Francisco Nunes                       │
@@ -48,20 +48,32 @@ Press `?` inside for every shortcut. The essentials:
 
 | Where | Keys |
 | --- | --- |
-| Anywhere | `1`–`5` or `tab` switch views · `/` commands · `!` any git command · `f` fetch · `p` pull · `P` push · `r` refresh · `esc` cancel the running command · `q` quit |
+| Anywhere | `1`–`6` or `tab` switch views · `/` commands · `!` any git command · `f` fetch · `p` pull · `P` push · `r` refresh · `esc` cancel the running command · `q` quit |
 | Lists | `j`/`k` or arrows · `g`/`G` top/bottom · `ctrl+d`/`ctrl+u` page · `J`/`K` scroll the right-hand pane |
 | Graph | `↵` full diff · `c` check out · `b` branch here · `t` tag here · `m` merge · `C` cherry-pick · `v` revert · `X` reset to here |
 | Changes | `space` stage/unstage · `↵` step into the diff · `a` stage all · `u` unstage all · `d` discard · `c` commit · `A` amend · on conflicts `O` ours / `T` theirs |
 | Changes, in the diff | `j`/`k` changed lines · `n`/`N` hunks · `space` stage (or unstage) the hunk · `v` select lines, then `space` stages just those · `d` discard them · `esc` back |
 | Branches | `↵` check out (remote branches get a tracking branch) · `n` new from here · `m` merge · `e` rebase onto · `d` delete |
 | Stash | `↵` diff · `s` stash · `a` apply · `o` pop · `x` drop |
+| PRs | `↵` diff · `c` check out · `a` approve · `C` comment · `o` open in the browser · `n` new PR from the current branch |
 | Repos | `↵` open · `s` add a folder to scan · `x` forget |
 
 ### Slash commands
 
 Type `/` and the menu narrows as you type; `tab` completes, `↑`/`↓` picks, `↵` runs. Commands that take a branch complete branch, tag and remote names.
 
-`/commit <msg>` `/amend [msg]` `/checkout <ref>` `/branch <name> [start]` `/delete <ref>` `/merge <ref>` `/rebase <ref>` `/reset <ref>` `/tag <name> [ref]` `/fetch` `/pull [--rebase]` `/push [--force]` `/stash [msg]` `/pop` `/continue` `/abort` `/find <text>` `/open <path>` `/scan <folder>` `/last` `/refresh` `/help` `/quit`
+`/commit <msg>` `/amend [msg]` `/checkout <ref>` `/branch <name> [start]` `/delete <ref>` `/merge <ref>` `/rebase <ref>` `/reset <ref>` `/tag <name> [ref]` `/fetch` `/pull [--rebase]` `/push [--force]` `/stash [msg]` `/pop` `/continue` `/abort` `/find <text>` `/open <path>` `/scan <folder>` `/last` `/refresh` `/help` `/quit` `/pr <title> [--into <branch>] [--draft]` `/comment <text>` `/approve`
+
+### Pull requests
+
+The PRs view (`5`) lists the open pull requests of the repository's remote, on **GitHub** or **Azure DevOps** (`dev.azure.com` and `*.visualstudio.com`). Ones asking for your review come first (◆), then yours (●). The right-hand pane shows reviewers and their votes, checks (GitHub checks, Azure DevOps branch policies), the description and comments. The list refreshes every minute while you're on it, and on `r`.
+
+Tiller talks to the servers through their own CLIs, using the sign-in you already have, so it never sees or stores a token:
+
+- GitHub: [gh](https://cli.github.com), signed in with `gh auth login`.
+- Azure DevOps: [az](https://aka.ms/installazurecliwindows) with the `azure-devops` extension (`az extension add --name azure-devops`), signed in with `az login`.
+
+`/pr <title>` opens a pull request from the current branch into the repository's default branch (or `--into <branch>`), pushing the branch first if the server doesn't have your latest commits. Approving and opening a PR ask first; `/comment` posts as soon as you press enter. Azure DevOps PR diffs are made locally: Tiller fetches both branches and shows what the source branch adds. Listing Azure DevOps PRs takes a few seconds, most of it the az CLI starting up.
 
 ### Running git directly
 
