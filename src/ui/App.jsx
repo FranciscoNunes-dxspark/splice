@@ -21,6 +21,7 @@ import { StashView } from './StashView.jsx';
 import { PrView } from './PrView.jsx';
 import { hostFor, openUrl } from '../hosting.js';
 import { TextViewer } from './TextViewer.jsx';
+import { RebaseEditor } from './RebaseEditor.jsx';
 
 const VIEWS = [
   { id: 'graph', label: 'Graph' },
@@ -32,7 +33,7 @@ const VIEWS = [
 ];
 
 const HINTS = {
-  graph: '↵ diff · c checkout · b branch · m merge · C cherry-pick · v revert · X reset',
+  graph: '↵ diff · c checkout · b branch · m merge · i rebase from here · C cherry-pick · v revert · X reset',
   changes: 'space stage · ↵ hunks/lines · a all · u unstage all · d discard · c commit · A amend',
   branches: '↵ checkout · n new · m merge · e rebase · d delete',
   stash: '↵ diff · s stash · a apply · o pop · x drop',
@@ -343,6 +344,12 @@ export function App({ initialPath, config: initialConfig }) {
       refreshRepos();
     },
     showText: (title, text, opts = {}) => setOverlay({ title, text, ...opts }),
+    showRebase: (plan) => setOverlay({ kind: 'rebase', plan }),
+    closeOverlay: () => {
+      ctx.rebaseEditor = null;
+      setOverlay(null);
+    },
+    overlayHasKeys: () => focusRef.current === 'view' && !confirmRef.current,
     showHelp: () => setOverlay({ title: 'Keyboard shortcuts', text: HELP }),
     showLast: () => (lastOutput.current ? setOverlay({ ...lastOutput.current }) : note('No command has run yet.')),
     showPatch: (c) => showAsync(`${c.hash.slice(0, 7)} ${c.subject}`, () => commitPatch(dataRef.current.root, c.hash), { diff: true }),
@@ -492,7 +499,9 @@ export function App({ initialPath, config: initialConfig }) {
   const viewActive = focus === 'view' && !overlay && !confirmReq;
 
   let main;
-  if (overlay) {
+  if (overlay?.kind === 'rebase') {
+    main = <RebaseEditor plan={overlay.plan} ctx={ctx} width={W} height={mainH} active={focus === 'view' && !confirmReq} />;
+  } else if (overlay) {
     main = <TextViewer {...overlay} width={W} height={mainH} active={focus === 'view' && !confirmReq} onClose={() => setOverlay(null)} />;
   } else if (view === 'repos') {
     main = <ReposView repos={repos} roots={[...config.roots, ...extraRoots.current]} current={data?.root} ctx={ctx} width={W} height={mainH} active={viewActive} />;
@@ -507,7 +516,14 @@ export function App({ initialPath, config: initialConfig }) {
     main = <View data={data} ctx={ctx} width={W} height={mainH} active={viewActive} filter={filter} prVersion={prVersion} />;
   }
 
-  const left = focus === 'prompt' ? 'enter run · tab complete · ↑↓ pick or history · esc back' : overlay ? 'j/k scroll · space page · n/N hunk · esc close' : HINTS[view];
+  const left =
+    focus === 'prompt'
+      ? 'enter run · tab complete · ↑↓ pick or history · esc back'
+      : overlay?.kind === 'rebase'
+        ? '↵ start the rebase · esc cancel'
+        : overlay
+          ? 'j/k scroll · space page · n/N hunk · esc close'
+          : HINTS[view];
   const right = focus === 'prompt' ? '' : '  f fetch · p pull · P push · / commands · ! git · ? help';
 
   return (

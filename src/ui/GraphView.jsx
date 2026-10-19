@@ -146,6 +146,8 @@ export function GraphView({ data, ctx, width, height, active, filter }) {
       else if (input === 'C') a.cherryPick(ctx, c);
       else if (input === 'v') a.revert(ctx, c);
       else if (input === 'X') a.reset(ctx, c.hash, short);
+      // From this commit (included) up to HEAD.
+      else if (input === 'i') a.openRebase(ctx, c.parents[0] ?? null, short);
     },
     { isActive: active },
   );

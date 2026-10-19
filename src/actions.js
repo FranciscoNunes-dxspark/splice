@@ -4,6 +4,7 @@ import { rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { splitArgs } from './parse.js';
 import { buildPatch, coversAll, parseDiff } from './patch.js';
+import { cleanup, loadPlan, planProblem, planSummary, prepare } from './rebase.js';
 
 const short = (hash) => hash.slice(0, 7);
 const YES_NO = (yes) => [
@@ -169,6 +170,8 @@ export async function merge(ctx, ref, { ask = false } = {}) {
 export async function rebase(ctx, ref) {
   if (!needRepo(ctx)) return;
   if (!ref) return ctx.prefill('/rebase ');
+  const interactive = ref.match(/^(?:-i|--interactive)(?:\s+(.*))?$/);
+  if (interactive) return interactive[1] ? openRebase(ctx, interactive[1].trim(), interactive[1].trim()) : ctx.prefill('/rebase -i ');
   const ok = await ctx.confirm({
     title: `Rebase ${currentName(ctx)} onto ${ref}?`,
     detail: `Rewrites the commits on ${currentName(ctx)} that aren't on ${ref}. Avoid this on branches others use.`,
@@ -188,6 +191,7 @@ export async function continueOp(ctx) {
   if (ctx.data.changes.conflicts.length) return ctx.note('Some files still have conflicts. Resolve and stage them first.', 'error');
   // A merge is finished by committing it; the others have --continue.
   await ctx.exec(state === 'merging' ? ['commit', '--no-edit'] : [OP[state], '--continue'], { label: 'Continuing' });
+  if (!ctx.data.state) await cleanup(ctx.data.gitDir);
   afterConflicts(ctx);
 }
 
@@ -200,7 +204,9 @@ export async function abortOp(ctx) {
     detail: 'Puts the branch back the way it was before it started.',
     options: YES_NO('Yes, abort'),
   });
-  if (ok) return ctx.exec([OP[state], '--abort'], { label: 'Aborting' });
+  if (!ok) return;
+  await ctx.exec([OP[state], '--abort'], { label: 'Aborting' });
+  if (!ctx.data.state) await cleanup(ctx.data.gitDir);
 }
 
 export function stash(ctx, message) {
@@ -348,6 +354,51 @@ export async function applyLines(ctx, f, diffText, picks, { discard = false } = 
     diff = parseDiff(await ctx.git(['diff', '--', f.path]));
   }
   return apply(ctx, buildPatch(diff, picks), ['--cached'], 'Staging');
+}
+
+/**
+ * Opens the interactive rebase editor for the commits after `base` up to HEAD.
+ * `base` null means from the very first commit (git rebase -i --root).
+ */
+export async function openRebase(ctx, base, from) {
+  if (!needRepo(ctx)) return;
+  if (ctx.data.state) return ctx.note(`Finish the ${ctx.data.state.replace('ing', '')} in progress first (/continue or /abort).`, 'error');
+  if (ctx.data.status.files.length) return ctx.note('Commit or stash your changes before rebasing.', 'error');
+  let rows;
+  try {
+    if (base) await ctx.git(['merge-base', '--is-ancestor', base, 'HEAD']);
+    rows = await loadPlan(ctx.data.root, base);
+  } catch {
+    return ctx.note(`${from} isn't part of the current branch's history, so there's nothing to rebase from it.`, 'error');
+  }
+  if (!rows.length) return ctx.note('There are no commits after that one to rebase.', 'error');
+  if (rows.some((r) => r.merge)) return ctx.note('That range has merge commits, which an interactive rebase would flatten. Pick a commit after the last merge.', 'error');
+  ctx.showRebase({ base, from, rows });
+}
+
+/** Runs the plan from the editor. `rows` are oldest first. */
+export async function runRebase(ctx, base, rows) {
+  const problem = planProblem(rows);
+  if (problem) return ctx.note(problem, 'error');
+  const { branch } = ctx.data.status;
+  let pushed = false;
+  if (branch.upstream) pushed = await ctx.git(['merge-base', '--is-ancestor', rows[0].hash, '@{upstream}']).then(() => true, () => false);
+  const ok = await ctx.confirm({
+    title: `Rewrite ${rows.length} commit${rows.length === 1 ? '' : 's'} on ${branch.head ?? 'HEAD'}? (${planSummary(rows)})`,
+    detail: pushed
+      ? `Some of them are already on ${branch.upstream}, so you'll need /push --force afterwards.`
+      : 'If it stops on a conflict or an edit, /continue carries on and /abort puts everything back.',
+    options: YES_NO('Yes, rebase'),
+    danger: pushed,
+  });
+  if (!ok) return false;
+  const { env } = await prepare(ctx.data.gitDir, rows);
+  ctx.closeOverlay();
+  await ctx.exec(['rebase', '-i', base ?? '--root'], { label: 'Rebasing', env });
+  if (!ctx.data.state) await cleanup(ctx.data.gitDir);
+  else if (ctx.data.changes.conflicts.length) afterConflicts(ctx);
+  else ctx.note('Stopped for editing. Change what you need, amend (A in Changes), then /continue.');
+  return true;
 }
 
 function needHost(ctx) {

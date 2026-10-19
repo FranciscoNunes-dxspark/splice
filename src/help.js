@@ -19,6 +19,13 @@ Graph
   m                Merge it into the current branch
   C  v             Cherry-pick · Revert
   X                Reset the current branch to it (soft, mixed or hard)
+  i                Interactive rebase from it (included) up to HEAD
+
+Rebase editor (newest on top, like the graph)
+  p r e            Pick · Reword (then type the message: /reword <message>) · Edit (stop there)
+  s f              Squash · Fix up: fold into the commit below, keeping or dropping its message
+  d                Drop            J K         Move the commit down, up
+  ↵                Start (asks first)          esc         Cancel
 
 Changes
   space            Stage or unstage the file (on a conflict: mark it resolved)
@@ -67,6 +74,7 @@ Slash commands
   /fetch   /pull [--rebase]   /push [--force]   /stash [msg]   /pop
   /continue   /abort   /find <text>   /open <path>   /scan <folder>   /last   /quit
   /pr <title> [--into <branch>] [--draft]   /comment <text>   /approve
+  /rebase -i <ref>   /reword <message>
 
 Viewer (diffs, output, this help)
   j k  space  g G  Scroll         n N         Next, previous hunk

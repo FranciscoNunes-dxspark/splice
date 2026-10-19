@@ -136,13 +136,48 @@ test('staging a single hunk from the diff pane', async () => {
   }
 });
 
+test('interactive rebase from the graph: fix up the last commit into the one before', async () => {
+  const other = join(base, 'rebase-repo');
+  mkdirSync(other);
+  const g = (...args) => execFileSync('git', args, { cwd: other, encoding: 'utf8' }).trim();
+  g('init', '-q', '-b', 'main');
+  g('config', 'user.name', 'T');
+  g('config', 'user.email', 't@example.com');
+  for (const n of ['Alpha', 'Beta', 'Gamma']) {
+    writeFileSync(join(other, `${n}.txt`), n);
+    g('add', '.');
+    g('commit', '-q', '-m', n);
+  }
+  lastApp = render(React.createElement(App, { initialPath: other, config: { recent: [], roots: [], history: [] } }));
+  const app = lastApp;
+  const frame = () => app.lastFrame() ?? '';
+  try {
+    await until(() => frame().includes('Gamma'), 'the graph');
+    app.stdin.write('j'); // Beta
+    await until(() => /❯ ●\s+Beta/.test(frame()), 'the cursor on Beta');
+    app.stdin.write('i');
+    await until(() => frame().includes('Interactive rebase from'), 'the rebase editor');
+    assert.match(frame(), /pick\s+[0-9a-f]{7} Gamma[\s\S]*pick\s+[0-9a-f]{7} Beta/);
+    app.stdin.write('f'); // the top row, Gamma, folds into Beta
+    await until(() => /fixup\s+[0-9a-f]{7} Gamma/.test(frame()), 'fixup to show');
+    app.stdin.write('\r');
+    await until(() => frame().includes('Rewrite 2 commits on main? (1 fixed up)'), 'the confirmation');
+    app.stdin.write('1');
+    await until(() => g('log', '--format=%s') === 'Beta\nAlpha', 'the rebase to finish');
+    assert.equal(g('show', '--name-only', '--format=', 'HEAD'), 'Beta.txt\nGamma.txt');
+  } finally {
+    app.unmount();
+  }
+});
+
 test('discarding asks first, and "No" leaves the file alone', async () => {
   const app = start();
   const frame = () => app.lastFrame() ?? '';
   try {
     await until(() => frame().includes('changes') || frame().includes('change'), 'load');
     app.stdin.write('2');
-    await until(() => frame().includes('new.txt'), 'the untracked file');
+    // Wait for the Changes list itself: the graph's working-tree pane lists new.txt too.
+    await until(() => /❯ \? new\.txt/.test(frame()), 'the untracked file in Changes');
     app.stdin.write('d');
     await until(() => frame().includes('Discard unstaged changes to new.txt?'), 'the confirmation');
     app.stdin.write('2');
