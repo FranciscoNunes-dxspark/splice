@@ -123,7 +123,7 @@ export function sortPrs(prs) {
 
 // Runs a CLI and resolves with stdout. On Windows az is a .cmd wrapper that Node won't start
 // without a shell, so call the Python it wraps directly: no shell, so no quoting surprises.
-export function cli(program, args, { cwd, signal } = {}) {
+export function cli(program, args, { cwd, signal, input } = {}) {
   let file = program;
   let argv = args;
   let env = process.env;
@@ -138,13 +138,17 @@ export function cli(program, args, { cwd, signal } = {}) {
     env = { ...process.env, AZ_INSTALLER: 'MSI' };
   }
   return new Promise((resolve, reject) => {
-    execFile(file, argv, { cwd, env, signal, windowsHide: true, maxBuffer: 64 * 1024 * 1024, encoding: 'utf8' }, (err, stdout, stderr) => {
+    const child = execFile(file, argv, { cwd, env, signal, windowsHide: true, maxBuffer: 64 * 1024 * 1024, encoding: 'utf8' }, (err, stdout, stderr) => {
       if (!err) return resolve(stdout);
+      // Esc: shown as "Cancelled", like a cancelled git command.
+      if (err.name === 'AbortError') return reject(Object.assign(new Error('Cancelled'), { cancelled: true }));
       if (err.code === 'ENOENT') return reject(new Error(`${program} is not installed or not on the PATH.`));
       // CLI warnings come before the error itself; the last lines say what went wrong.
       const lines = (stderr || err.message).trim().split('\n').filter((l) => !/^WARNING:/.test(l));
       reject(new Error(lines.slice(-3).join('\n') || `${program} failed`));
     });
+    // Written to stdin, for what's too big for an argument (a diff for Claude).
+    if (input != null) child.stdin.end(input);
   });
 }
 
@@ -187,8 +191,8 @@ function github(root, remote) {
     checkout: (pr, signal) => gh(['pr', 'checkout', String(pr.id), ...repoArg], { signal }),
     approve: (pr, signal) => gh(['pr', 'review', String(pr.id), ...repoArg, '--approve'], { signal }),
     comment: (pr, text, signal) => gh(['pr', 'comment', String(pr.id), ...repoArg, '--body', text], { signal }),
-    async create({ title, source, target, draft }, signal) {
-      const url = await gh(['pr', 'create', ...repoArg, '--title', title, '--body', '', '--base', target, '--head', source, ...(draft ? ['--draft'] : [])], { signal });
+    async create({ title, body = '', source, target, draft }, signal) {
+      const url = await gh(['pr', 'create', ...repoArg, '--title', title, '--body', body, '--base', target, '--head', source, ...(draft ? ['--draft'] : [])], { signal });
       return url.trim().split('\n').at(-1);
     },
     async defaultBranch() {
@@ -254,10 +258,12 @@ function azure(root, remote, remoteName) {
         await rm(dir, { recursive: true, force: true });
       }
     },
-    async create({ title, source, target, draft }, signal) {
+    async create({ title, body = '', source, target, draft }, signal) {
+      // az takes the description as one value per line.
+      const description = body ? ['--description', ...body.split('\n')] : [];
       const pr = await json(
         az(['repos', 'pr', 'create', '--project', remote.project, '--repository', remote.repo, '--source-branch', source,
-          '--target-branch', target, '--title', title, ...(draft ? ['--draft', 'true'] : [])], { signal }),
+          '--target-branch', target, '--title', title, ...description, ...(draft ? ['--draft', 'true'] : [])], { signal }),
       );
       return azurePr(pr, '', remote).url;
     },

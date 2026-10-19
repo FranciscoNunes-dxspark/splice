@@ -1,11 +1,15 @@
 import React, { useMemo, useState } from 'react';
 import { useInput } from 'ink';
 import { theme } from '../theme.js';
+import { wrap as wrapText } from '../text.js';
 import { Panel, Row, diffSegment } from './parts.jsx';
 
-/** Full-height scrollable text: diffs, command output, help. */
-export function TextViewer({ title, text, loading, diff, width, height, active, onClose }) {
-  const lines = useMemo(() => (text ?? '').replace(/\n$/, '').split('\n'), [text]);
+/** Full-height scrollable text: diffs, command output, help, Claude's answers (`wrap`: prose, wrapped to fit). */
+export function TextViewer({ title, text, loading, diff, wrap, width, height, active, onClose }) {
+  const lines = useMemo(() => {
+    const t = (text ?? '').replace(/\n$/, '');
+    return wrap ? wrapText(t, width - 2) : t.split('\n');
+  }, [text, wrap, width]);
   const [offset, setOffset] = useState(0);
   const innerH = height - 2;
   const max = Math.max(0, lines.length - innerH);

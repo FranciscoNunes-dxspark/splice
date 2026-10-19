@@ -20,6 +20,7 @@ Graph
   C  v             Cherry-pick · Revert
   X                Reset the current branch to it (soft, mixed or hard)
   i                Interactive rebase from it (included) up to HEAD
+  e  R             Claude explains it · Claude reviews it (R on the working tree: your changes)
 
 Rebase editor (newest on top, like the graph)
   p r e            Pick · Reword (then type the message: /reword <message>) · Edit (stop there)
@@ -32,6 +33,8 @@ Changes
   a  u             Stage all · Unstage all
   d                Discard the file's changes
   c  A             Commit · Amend the last commit
+  W                Claude writes the commit message for the staged changes, into the prompt to edit
+  R                Claude reviews the staged changes (or the unstaged ones, if nothing is staged)
   O  T             On a conflict: take ours · take theirs
   ↵  →  l          Step into the diff to stage hunks or single lines
 
@@ -58,6 +61,11 @@ PRs (GitHub through gh, Azure DevOps through az: your existing sign-in)
   a                Approve         C           Comment (/comment <text>)
   o                Open in the browser
   n                New pull request from the current branch (/pr <title> [--into <branch>] [--draft])
+  W                Claude drafts one: title into the prompt, description offered when you open it
+  e  R             Claude explains it · Claude reviews it
+
+Claude (through the Claude Code CLI, signed in as you already are; answers take several seconds, esc cancels)
+  /describe   /draft-pr [--into <branch>]   /explain [ref]   /review [ref]
 
 Repos
   ↵                Open            x           Forget (remove from recent)

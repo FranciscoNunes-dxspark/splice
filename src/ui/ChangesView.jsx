@@ -127,6 +127,8 @@ export function ChangesView({ data, ctx, width, height, active }) {
       if (input === 'u') return a.unstageAll(ctx);
       if (input === 'c') return a.commit(ctx, '');
       if (input === 'A') return ctx.prefill('/amend ');
+      if (input === 'W') return a.describeCommit(ctx);
+      if (input === 'R') return a.claudeLook(ctx, 'review', { kind: 'changes' });
       return pane === 'diff' ? diffKeys(input, key) : fileKeys(input, key);
     },
     { isActive: active },
