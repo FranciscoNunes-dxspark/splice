@@ -1,5 +1,5 @@
 // Draws Knot into assets/: knot.svg (README, GitHub), knot.png (social preview), knot.ico
-// (the Windows executable's icon), and knot-transparent.svg/.png (just the otter, no background),
+// (the Windows executable's icon), and knot-transparent.svg/.png/.ico (just the otter, no background),
 // all from the pixels in src/knot.js.
 //   node scripts/logo.js
 import { mkdirSync, writeFileSync } from 'node:fs';
@@ -94,8 +94,57 @@ function png(image) {
 }
 
 // ICO files may hold PNGs directly (Windows Vista and later).
-function ico(sizes) {
-  const images = sizes.map(png);
+// The otter centred on a transparent square, for icons. 16 cells across, so the usual icon
+// sizes (16, 32, 48 … 256) are whole multiples and every pixel stays crisp.
+function bareSquare(size) {
+  const cells = 16;
+  const scale = size / cells;
+  const ox = Math.floor((cells - W) / 2);
+  const oy = Math.floor((cells - H) / 2);
+  const rows = [];
+  for (let y = 0; y < size; y++) {
+    const row = [];
+    for (let x = 0; x < size; x++) {
+      const c = px[Math.floor(y / scale) - oy]?.[Math.floor(x / scale) - ox];
+      row.push(...(PALETTE[c] ? hex(PALETTE[c]) : [0, 0, 0, 0]));
+    }
+    rows.push(row);
+  }
+  return rows;
+}
+
+// An uncompressed 32-bit icon image: BITMAPINFOHEADER, BGRA rows bottom-up, then the 1-bit
+// transparency mask older readers use. Every program that reads .ico files reads these.
+function dib(rows) {
+  const w = rows[0].length / 4;
+  const h = rows.length;
+  const maskRow = Math.ceil(w / 32) * 4;
+  const head = Buffer.alloc(40);
+  head.writeUInt32LE(40, 0);
+  head.writeInt32LE(w, 4);
+  head.writeInt32LE(h * 2, 8); // colour rows plus mask rows
+  head.writeUInt16LE(1, 12);
+  head.writeUInt16LE(32, 14);
+  head.writeUInt32LE(w * h * 4 + maskRow * h, 20);
+  const pixels = Buffer.alloc(w * h * 4);
+  const mask = Buffer.alloc(maskRow * h);
+  for (let y = 0; y < h; y++) {
+    const src = rows[h - 1 - y];
+    for (let x = 0; x < w; x++) {
+      const [r, g, b, a] = src.slice(x * 4, x * 4 + 4);
+      pixels.set([b, g, r, a], (y * w + x) * 4);
+      if (a === 0) mask[y * maskRow + (x >> 3)] |= 0x80 >> (x & 7);
+    }
+  }
+  return Buffer.concat([head, pixels, mask]);
+}
+
+/**
+ * An .ico with one image per size; `draw(size)` makes each (the dark square by default).
+ * Bitmaps up to 128 px and a PNG at 256, the usual layout: some readers can't decode small PNGs.
+ */
+function ico(sizes, draw = canvas) {
+  const images = sizes.map((s) => (s >= 256 ? png(draw(s)) : dib(draw(s))));
   const header = Buffer.alloc(6);
   header.writeUInt16LE(1, 2);
   header.writeUInt16LE(images.length, 4);
@@ -141,4 +190,5 @@ writeFileSync('assets/knot.ico', ico([16, 24, 32, 48, 64, 128, 256]));
 writeFileSync('assets/knot-transparent.svg', svg({ background: false }));
 writeFileSync('assets/knot-transparent.png', png(bare(32)));
 writeFileSync('assets/knot-transparent@4x.png', png(bare(128)));
-console.log('assets/knot.svg, knot.png, knot.ico, knot-transparent.svg, knot-transparent.png, knot-transparent@4x.png');
+writeFileSync('assets/knot-transparent.ico', ico([16, 32, 48, 64, 128, 256], bareSquare));
+console.log('assets/knot.svg, knot.png, knot.ico, knot-transparent.svg, knot-transparent.png, knot-transparent@4x.png, knot-transparent.ico');
