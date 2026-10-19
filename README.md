@@ -1,6 +1,6 @@
 # Tiller
 
-A keyboard-driven git client for the terminal, in the spirit of GitKraken, with an interface modelled on Claude Code: titled rounded panels, a prompt box with slash commands and completion, `!` to run any git command, and a running log of what each command did.
+A keyboard-driven git client for the terminal, with an interface modelled on Claude Code: titled rounded panels, a prompt box with slash commands and completion, `!` to run any git command, and a running log of what each command did.
 
 ```
 ✻ Tiller  │  Keel  ⎇ main → origin/main ↑1  ● 2 changes                              C:\Team\Keel
