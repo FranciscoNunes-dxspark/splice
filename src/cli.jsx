@@ -1,7 +1,7 @@
 import React from 'react';
 import { render } from 'ink';
 import { resolve } from 'node:path';
-import { VERSION } from './version.js';
+import { COMPILED, VERSION } from './version.js';
 import { loadConfig } from './config.js';
 import { setAccent } from './theme.js';
 import { App } from './ui/App.jsx';
@@ -37,7 +37,10 @@ setAccent(config.accent);
 process.stdout.write('\x1b[?1049h\x1b[H');
 process.on('exit', () => process.stdout.write('\x1b[?1049l'));
 
-const app = render(<App initialPath={resolve(args.find((x) => !x.startsWith('-')) ?? process.cwd())} config={config} checkUpdate={checkForUpdate} askClaude={ask} />, {
+// Only the downloaded executables look for updates: a checkout updates with git pull, and its
+// package.json version is behind the releases (the Release workflow sets the version as it builds).
+const checkUpdate = COMPILED ? checkForUpdate : undefined;
+const app = render(<App initialPath={resolve(args.find((x) => !x.startsWith('-')) ?? process.cwd())} config={config} checkUpdate={checkUpdate} askClaude={ask} />, {
   exitOnCtrlC: false,
 });
 await app.waitUntilExit();

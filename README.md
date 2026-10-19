@@ -136,7 +136,7 @@ Knot keeps an eye on the repository. They're asleep `(–ω–)` when everything
 
 ### Updates
 
-Once a day at most, after it opens, Tiller asks GitHub for the latest release, and if it's newer than yours, says so in the activity lines and the welcome box. It asks GitHub's public API first, then through [gh](https://cli.github.com) with your existing sign-in (needed while the repository is private). If neither works (offline, no gh), it says nothing and tries again next time. The answer is kept in the config as `lastUpdateCheck`. To turn the check off:
+Once a day at most, after it opens, the downloaded Tiller asks GitHub for the latest release, and if it's newer than yours, says so in the activity lines and the welcome box. It asks GitHub's public API first, then through [gh](https://cli.github.com) with your existing sign-in (needed while the repository is private). If neither works (offline, no gh), it says nothing and tries again next time. Running from a checkout skips the check; `git pull` updates that. The answer is kept in the config as `lastUpdateCheck`. To turn the check off:
 
 ```json
 { "checkForUpdates": false }
@@ -160,14 +160,7 @@ npm run build:all   # every platform (Bun cross-compiles)
 
 The executables are made with [Bun](https://bun.sh)'s `--compile` (fetched by npx, so nothing to install), which bundles the code and a runtime into one file of about 85 MB.
 
-To publish a release, set the version in `package.json`, commit, and push a matching tag:
-
-```bash
-git tag v0.2.0
-git push origin v0.2.0
-```
-
-The Release workflow (`.github/workflows/release.yml`) checks that the tag matches `package.json`, runs the tests, builds every platform and publishes a GitHub Release with the files and generated notes. The Tests workflow runs the suite on Linux and Windows for every push to main and every pull request.
+Releases are automatic: every push to main (a merged pull request, say) publishes a new GitHub Release. The Release workflow (`.github/workflows/release.yml`) picks the next version, the latest release with the patch number raised (v0.2.0 → v0.2.1), runs the tests, builds every platform and publishes it with the files and generated notes, creating the tag. For a new minor or major version, set it in `package.json` (`npm version minor --no-git-tag-version`) and merge that; a version higher than the latest release is used as is. Nothing is committed back, so `package.json` keeps the last version set by hand, while the executables carry the released one. Pushes that only change Markdown files don't release, and "Run workflow" on the Release workflow in the Actions tab releases by hand. The Tests workflow runs the suite on Linux and Windows for every push to main and every pull request.
 
 - `src/parse.js`: pure parsers for git's porcelain output. Most tests target these.
 - `src/repo.js`: what's read from git for each view.
