@@ -123,6 +123,9 @@ test('staging a single hunk from the diff pane', async () => {
       app.stdin.write('j');
       await new Promise((r) => setTimeout(r, 60));
     }
+    // The graph lists long.txt too, so the wait above can end before Changes is up; the cursor may
+    // already be on it then. Either way, give the view's key handler time to subscribe before enter.
+    await until(() => /❯ M long\.txt/.test(frame()), 'the cursor on long.txt in Changes');
     app.stdin.write('\r');
     await until(() => frame().includes('▌@@ -1,'), 'the diff pane');
     app.stdin.write(' ');
@@ -183,6 +186,73 @@ test('discarding asks first, and "No" leaves the file alone', async () => {
     app.stdin.write('2');
     await until(() => !frame().includes('Discard unstaged'), 'the dialog to close');
     assert.match(git('status', '--porcelain'), /new\.txt/);
+  } finally {
+    app.unmount();
+  }
+});
+
+test('worktrees: listed, opened, pruned when missing, and removed after asking', async () => {
+  const main = join(base, 'wt-repo');
+  mkdirSync(main);
+  const g = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
+  g(main, 'init', '-q', '-b', 'main');
+  g(main, 'config', 'user.name', 'T');
+  g(main, 'config', 'user.email', 't@example.com');
+  writeFileSync(join(main, 'a.txt'), 'a');
+  g(main, 'add', '.');
+  g(main, 'commit', '-q', '-m', 'Start');
+  g(main, 'worktree', 'add', '-q', '-b', 'feat', '../wt-repo-feat');
+  g(main, 'worktree', 'add', '-q', '-b', 'gone', '../wt-repo-gone');
+  g(main, 'worktree', 'add', '-q', '--detach', '../wt-repo-temp');
+  rmSync(join(base, 'wt-repo-gone'), { recursive: true, force: true });
+  const listed = () => g(main, 'worktree', 'list');
+  // On Windows, reading the list while Tiller is deleting a worktree's files can fail; that's "not yet".
+  const gone = (name) => {
+    try {
+      return !listed().includes(name);
+    } catch {
+      return false;
+    }
+  };
+
+  lastApp = render(React.createElement(App, { initialPath: main, config: { recent: [], roots: [], history: [] } }));
+  const app = lastApp;
+  const frame = () => app.lastFrame() ?? '';
+  // Rows come in git's order, which depends on the file system, so walk down to the one wanted,
+  // waiting for each move to show. Only the name counts: a row's summary filling in isn't a move.
+  const selected = () => frame().match(/❯ [ ●] (\S+)/)?.[1] ?? '';
+  const pick = async (name) => {
+    while (selected() !== name) {
+      const before = selected();
+      app.stdin.write('j');
+      await until(() => selected() !== before, `the cursor to move towards ${name}`);
+    }
+    // Even when a reload put it there without a key, wait for the view's key handler to catch up.
+    await until(() => selected() === name, `the cursor on ${name}`);
+  };
+  try {
+    await until(() => frame().includes('Start'), 'the graph');
+    app.stdin.write('7');
+    await until(() => frame().includes('wt-repo-feat') && frame().includes('missing'), 'the Worktrees view');
+    assert.match(frame(), /● wt-repo\s+main/);
+    assert.match(frame(), /7 Worktrees 4/);
+
+    await pick('wt-repo-feat');
+    app.stdin.write(KEYS.enter);
+    await until(() => frame().includes('⎇ feat'), 'the feat worktree to open');
+
+    app.stdin.write('7');
+    await until(() => /● wt-repo-feat/.test(frame()), 'the Worktrees view, from feat');
+    await pick('wt-repo-gone');
+    app.stdin.write('x');
+    await until(() => gone('wt-repo-gone'), 'the missing worktree to be pruned');
+
+    await pick('wt-repo-temp');
+    app.stdin.write('x');
+    await until(() => frame().includes('Remove the worktree at'), 'the confirmation');
+    app.stdin.write('1');
+    await until(() => gone('wt-repo-temp'), 'the worktree to be removed');
+    assert.match(listed(), /wt-repo-feat/);
   } finally {
     app.unmount();
   }

@@ -5,6 +5,7 @@ import { VERSION } from './version.js';
 import { loadConfig } from './config.js';
 import { setAccent } from './theme.js';
 import { App } from './ui/App.jsx';
+import { checkForUpdate } from './update.js';
 
 const args = process.argv.slice(2);
 
@@ -35,7 +36,7 @@ setAccent(config.accent);
 process.stdout.write('\x1b[?1049h\x1b[H');
 process.on('exit', () => process.stdout.write('\x1b[?1049l'));
 
-const app = render(<App initialPath={resolve(args.find((x) => !x.startsWith('-')) ?? process.cwd())} config={config} />, {
+const app = render(<App initialPath={resolve(args.find((x) => !x.startsWith('-')) ?? process.cwd())} config={config} checkUpdate={checkForUpdate} />, {
   exitOnCtrlC: false,
 });
 await app.waitUntilExit();

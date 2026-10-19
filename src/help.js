@@ -1,5 +1,5 @@
 export const HELP = `Anywhere
-  1-6 / tab        Graph, Changes, Branches, Stash, PRs, Repos (shift+tab goes back)
+  1-7 / tab        Graph, Changes, Branches, Stash, PRs, Repos, Worktrees (shift+tab goes back)
   / or :           Command prompt (slash commands, with completion)
   !                Run any git command, e.g.  !log --stat -5
   f  p  P          Fetch all · Pull · Push (sets the upstream the first time)
@@ -63,6 +63,11 @@ Repos
   ↵                Open            x           Forget (remove from recent)
   s                Add a folder to scan for repositories
 
+Worktrees (● the one open here)
+  ↵                Open it in Tiller
+  n                New worktree (/worktree <path> [ref]; the path is relative to the repository)
+  x                Remove it (asks first; the branch stays), or prune one whose folder is gone
+
 Prompt
   tab              Complete        ↑ ↓         Pick a suggestion, or walk history
   esc              Back to the view (the text is kept)
@@ -74,7 +79,7 @@ Slash commands
   /fetch   /pull [--rebase]   /push [--force]   /stash [msg]   /pop
   /continue   /abort   /find <text>   /open <path>   /scan <folder>   /last   /quit
   /pr <title> [--into <branch>] [--draft]   /comment <text>   /approve
-  /rebase -i <ref>   /reword <message>
+  /rebase -i <ref>   /reword <message>   /worktree <path> [ref]
 
 Viewer (diffs, output, this help)
   j k  space  g G  Scroll         n N         Next, previous hunk

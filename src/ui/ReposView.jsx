@@ -6,7 +6,7 @@ import { fit } from '../text.js';
 import { useListNav } from './hooks.js';
 import { Panel, Row } from './parts.jsx';
 
-function summaryText(s) {
+export function summaryText(s) {
   if (!s) return { text: '…', color: theme.dim };
   if (s.error) return { text: 'unavailable', color: theme.del };
   const parts = [];

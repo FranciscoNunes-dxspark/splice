@@ -232,6 +232,45 @@ export async function stashDrop(ctx, s) {
   if (ok) return ctx.exec(['stash', 'drop', s.ref], { label: 'Dropping stash' });
 }
 
+// `git worktree add` with its own defaults: a relative path is taken from the repository's root,
+// and without a ref git makes a new branch named after the folder.
+export async function addWorktree(ctx, argText) {
+  if (!needRepo(ctx)) return;
+  const args = splitArgs(argText ?? '');
+  if (!args.length) return ctx.prefill('/worktree ');
+  const r = await ctx.exec(['worktree', 'add', ...args], { label: 'Adding worktree' });
+  if (r.ok) ctx.setView('worktrees');
+  return r;
+}
+
+export async function removeWorktree(ctx, wt) {
+  if (!needRepo(ctx)) return;
+  // Its folder is already gone; prune just clears git's record of it (and any others like it).
+  if (wt.prunable) return ctx.exec(['worktree', 'prune'], { label: 'Pruning worktrees' });
+  if (wt.main) return ctx.note("That's the main working tree. Only the worktrees added to it can be removed.", 'error');
+  if (wt.current) return ctx.note('That worktree is the one open here. Open another one first (↵).', 'error');
+  const ok = await ctx.confirm({
+    title: `Remove the worktree at ${wt.path}?`,
+    detail: wt.branch ? `Deletes the folder. The branch ${wt.branch} stays.` : 'Deletes the folder.',
+    options: YES_NO('Yes, remove it'),
+    danger: true,
+  });
+  if (!ok) return;
+  // Plain remove refuses to lose changes, so forcing gets its own question.
+  const r = await ctx.exec(['worktree', 'remove', wt.path], { label: 'Removing worktree', quietError: true });
+  if (r.ok || !/modified or untracked files/.test(r.error?.message ?? '')) {
+    if (!r.ok) ctx.note(r.error.message, 'error');
+    return r;
+  }
+  const force = await ctx.confirm({
+    title: `The worktree at ${wt.path} has uncommitted changes. Remove it anyway?`,
+    detail: 'Those changes would be lost for good.',
+    options: YES_NO('Yes, remove it and its changes'),
+    danger: true,
+  });
+  if (force) return ctx.exec(['worktree', 'remove', '--force', wt.path], { label: 'Removing worktree' });
+}
+
 export function tag(ctx, argText) {
   if (!needRepo(ctx)) return;
   const [name, ref] = splitArgs(argText ?? '');
