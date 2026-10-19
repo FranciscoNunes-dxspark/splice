@@ -149,4 +149,4 @@ The Release workflow (`.github/workflows/release.yml`) checks that the tag match
 - `src/actions.js`: every git operation, written once; keys and slash commands both call these.
 - `src/commands.js`: the slash command list and the completion logic.
 - `src/ui/`: Ink (React for the terminal) components. `App.jsx` owns the layout, focus, the prompt and the `ctx` handle the actions use.
-- `src/knot.js`: Knot's pixels and moods. `node scripts/logo.js` redraws `assets/knot.svg`, `knot.png` and `knot.ico` from them; rerun it after changing the drawing.
+- `src/knot.js`: Knot's pixels and moods. `node scripts/logo.js` redraws everything in `assets/` from them; rerun it after changing the drawing. `knot.svg`, `knot.png` and `knot.ico` sit on the dark rounded square; `knot-transparent.svg`, `knot-transparent.png` (448 × 320) and `knot-transparent@4x.png` (1792 × 1280) are just the otter, cropped, on transparency.

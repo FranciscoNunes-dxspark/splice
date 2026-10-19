@@ -1,5 +1,6 @@
-// Draws Knot into assets/: knot.svg (README, GitHub), knot.png (social preview) and knot.ico
-// (the Windows executable's icon), all from the pixels in src/knot.js.
+// Draws Knot into assets/: knot.svg (README, GitHub), knot.png (social preview), knot.ico
+// (the Windows executable's icon), and knot-transparent.svg/.png (just the otter, no background),
+// all from the pixels in src/knot.js.
 //   node scripts/logo.js
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { deflateSync } from 'node:zlib';
@@ -15,13 +16,14 @@ const px = full.map((row) => row.slice(first, last + 1));
 const W = px[0].length;
 const H = px.length;
 
+const hex = (h) => [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16), 255];
+
 // Square canvas with the otter centred and a margin, as RGBA rows.
 function canvas(size) {
   const cells = 20; // the drawing is 16 × 10; leave room around it
   const scale = size / cells;
   const ox = (cells - W) / 2;
   const oy = (cells - H) / 2;
-  const hex = (h) => [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16), 255];
   const bg = hex(BG);
   const radius = size * 0.18;
   const rows = [];
@@ -43,8 +45,23 @@ function canvas(size) {
   return rows;
 }
 
-function png(size) {
-  const rows = canvas(size);
+// Just the otter on transparency, cropped to the drawing: `scale` image pixels per drawing pixel.
+function bare(scale) {
+  const rows = [];
+  for (let y = 0; y < H * scale; y++) {
+    const row = [];
+    for (let x = 0; x < W * scale; x++) {
+      const c = px[Math.floor(y / scale)][Math.floor(x / scale)];
+      row.push(...(PALETTE[c] ? hex(PALETTE[c]) : [0, 0, 0, 0]));
+    }
+    rows.push(row);
+  }
+  return rows;
+}
+
+/** Encodes RGBA rows as a PNG; a number means the square background canvas of that size. */
+function png(image) {
+  const rows = typeof image === 'number' ? canvas(image) : image;
   const raw = Buffer.concat(rows.map((r) => Buffer.from([0, ...r])));
   const crcTable = Array.from({ length: 256 }, (_, n) => {
     let c = n;
@@ -65,8 +82,8 @@ function png(size) {
     return Buffer.concat([len, body, sum]);
   };
   const ihdr = Buffer.alloc(13);
-  ihdr.writeUInt32BE(size, 0);
-  ihdr.writeUInt32BE(size, 4);
+  ihdr.writeUInt32BE(rows[0].length / 4, 0);
+  ihdr.writeUInt32BE(rows.length, 4);
   ihdr.set([8, 6, 0, 0, 0], 8); // 8-bit RGBA
   return Buffer.concat([
     Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
@@ -97,20 +114,21 @@ function ico(sizes) {
   return Buffer.concat([header, ...entries, ...images]);
 }
 
-function svg() {
-  const cells = 20;
-  const ox = (cells - W) / 2;
-  const oy = (cells - H) / 2;
+/** The logo as SVG: on its dark rounded square, or with `background: false` just the otter, cropped. */
+function svg({ background = true } = {}) {
+  const cells = background ? 20 : null;
+  const ox = background ? (cells - W) / 2 : 0;
+  const oy = background ? (cells - H) / 2 : 0;
   const rects = [];
   px.forEach((row, y) =>
     [...row].forEach((c, x) => {
       if (PALETTE[c]) rects.push(`<rect x="${x + ox}" y="${y + oy}" width="1.02" height="1.02" fill="${PALETTE[c]}"/>`);
     }),
   );
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${cells} ${cells}" shape-rendering="crispEdges">
+  const box = background ? `0 0 ${cells} ${cells}` : `0 0 ${W} ${H}`;
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${box}" shape-rendering="crispEdges">
 <title>Knot, the Tiller otter</title>
-<rect width="${cells}" height="${cells}" rx="3.6" fill="${BG}"/>
-${rects.join('\n')}
+${background ? `<rect width="${cells}" height="${cells}" rx="3.6" fill="${BG}"/>\n` : ''}${rects.join('\n')}
 </svg>
 `;
 }
@@ -119,4 +137,8 @@ mkdirSync('assets', { recursive: true });
 writeFileSync('assets/knot.svg', svg());
 writeFileSync('assets/knot.png', png(512));
 writeFileSync('assets/knot.ico', ico([16, 24, 32, 48, 64, 128, 256]));
-console.log('assets/knot.svg, assets/knot.png, assets/knot.ico');
+// Just the otter on transparency, for light pages, slides and stickers.
+writeFileSync('assets/knot-transparent.svg', svg({ background: false }));
+writeFileSync('assets/knot-transparent.png', png(bare(32)));
+writeFileSync('assets/knot-transparent@4x.png', png(bare(128)));
+console.log('assets/knot.svg, knot.png, knot.ico, knot-transparent.svg, knot-transparent.png, knot-transparent@4x.png');
