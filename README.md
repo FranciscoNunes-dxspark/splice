@@ -136,7 +136,7 @@ Knot keeps an eye on the repository. They're asleep `(–ω–)` when everything
 
 ### Updates
 
-Once a day at most, after it opens, Tiller asks GitHub for the latest release, and if it's newer than yours, says so in the activity lines and the welcome box. It asks GitHub's public API first, then through [gh](https://cli.github.com) with your existing sign-in (needed while the repository is private). If neither works (offline, no gh), it says nothing and tries again next time. The answer is kept in the config as `lastUpdateCheck`. To turn the check off:
+Once a day at most, after it opens, the downloaded Tiller asks GitHub for the latest release, and if it's newer than yours, says so in the activity lines and the welcome box. It asks GitHub's public API first, then through [gh](https://cli.github.com) with your existing sign-in (needed while the repository is private). If neither works (offline, no gh), it says nothing and tries again next time. Running from a checkout skips the check; `git pull` updates that. The answer is kept in the config as `lastUpdateCheck`. To turn the check off:
 
 ```json
 { "checkForUpdates": false }
