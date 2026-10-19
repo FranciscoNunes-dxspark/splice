@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import React from 'react';
 import { render } from 'ink-testing-library';
 import { READ_ONLY, cleanSubject, clip, commitPrompt, parsePrDraft } from '../src/claude.js';
@@ -86,7 +86,8 @@ test('through the UI: Claude writes the commit message, then explains and review
     assert.match(first.prompt, /- Start the notes/);
     assert.match(first.input, /\+two/);
     assert.deepEqual(first.tools, []);
-    assert.equal(first.cwd, (await import('node:path')).resolve(dir));
+    // The repository root as git names it (the temp path may come in a Windows short form).
+    assert.equal(first.cwd, resolve(git('rev-parse', '--show-toplevel')));
     app.stdin.write('\r');
     await until(() => git('log', '-1', '--format=%s') === 'Add a second note', 'the commit');
 
