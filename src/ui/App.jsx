@@ -5,7 +5,7 @@ import { basename, resolve } from 'node:path';
 import * as a from '../actions.js';
 import { findCommand, suggestionsFor } from '../commands.js';
 import { samePath, saveConfig, withRecent } from '../config.js';
-import { run } from '../git.js';
+import { git, run } from '../git.js';
 import { HELP } from '../help.js';
 import { changeDiff, commitPatch, findRepo, loadRepo, snapshot, stashPatch } from '../repo.js';
 import { discover, eachLimited, summarize } from '../repos.js';
@@ -30,7 +30,7 @@ const VIEWS = [
 
 const HINTS = {
   graph: '↵ diff · c checkout · b branch · m merge · C cherry-pick · v revert · X reset',
-  changes: 'space stage · a all · u unstage all · d discard · c commit · A amend · ↵ diff',
+  changes: 'space stage · ↵ hunks/lines · a all · u unstage all · d discard · c commit · A amend',
   branches: '↵ checkout · n new · m merge · e rebase · d delete',
   stash: '↵ diff · s stash · a apply · o pop · x drop',
   repos: '↵ open · s scan folder · x forget',
@@ -176,7 +176,7 @@ export function App({ initialPath, config: initialConfig }) {
     }
   };
 
-  const exec = async (args, { label = 'Running git', refresh = true, quiet = false, quietError = false, anywhere = false } = {}) => {
+  const exec = async (args, { label = 'Running git', refresh = true, quiet = false, quietError = false, anywhere = false, input } = {}) => {
     if (busyRef.current) {
       note(`Wait for "${busyRef.current.label}" to finish (esc cancels it).`, 'error');
       return { ok: false, error: new Error('busy') };
@@ -193,7 +193,7 @@ export function App({ initialPath, config: initialConfig }) {
     setBusy(b);
     const id = quiet ? null : addEntry({ title, status: 'running' });
     try {
-      const { stdout, stderr } = await run(repo?.root ?? process.cwd(), args, { signal: controller.signal });
+      const { stdout, stderr } = await run(repo?.root ?? process.cwd(), args, { signal: controller.signal, input });
       const out = [stdout.trimEnd(), stderr.trimEnd()].filter(Boolean).join('\n');
       lastOutput.current = { title, text: out || '(no output)' };
       if (id) updateEntry(id, { status: 'ok', lines: out ? out.split('\n') : ['Done'] });
@@ -281,6 +281,8 @@ export function App({ initialPath, config: initialConfig }) {
   const ctx = ctxRef.current;
   Object.assign(ctx, {
     exec,
+    // A read that doesn't show in the activity lines or block other commands.
+    git: (args) => git(repoRef.current.root, args),
     note,
     confirm,
     prefill,

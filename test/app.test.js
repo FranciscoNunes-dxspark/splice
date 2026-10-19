@@ -106,6 +106,36 @@ test('graph, staging, committing and switching branches through the UI', async (
   }
 });
 
+test('staging a single hunk from the diff pane', async () => {
+  // Two far-apart edits make two hunks.
+  writeFileSync(join(dir, 'long.txt'), Array.from({ length: 30 }, (_, i) => `l${i + 1}`).join('\n') + '\n');
+  git('add', 'long.txt');
+  git('commit', '-q', '-m', 'Long file');
+  writeFileSync(join(dir, 'long.txt'), Array.from({ length: 30 }, (_, i) => (i === 1 ? 'TOP' : i === 27 ? 'BOTTOM' : `l${i + 1}`)).join('\n') + '\n');
+  const app = start();
+  const frame = () => app.lastFrame() ?? '';
+  try {
+    await until(() => frame().includes('Long file'), 'load');
+    app.stdin.write('2');
+    await until(() => frame().includes('long.txt'), 'the Changes view');
+    // Put the cursor on long.txt, then step into its diff.
+    while (!/❯ M long\.txt/.test(frame())) {
+      app.stdin.write('j');
+      await new Promise((r) => setTimeout(r, 60));
+    }
+    app.stdin.write('\r');
+    await until(() => frame().includes('▌@@ -1,'), 'the diff pane');
+    app.stdin.write(' ');
+    await until(() => /^\+TOP$/m.test(git('diff', '--cached', '--', 'long.txt')), 'the first hunk to be staged');
+    assert.doesNotMatch(git('diff', '--cached', '--', 'long.txt'), /BOTTOM/);
+    assert.match(git('diff', '--', 'long.txt'), /\+BOTTOM/);
+  } finally {
+    app.unmount();
+    git('reset', '-q');
+    git('checkout', '--', 'long.txt');
+  }
+});
+
 test('discarding asks first, and "No" leaves the file alone', async () => {
   const app = start();
   const frame = () => app.lastFrame() ?? '';

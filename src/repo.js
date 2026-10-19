@@ -109,7 +109,15 @@ export async function changeDiff(root, entry) {
     if (buf.includes(0)) return `${entry.path}: new binary file`;
     const lines = buf.toString('utf8').split('\n');
     if (lines.at(-1) === '') lines.pop();
-    return [`new file ${entry.path}`, `@@ -0,0 +1,${lines.length} @@`, ...lines.map((l) => `+${l}`)].join('\n');
+    // Shaped like git's own diff of a new file, so hunks and lines can be picked from it the same way.
+    return [
+      `diff --git a/${entry.path} b/${entry.path}`,
+      'new file mode 100644',
+      '--- /dev/null',
+      `+++ b/${entry.path}`,
+      `@@ -0,0 +1,${lines.length} @@`,
+      ...lines.map((l) => `+${l}`),
+    ].join('\n');
   }
   if (entry.area === 'conflict') return git(root, ['diff', '--', entry.path]);
   const args = entry.area === 'staged' ? ['diff', '--cached', '-M'] : ['diff'];

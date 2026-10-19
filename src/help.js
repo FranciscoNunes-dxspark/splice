@@ -26,7 +26,14 @@ Changes
   d                Discard the file's changes
   c  A             Commit · Amend the last commit
   O  T             On a conflict: take ours · take theirs
-  ↵                Full diff
+  ↵  →  l          Step into the diff to stage hunks or single lines
+
+Changes, in the diff
+  j k              Move between changed lines      n N  ] [    Next, previous hunk
+  space            Stage the hunk under the cursor (unstage it, for a staged file)
+  v                Start or end a line selection; space then stages just those lines
+  d                Discard the hunk or the selected lines (asks first)
+  ↵                Full-screen diff        esc  ←  h    Back to the file list
 
 Branches
   ↵                Check out (a remote branch gets a local tracking branch)

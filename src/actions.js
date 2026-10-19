@@ -3,6 +3,7 @@
 import { rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { splitArgs } from './parse.js';
+import { buildPatch, coversAll, parseDiff } from './patch.js';
 
 const short = (hash) => hash.slice(0, 7);
 const YES_NO = (yes) => [
@@ -314,6 +315,39 @@ export async function discard(ctx, f) {
 export async function resolveWith(ctx, f, side) {
   const r = await ctx.exec(['checkout', `--${side}`, '--', f.path], { refresh: false, quiet: true });
   if (r.ok) return ctx.exec(['add', '--', f.path], { quiet: true });
+}
+
+const apply = (ctx, patch, flags, label) =>
+  ctx.exec(['apply', ...flags, '--recount', '--whitespace=nowarn', '-'], { input: patch, quiet: true, label });
+
+/**
+ * Stages (or, for a staged file, unstages) just the picked lines of `diffText`.
+ * With `discard`, throws the picked lines away from the working tree instead.
+ */
+export async function applyLines(ctx, f, diffText, picks, { discard = false } = {}) {
+  let diff = parseDiff(diffText);
+  const all = coversAll(diff, picks);
+  if (discard) {
+    if (f.area !== 'unstaged') return ctx.note('Only unstaged lines can be discarded. Unstage them first.', 'error');
+    if (f.kind === 'untracked') return ctx.note('This is a new file: discard the whole file from the list instead (d).', 'error');
+    const ok = await ctx.confirm({
+      title: `Discard the selected ${all ? 'changes' : 'lines'} in ${f.path}?`,
+      detail: "This can't be undone.",
+      options: [{ label: 'Yes, discard', value: true }, { label: 'No', value: false }],
+      danger: true,
+    });
+    if (ok) return apply(ctx, buildPatch(diff, picks, { reverse: true }), ['--reverse'], 'Discarding');
+    return;
+  }
+  // When every line is picked, the plain file commands also cover what a patch can't (modes, binaries).
+  if (f.area === 'staged') return all ? unstage(ctx, f) : apply(ctx, buildPatch(diff, picks, { reverse: true }), ['--cached', '--reverse'], 'Unstaging');
+  if (all) return stage(ctx, f);
+  if (f.kind === 'untracked') {
+    // Part of a new file: record the file as intended, then patch the index like any other change.
+    if (!(await ctx.exec(['add', '--intent-to-add', '--', f.path], { quiet: true, refresh: false })).ok) return;
+    diff = parseDiff(await ctx.git(['diff', '--', f.path]));
+  }
+  return apply(ctx, buildPatch(diff, picks), ['--cached'], 'Staging');
 }
 
 /** `!<args>`: any git command. Output longer than a few lines opens in the viewer. */

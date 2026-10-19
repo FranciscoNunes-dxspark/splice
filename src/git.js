@@ -17,10 +17,13 @@ export class GitError extends Error {
   }
 }
 
-/** Runs git in `cwd` and resolves with { stdout, stderr }. Rejects with a GitError carrying git's own message. */
-export function run(cwd, args, { signal } = {}) {
+/**
+ * Runs git in `cwd` and resolves with { stdout, stderr }. Rejects with a GitError carrying git's own message.
+ * `input` is written to git's stdin (patches for `git apply -`).
+ */
+export function run(cwd, args, { signal, input } = {}) {
   return new Promise((resolve, reject) => {
-    execFile(
+    const child = execFile(
       'git',
       ['-c', 'core.quotepath=false', '-c', 'color.ui=false', ...args],
       { cwd, env: ENV, maxBuffer: 256 * 1024 * 1024, windowsHide: true, signal, encoding: 'utf8' },
@@ -31,6 +34,7 @@ export function run(cwd, args, { signal } = {}) {
         reject(new GitError(message, { code: typeof err.code === 'number' ? err.code : null }));
       },
     );
+    if (input != null) child.stdin.end(input);
   });
 }
 
