@@ -22,6 +22,8 @@ import { PrView } from './PrView.jsx';
 import { hostFor, openUrl } from '../hosting.js';
 import { TextViewer } from './TextViewer.jsx';
 import { RebaseEditor } from './RebaseEditor.jsx';
+import { WELCOME_HEIGHT, Welcome } from './Knot.jsx';
+import { FACES, moodFor } from '../knot.js';
 
 const VIEWS = [
   { id: 'graph', label: 'Graph' },
@@ -45,9 +47,9 @@ const POLL_MS = 3000;
 const firstLine = (s) => String(s ?? '').split('\n')[0];
 const showArg = (s) => (/[\s"]/.test(s) || s === '' ? JSON.stringify(s) : s);
 
-function Header({ data, width, loading }) {
+function Header({ data, width, loading, mood }) {
   const segs = [
-    { text: '✻ ', color: theme.accent, bold: true },
+    { text: `${FACES[mood]} `, color: theme.accent, bold: true },
     { text: 'Tiller', bold: true },
   ];
   if (data) {
@@ -113,6 +115,13 @@ export function App({ initialPath, config: initialConfig }) {
   const [busy, setBusy] = useState(null);
   const [repos, setRepos] = useState([]);
   const [filter, setFilter] = useState('');
+  const [welcome, setWelcome] = useState(true);
+  // Knot looks happy (or worried) for a few seconds after a result; re-render when that wears off.
+  const [, setMoodTick] = useState(0);
+  useEffect(() => {
+    const t = setTimeout(() => setMoodTick((n) => n + 1), 8100);
+    return () => clearTimeout(t);
+  }, [entries]);
   const [prVersion, setPrVersion] = useState(0);
 
   // Async actions read the latest state through refs, not through stale closures.
@@ -155,10 +164,10 @@ export function App({ initialPath, config: initialConfig }) {
 
   const addEntry = (e) => {
     const id = nextId.current++;
-    setEntries((list) => [...list.slice(-19), { id, lines: [], ...e }]);
+    setEntries((list) => [...list.slice(-19), { id, lines: [], at: Date.now(), ...e }]);
     return id;
   };
-  const updateEntry = (id, patch) => setEntries((list) => list.map((e) => (e.id === id ? { ...e, ...patch } : e)));
+  const updateEntry = (id, patch) => setEntries((list) => list.map((e) => (e.id === id ? { ...e, at: Date.now(), ...patch } : e)));
   const removeEntry = (id) => setEntries((list) => list.filter((e) => e.id !== id));
 
   const note = (text, status = 'info') => {
@@ -195,6 +204,7 @@ export function App({ initialPath, config: initialConfig }) {
     busyRef.current = b;
     setBusy(b);
     const id = quiet ? null : addEntry({ title, status: 'running' });
+    setWelcome(false);
     try {
       const { stdout, stderr } = await start(controller.signal);
       const out = [stdout.trimEnd(), stderr.trimEnd()].filter(Boolean).join('\n');
@@ -462,7 +472,10 @@ export function App({ initialPath, config: initialConfig }) {
   const globalKeys = (input, key) => {
     if (key.escape) {
       if (busyRef.current) busyRef.current.abort();
-      else if (!filter || view !== 'graph') setEntries([]);
+      else if (!filter || view !== 'graph') {
+        setEntries([]);
+        setWelcome(false);
+      }
       return;
     }
     if (input === '/' || input === ':') return prefill('/');
@@ -495,7 +508,10 @@ export function App({ initialPath, config: initialConfig }) {
   const H = Math.max(12, rows - 1);
   const act = activityRows(entries);
   const bottom = confirmReq ? confirmHeight(confirmReq) : 3 + suggestions.length;
-  const mainH = Math.max(6, H - 2 - act.length - (busy ? 1 : 0) - bottom - 1);
+  const mood = moodFor({ data, busy, lastEntry: entries.at(-1) });
+  // The welcome box only appears when the terminal has room for it next to a useful view.
+  const showWelcome = welcome && H >= 28;
+  const mainH = Math.max(6, H - 2 - act.length - (busy ? 1 : 0) - bottom - 1 - (showWelcome ? WELCOME_HEIGHT : 0));
   const viewActive = focus === 'view' && !overlay && !confirmReq;
 
   let main;
@@ -528,11 +544,12 @@ export function App({ initialPath, config: initialConfig }) {
 
   return (
     <Box flexDirection="column" width={W} height={H}>
-      <Header data={data} width={W} loading={loading} />
+      <Header data={data} width={W} loading={loading} mood={mood} />
       <Tabs view={view} data={data} width={W} />
       <Box height={mainH} width={W}>
         {main}
       </Box>
+      {showWelcome ? <Welcome mood={mood} data={data} width={W} /> : null}
       {act.map((segs, i) => (
         <Row key={i} pointer={false} width={W} segments={segs} />
       ))}

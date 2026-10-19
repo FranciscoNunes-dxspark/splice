@@ -1,9 +1,11 @@
+<p align="center"><img src="assets/knot.svg" width="128" alt="Knot, the Tiller otter"></p>
+
 # Tiller
 
 A keyboard-driven git client for the terminal, with an interface modelled on Claude Code: titled rounded panels, a prompt box with slash commands and completion, `!` to run any git command, and a running log of what each command did.
 
 ```
-✻ Tiller  │  Keel  ⎇ main → origin/main ↑1  ● 2 changes                              C:\Team\Keel
+(•ω•) Tiller  │  Keel  ⎇ main → origin/main ↑1  ● 2 changes                              C:\Team\Keel
  1 Graph   2 Changes 2   3 Branches   4 Stash   5 PRs   6 Repos
 ╭─ Commits ────────────────────────────────── 125 ─╮╭─ Commit ──────────────── J/K scroll ─╮
 │❯ ◌  // WIP  2 changed files                      ││4e9f0080cb  19/10/2026, 15:14:35      │
@@ -101,6 +103,12 @@ Tiller talks to the servers through their own CLIs, using the sign-in you alread
 - **Never hangs on a prompt.** Git runs with `GIT_TERMINAL_PROMPT=0`; credentials come from your credential helper (Git Credential Manager on Windows). Esc cancels a slow fetch or push.
 - The graph loads 400 commits at a time and fetches more as you scroll to the bottom. `/find` filters the loaded commits by message, author, hash or branch name.
 
+## Meet Knot
+
+Knot is Tiller's otter: the logo, the app icon, and the face in the top-left corner. Otters hold hands while they sleep so they don't drift apart, which is more or less what a merge is for.
+
+Knot keeps an eye on the repository. They're asleep `(–ω–)` when everything is committed, awake `(•ω•)` when there are changes, waving `(•ω•)/` when you have commits to push, glancing around while git works, pleased `(^ω^)` for a few seconds after something succeeds, and alarmed `(◉ω◉)` on conflicts or an error. When Tiller starts (in a terminal at least 28 rows tall), Knot greets you in a welcome box like Claude Code's; esc or your first command puts it away.
+
 ## Settings
 
 `~/.tiller/config.json` holds the recent repositories, the folders to scan, and the prompt history. You can also set the accent colour:
@@ -141,3 +149,4 @@ The Release workflow (`.github/workflows/release.yml`) checks that the tag match
 - `src/actions.js`: every git operation, written once; keys and slash commands both call these.
 - `src/commands.js`: the slash command list and the completion logic.
 - `src/ui/`: Ink (React for the terminal) components. `App.jsx` owns the layout, focus, the prompt and the `ctx` handle the actions use.
+- `src/knot.js`: Knot's pixels and moods. `node scripts/logo.js` redraws `assets/knot.svg`, `knot.png` and `knot.ico` from them; rerun it after changing the drawing.

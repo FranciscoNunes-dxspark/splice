@@ -1,7 +1,7 @@
 import React from 'react';
 import { render } from 'ink';
-import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { VERSION } from './version.js';
 import { loadConfig } from './config.js';
 import { setAccent } from './theme.js';
 import { App } from './ui/App.jsx';
@@ -9,10 +9,7 @@ import { App } from './ui/App.jsx';
 const args = process.argv.slice(2);
 
 if (args.includes('-v') || args.includes('--version')) {
-  // The compiled builds have it baked in; from a checkout, read it from package.json.
-  const version =
-    process.env.TILLER_VERSION ?? JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version;
-  console.log(`tiller ${version}`);
+  console.log(`tiller ${VERSION}`);
   process.exit(0);
 }
 
