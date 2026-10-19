@@ -36,7 +36,8 @@ for (const target of targets) {
     compile: { target, outfile, windows },
     minify: true,
     plugins: [noDevtools],
-    define: { 'process.env.TILLER_VERSION': JSON.stringify(pkg.version) },
+    // NODE_ENV picks React's production build; defined in the bundle, it never reaches git's environment.
+    define: { 'process.env.TILLER_VERSION': JSON.stringify(pkg.version), 'process.env.NODE_ENV': '"production"' },
   });
   if (!result.success) {
     for (const log of result.logs) console.error(log);

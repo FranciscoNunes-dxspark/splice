@@ -123,7 +123,7 @@ export function sortPrs(prs) {
 
 // Runs a CLI and resolves with stdout. On Windows az is a .cmd wrapper that Node won't start
 // without a shell, so call the Python it wraps directly: no shell, so no quoting surprises.
-function cli(program, args, { cwd, signal } = {}) {
+export function cli(program, args, { cwd, signal } = {}) {
   let file = program;
   let argv = args;
   let env = process.env;

@@ -6,7 +6,7 @@ A keyboard-driven git client for the terminal, with an interface modelled on Cla
 
 ```
 (•ω•) Tiller  │  Keel  ⎇ main → origin/main ↑1  ● 2 changes                              C:\Team\Keel
- 1 Graph   2 Changes 2   3 Branches   4 Stash   5 PRs   6 Repos
+ 1 Graph   2 Changes 2   3 Branches   4 Stash   5 PRs   6 Repos   7 Worktrees
 ╭─ Commits ────────────────────────────────── 125 ─╮╭─ Commit ──────────────── J/K scroll ─╮
 │❯ ◌  // WIP  2 changed files                      ││4e9f0080cb  19/10/2026, 15:14:35      │
 │  ●    ● main ⇅ origin  Compact view on the Pro…  ││Francisco Nunes                       │
@@ -54,7 +54,7 @@ Press `?` inside for every shortcut. The essentials:
 
 | Where | Keys |
 | --- | --- |
-| Anywhere | `1`–`6` or `tab` switch views · `/` commands · `!` any git command · `f` fetch · `p` pull · `P` push · `r` refresh · `esc` cancel the running command · `q` quit |
+| Anywhere | `1`–`7` or `tab` switch views · `/` commands · `!` any git command · `f` fetch · `p` pull · `P` push · `r` refresh · `esc` cancel the running command · `q` quit |
 | Lists | `j`/`k` or arrows · `g`/`G` top/bottom · `ctrl+d`/`ctrl+u` page · `J`/`K` scroll the right-hand pane |
 | Graph | `↵` full diff · `c` check out · `b` branch here · `t` tag here · `m` merge · `i` interactive rebase from here · `C` cherry-pick · `v` revert · `X` reset to here |
 | Rebase editor | `p` pick · `r` reword · `e` edit · `s` squash · `f` fix up · `d` drop · `J`/`K` move · `↵` start · `esc` cancel |
@@ -64,12 +64,13 @@ Press `?` inside for every shortcut. The essentials:
 | Stash | `↵` diff · `s` stash · `a` apply · `o` pop · `x` drop |
 | PRs | `↵` diff · `c` check out · `a` approve · `C` comment · `o` open in the browser · `n` new PR from the current branch |
 | Repos | `↵` open · `s` add a folder to scan · `x` forget |
+| Worktrees | `↵` open · `n` new · `x` remove (or prune one whose folder is gone) |
 
 ### Slash commands
 
 Type `/` and the menu narrows as you type; `tab` completes, `↑`/`↓` picks, `↵` runs. Commands that take a branch complete branch, tag and remote names.
 
-`/commit <msg>` `/amend [msg]` `/checkout <ref>` `/branch <name> [start]` `/delete <ref>` `/merge <ref>` `/rebase <ref>` `/reset <ref>` `/tag <name> [ref]` `/fetch` `/pull [--rebase]` `/push [--force]` `/stash [msg]` `/pop` `/continue` `/abort` `/find <text>` `/open <path>` `/scan <folder>` `/last` `/refresh` `/help` `/quit` `/pr <title> [--into <branch>] [--draft]` `/comment <text>` `/approve`
+`/commit <msg>` `/amend [msg]` `/checkout <ref>` `/branch <name> [start]` `/delete <ref>` `/merge <ref>` `/rebase <ref>` `/reset <ref>` `/tag <name> [ref]` `/fetch` `/pull [--rebase]` `/push [--force]` `/stash [msg]` `/pop` `/continue` `/abort` `/find <text>` `/open <path>` `/scan <folder>` `/last` `/refresh` `/help` `/quit` `/pr <title> [--into <branch>] [--draft]` `/comment <text>` `/approve` `/worktree <path> [ref]`
 
 ### Interactive rebase
 
@@ -87,6 +88,12 @@ Tiller talks to the servers through their own CLIs, using the sign-in you alread
 - Azure DevOps: [az](https://aka.ms/installazurecliwindows) with the `azure-devops` extension (`az extension add --name azure-devops`), signed in with `az login`.
 
 `/pr <title>` opens a pull request from the current branch into the repository's default branch (or `--into <branch>`), pushing the branch first if the server doesn't have your latest commits. Approving and opening a PR ask first; `/comment` posts as soon as you press enter. Azure DevOps PR diffs are made locally: Tiller fetches both branches and shows what the source branch adds. Listing Azure DevOps PRs takes a few seconds, most of it the az CLI starting up.
+
+### Worktrees
+
+The Worktrees view (`7`) lists the main working tree and every worktree added to it, each with its branch, how far it is ahead of or behind its upstream, and how many changed files it has. ● marks the one open here. The right-hand pane shows the selected worktree's changes and recent commits, and `↵` switches Tiller to it.
+
+`/worktree <path> [ref]` runs `git worktree add` with git's own defaults: the path is relative to the repository's root, a branch that only exists on one remote gets a local tracking branch, and with no ref git makes a new branch named after the folder. Flags pass through, so `/worktree -b fix ../fix main` works too. `n` in the view starts one next to the repository, as `../<repo>-`. Removing (`x`) asks first and leaves the branch alone; if the worktree has uncommitted changes, it asks again before forcing. A worktree whose folder was deleted shows as missing, and `x` prunes it.
 
 ### Running git directly
 
@@ -115,6 +122,14 @@ Knot keeps an eye on the repository. They're asleep `(–ω–)` when everything
 
 ```json
 { "accent": "#5fd787" }
+```
+
+### Updates
+
+Once a day at most, after it opens, Tiller asks GitHub for the latest release, and if it's newer than yours, says so in the activity lines and the welcome box. It asks GitHub's public API first, then through [gh](https://cli.github.com) with your existing sign-in (needed while the repository is private). If neither works (offline, no gh), it says nothing and tries again next time. The answer is kept in the config as `lastUpdateCheck`. To turn the check off:
+
+```json
+{ "checkForUpdates": false }
 ```
 
 ## Development

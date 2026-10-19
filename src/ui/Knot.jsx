@@ -22,7 +22,7 @@ export function Knot({ mood }) {
 }
 
 /** The box shown when Tiller starts, like Claude Code's welcome. Esc or the first command clears it. */
-export function Welcome({ mood, data, width }) {
+export function Welcome({ mood, data, width, update }) {
   const textW = Math.max(10, width - KNOT_WIDTH - 7);
   return (
     <Box borderStyle="round" borderColor={theme.accent} width={width} height={WELCOME_HEIGHT} paddingX={1}>
@@ -37,7 +37,13 @@ export function Welcome({ mood, data, width }) {
         <Text color={theme.dim} wrap="truncate">
           {fit(`Knot the otter here. ${moodLine(mood, data)}`, textW).trimEnd()}
         </Text>
-        <Text> </Text>
+        {update ? (
+          <Text color={theme.warn} wrap="truncate">
+            {fit(`Tiller ${update.latest} is out (you have ${VERSION}). The link is below.`, textW).trimEnd()}
+          </Text>
+        ) : (
+          <Text> </Text>
+        )}
         <Text color={theme.dim} wrap="truncate">
           {fit('/ commands · ! any git command · ? shortcuts · esc to put this away', textW).trimEnd()}
         </Text>

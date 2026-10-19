@@ -11,6 +11,7 @@ import { changeDiff, commitPatch, findRepo, loadRepo, snapshot, stashPatch } fro
 import { discover, eachLimited, summarize } from '../repos.js';
 import { BULLET, theme } from '../theme.js';
 import { fitSegments, stringWidth } from '../text.js';
+import { VERSION } from '../version.js';
 import { useTerminalSize } from './hooks.js';
 import { Confirm, Panel, PromptBox, Row, Spinner, Suggestions, confirmHeight } from './parts.jsx';
 import { BranchesView } from './BranchesView.jsx';
@@ -18,6 +19,7 @@ import { ChangesView } from './ChangesView.jsx';
 import { GraphView } from './GraphView.jsx';
 import { ReposView } from './ReposView.jsx';
 import { StashView } from './StashView.jsx';
+import { WorktreesView } from './WorktreesView.jsx';
 import { PrView } from './PrView.jsx';
 import { hostFor, openUrl } from '../hosting.js';
 import { TextViewer } from './TextViewer.jsx';
@@ -32,6 +34,7 @@ const VIEWS = [
   { id: 'stash', label: 'Stash' },
   { id: 'prs', label: 'PRs' },
   { id: 'repos', label: 'Repos' },
+  { id: 'worktrees', label: 'Worktrees' },
 ];
 
 const HINTS = {
@@ -41,6 +44,7 @@ const HINTS = {
   stash: '↵ diff · s stash · a apply · o pop · x drop',
   prs: '↵ diff · c checkout · a approve · C comment · o open in browser · n new PR',
   repos: '↵ open · s scan folder · x forget',
+  worktrees: '↵ open · n new · x remove or prune',
 };
 
 const POLL_MS = 3000;
@@ -78,6 +82,7 @@ function Tabs({ view, data, width }) {
     let label = `${i + 1} ${v.label}`;
     if (data && v.id === 'changes' && data.status.files.length) label += ` ${data.status.files.length}`;
     if (data && v.id === 'stash' && data.stashes.length) label += ` ${data.stashes.length}`;
+    if (data && v.id === 'worktrees' && data.worktrees.length > 1) label += ` ${data.worktrees.length}`;
     const on = v.id === view;
     segs.push({ text: ` ${label} `, bg: on ? theme.accent : undefined, color: on ? theme.ink : theme.dim, bold: on }, { text: ' ' });
   });
@@ -99,7 +104,7 @@ function activityRows(entries) {
   return out.slice(-6);
 }
 
-export function App({ initialPath, config: initialConfig }) {
+export function App({ initialPath, config: initialConfig, checkUpdate }) {
   const { exit } = useApp();
   const { columns, rows } = useTerminalSize();
   const [config, setConfigState] = useState(initialConfig);
@@ -116,6 +121,7 @@ export function App({ initialPath, config: initialConfig }) {
   const [repos, setRepos] = useState([]);
   const [filter, setFilter] = useState('');
   const [welcome, setWelcome] = useState(true);
+  const [update, setUpdate] = useState(null);
   // Knot looks happy (or worried) for a few seconds after a result; re-render when that wears off.
   const [, setMoodTick] = useState(0);
   useEffect(() => {
@@ -256,7 +262,8 @@ export function App({ initialPath, config: initialConfig }) {
     setFocus('prompt');
   };
 
-  const refreshRepos = async (roots = extraRoots.current) => {
+  // `summaries` runs git status in every listed repo, which only the Repos view shows.
+  const refreshRepos = async (roots = extraRoots.current, { summaries = true } = {}) => {
     extraRoots.current = roots;
     const cfg = configRef.current;
     const found = await discover([...cfg.roots, ...roots]);
@@ -264,6 +271,7 @@ export function App({ initialPath, config: initialConfig }) {
     for (const p of [...cfg.recent, ...found]) if (!paths.some((q) => samePath(q, p))) paths.push(p);
     const list = paths.map((p) => ({ path: p, name: basename(p) }));
     setRepos(list);
+    if (!summaries) return;
     eachLimited(list, 4, (r) => summarize(r.path), (r, summary) =>
       setRepos((cur) => cur.map((x) => (x.path === r.path ? { ...x, summary } : x))),
     );
@@ -396,7 +404,21 @@ export function App({ initialPath, config: initialConfig }) {
         setView('repos');
         note(`${initialPath} isn't inside a git repository. Pick one below, or /open <path>.`);
       }
-      refreshRepos(ok ? [] : [initialPath]);
+      // Opening a repo only needs the paths (for /open completion); the Repos view fills in the rest when shown.
+      refreshRepos(ok ? [] : [initialPath], { summaries: !ok });
+      // After the first load, so it doesn't slow it down. cli.jsx passes the check; tests don't, so they stay offline.
+      if (checkUpdate && configRef.current.checkForUpdates !== false) {
+        checkUpdate(configRef.current.lastUpdateCheck).then(
+          ({ checked, newer }) => {
+            setConfig((c) => ({ ...c, lastUpdateCheck: checked }));
+            if (!newer) return;
+            setUpdate(checked);
+            note(`Tiller ${checked.latest} is out (you have ${VERSION}).\nDownload it from ${checked.url}`);
+          },
+          // Offline, or no way to ask: try again next time.
+          () => {},
+        );
+      }
     })();
   }, []);
 
@@ -524,11 +546,11 @@ export function App({ initialPath, config: initialConfig }) {
   } else if (!data) {
     main = (
       <Panel title={VIEWS.find((v) => v.id === view).label} width={W} height={mainH}>
-        <Text color={theme.dim}>{loading ? '  Loading…' : '  No repository open. Press 5 to pick one, or /open <path>.'}</Text>
+        <Text color={theme.dim}>{loading ? '  Loading…' : '  No repository open. Press 6 to pick one, or /open <path>.'}</Text>
       </Panel>
     );
   } else {
-    const View = { graph: GraphView, changes: ChangesView, branches: BranchesView, stash: StashView, prs: PrView }[view];
+    const View = { graph: GraphView, changes: ChangesView, branches: BranchesView, stash: StashView, prs: PrView, worktrees: WorktreesView }[view];
     main = <View data={data} ctx={ctx} width={W} height={mainH} active={viewActive} filter={filter} prVersion={prVersion} />;
   }
 
@@ -549,7 +571,7 @@ export function App({ initialPath, config: initialConfig }) {
       <Box height={mainH} width={W}>
         {main}
       </Box>
-      {showWelcome ? <Welcome mood={mood} data={data} width={W} /> : null}
+      {showWelcome ? <Welcome mood={mood} data={data} width={W} update={update} /> : null}
       {act.map((segs, i) => (
         <Row key={i} pointer={false} width={W} segments={segs} />
       ))}

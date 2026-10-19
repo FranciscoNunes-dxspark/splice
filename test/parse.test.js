@@ -8,6 +8,7 @@ import {
   parseRefs,
   parseStatus,
   parseTrack,
+  parseWorktrees,
   relTime,
   splitArgs,
 } from '../src/parse.js';
@@ -161,4 +162,26 @@ test('slash suggestions: command names, then ref completion', () => {
   assert.equal(suggestionsFor('/commit ', { data }).length, 0);
   assert.equal(findCommand('co'), null, 'ambiguous: commit, continue, checkout');
   assert.equal(findCommand('chec').name, 'checkout');
+});
+
+test('worktrees: main, branch, detached, locked and missing ones, paths with spaces', () => {
+  const raw = [
+    'worktree C:/Team/Keel', 'HEAD aaaa', 'branch refs/heads/main', '',
+    'worktree C:/Team/Keel feature', 'HEAD bbbb', 'branch refs/heads/feature/login', 'locked on a USB drive', '',
+    'worktree C:/Team/Keel-review', 'HEAD cccc', 'detached', 'locked', '',
+    'worktree C:/Team/gone', 'HEAD dddd', 'branch refs/heads/gone', 'prunable gitdir file points to non-existent location', '',
+    '',
+  ].join('\0');
+  const list = parseWorktrees(raw);
+  assert.deepEqual(
+    list.map((w) => [w.path, w.branch, w.head, w.main, w.locked, w.prunable, w.reason]),
+    [
+      ['C:/Team/Keel', 'main', 'aaaa', true, false, false, ''],
+      ['C:/Team/Keel feature', 'feature/login', 'bbbb', false, true, false, 'on a USB drive'],
+      ['C:/Team/Keel-review', null, 'cccc', false, true, false, ''],
+      ['C:/Team/gone', 'gone', 'dddd', false, false, true, 'gitdir file points to non-existent location'],
+    ],
+  );
+  assert.deepEqual(parseWorktrees(['worktree /srv/repo.git', 'bare', '', ''].join('\0')).map((w) => [w.bare, w.main]), [[true, true]]);
+  assert.deepEqual(parseWorktrees(''), []);
 });

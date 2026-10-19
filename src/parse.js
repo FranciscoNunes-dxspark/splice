@@ -167,6 +167,34 @@ export function parseStash(raw) {
     });
 }
 
+/** Parses `git worktree list --porcelain -z`. The first entry is the main working tree. */
+export function parseWorktrees(raw) {
+  const out = [];
+  let wt = null;
+  for (const field of raw.split('\0')) {
+    // An empty field ends one worktree's block.
+    if (!field) {
+      wt = null;
+      continue;
+    }
+    const sp = field.indexOf(' ');
+    const key = sp < 0 ? field : field.slice(0, sp);
+    const val = sp < 0 ? '' : field.slice(sp + 1);
+    if (key === 'worktree') {
+      wt = { path: val, head: null, branch: null, main: !out.length, bare: false, locked: false, prunable: false, reason: '' };
+      out.push(wt);
+    } else if (!wt) continue;
+    else if (key === 'HEAD') wt.head = val;
+    else if (key === 'branch') wt.branch = val.replace(/^refs\/heads\//, '');
+    else if (key === 'bare') wt.bare = true;
+    else if (key === 'locked' || key === 'prunable') {
+      wt[key] = true;
+      wt.reason = wt.reason || val;
+    }
+  }
+  return out;
+}
+
 /** Parses `--name-status` lines: "M\tpath" or "R087\told\tnew". */
 export function parseNameStatus(raw) {
   return raw
