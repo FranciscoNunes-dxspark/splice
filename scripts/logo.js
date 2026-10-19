@@ -1,6 +1,6 @@
 // Draws Knot into assets/: knot.svg (README, GitHub), knot.png (social preview), knot.ico
 // (the Windows executable's icon), and knot-transparent.svg/.png/.ico (just the otter, no background),
-// all from the pixels in src/knot.js, each with the Git logo as a badge in the bottom-right corner.
+// all from the pixels in src/knot.js, each with a pixel-art Git logo as a badge in the bottom-right corner.
 //   node scripts/logo.js
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { deflateSync } from 'node:zlib';
@@ -18,134 +18,82 @@ const H = px.length;
 
 const hex = (h) => [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16), 255];
 
-// The Git logo, in the 92 × 92 frame of its official SVG: an orange rounded diamond with a white
-// branch (a line in from the top-left edge, a node, a stem down to a node and a branch to the right).
-const GIT = '#f05032';
-const WHITE = '#ffffff';
-const DIAMOND = { half: 46 / Math.SQRT2, round: 4.2 };
-const STROKE = 5.79 / 2;
-const NODE = 7.04;
-const TOP = [46.38, 27.5];
-const RIGHT = [65.29, 46.54];
-const BOTTOM = [46.2, 65.67];
-const LINES = [[[20, 1], TOP], [TOP, BOTTOM], [TOP, RIGHT]];
+// The Git logo as pixels: the orange diamond with the white branch (a line in from the top-left
+// edge, a node, a stem down to a node and a branch off to a node on the right). 'O' is the orange.
+// It's drawn at twice Knot's resolution, the coarsest the branch still reads at.
+const COLOURS = { ...PALETTE, O: '#f05032' };
+const GIT = [
+  '......OOO......',
+  '.....OOOOO.....',
+  '....OWOOOOO....',
+  '...OOOWWWOOO...',
+  '..OOOOWWWOOOO..',
+  '.OOOOOWWWOOOOO.',
+  'OOOOOOOWOWOOOOO',
+  'OOOOOOOWOOWWWOO',
+  'OOOOOOOWOOWWWOO',
+  '.OOOOOWWWOWWWO.',
+  '..OOOOWWWOOOO..',
+  '...OOOWWWOOO...',
+  '....OOOOOOO....',
+  '.....OOOOO.....',
+  '......OOO......',
+];
 
-// Where the badge goes, in drawing cells: on the dark square (20 cells), on the transparent square
-// (16 cells), and on the otter cropped to its own W × H.
-const BADGE = {
-  square: { cx: 15, cy: 15, r: 4, gap: 0.6 },
-  icon: { cx: 12.5, cy: 12.5, r: 3.3, gap: 0.5 },
-  cropped: { cx: W - 2.8, cy: H - 2.8, r: 2.8, gap: 0.45 },
-};
-const scaled = ({ cx, cy, r, gap }, k) => ({ cx: cx * k, cy: cy * k, r: r * k, gap: gap * k });
-
-/** Signed distance from the diamond's edge (negative inside). */
-function diamondDistance(x, y) {
-  const u = Math.abs((x - 46 + (y - 46)) / Math.SQRT2) - (DIAMOND.half - DIAMOND.round);
-  const v = Math.abs((x - 46 - (y - 46)) / Math.SQRT2) - (DIAMOND.half - DIAMOND.round);
-  return Math.hypot(Math.max(u, 0), Math.max(v, 0)) + Math.min(Math.max(u, v), 0) - DIAMOND.round;
-}
-
-function onBranch(x, y) {
-  const near = ([ax, ay], [bx, by]) => {
-    const t = Math.max(0, Math.min(1, ((x - ax) * (bx - ax) + (y - ay) * (by - ay)) / ((bx - ax) ** 2 + (by - ay) ** 2)));
-    return Math.hypot(x - ax - t * (bx - ax), y - ay - t * (by - ay)) <= STROKE;
-  };
-  return [TOP, RIGHT, BOTTOM].some(([cx, cy]) => Math.hypot(x - cx, y - cy) <= NODE) || LINES.some(([a, b]) => near(a, b));
-}
+// Knot at the badge's resolution: every pixel doubled.
+const px2 = px.flatMap((row) => {
+  const wide = [...row].map((c) => c + c).join('');
+  return [wide, wide];
+});
 
 /**
- * Puts the Git badge on RGBA rows, centred at (cx, cy) with half-diagonal r, in image pixels,
- * cut out of the picture by a `gap`-wide ring of `gapColor` so it stands apart from Knot.
- * Each pixel averages 4 × 4 samples, so the badge's edges are smooth at any size.
+ * Knot at (ox, oy) on a w × h grid of half-pixels, with the badge's top-left corner at (bx, by),
+ * cut out of the otter by a one-cell gap. Rows of palette letters, '.' for nothing.
  */
-function withBadge(rows, { cx, cy, r, gap, gapColor }) {
-  const unit = r / 46; // image pixels per logo unit
-  const n = 4;
-  for (let y = Math.floor(cy - r - gap); y <= Math.ceil(cy + r + gap); y++) {
-    const row = rows[y];
-    if (!row) continue;
-    for (let x = Math.floor(cx - r - gap); x <= Math.ceil(cx + r + gap); x++) {
-      if (x < 0 || x >= row.length / 4) continue;
-      const under = row.slice(x * 4, x * 4 + 4);
-      const sum = [0, 0, 0, 0];
-      for (let sy = 0; sy < n; sy++) {
-        for (let sx = 0; sx < n; sx++) {
-          const bx = 46 + (x + (sx + 0.5) / n - cx) / unit;
-          const by = 46 + (y + (sy + 0.5) / n - cy) / unit;
-          const d = diamondDistance(bx, by);
-          const c = d <= 0 ? hex(onBranch(bx, by) ? WHITE : GIT) : d * unit <= gap ? gapColor : under;
-          // Premultiplied, so transparent samples don't darken the edge.
-          for (let i = 0; i < 3; i++) sum[i] += (c[i] * c[3]) / 255;
-          sum[3] += c[3];
-        }
-      }
-      const a = sum[3] / (n * n);
-      const px = a ? [...sum.slice(0, 3).map((v) => Math.round((v / (n * n)) * (255 / a))), Math.round(a)] : [0, 0, 0, 0];
-      row.splice(x * 4, 4, ...px);
+function grid(w, h, ox, oy, bx, by) {
+  const badge = (x, y) => GIT[y - by]?.[x - bx] ?? '.';
+  return Array.from({ length: h }, (_, y) =>
+    Array.from({ length: w }, (_, x) => {
+      if (badge(x, y) !== '.') return badge(x, y);
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) if (badge(x + dx, y + dy) !== '.') return '.';
+      return px2[y - oy]?.[x - ox] ?? '.';
+    }).join(''),
+  );
+}
+
+// The dark square: 40 half-pixels across, the 28 × 20 otter centred with a margin.
+const SQUARE = grid(40, 40, 6, 10, 23, 23);
+// The transparent icon: 32 across, so the usual icon sizes (16, 32, 48 … 256) keep Knot's pixels whole.
+const ICON = grid(32, 32, 2, 6, 17, 17);
+// The otter cropped to the drawing, with room right and below for the badge to sit on.
+const CROPPED = grid(px2[0].length + 4, px2.length + 4, 0, 0, px2[0].length - 11, px2.length - 11);
+
+/** A grid drawn at `scale` image pixels per cell, as RGBA rows; `inside(x, y)` limits it to a shape. */
+function paint(cells, scale, bg = [0, 0, 0, 0], inside = () => true) {
+  const rows = [];
+  for (let y = 0; y < Math.round(cells.length * scale); y++) {
+    const row = [];
+    for (let x = 0; x < Math.round(cells[0].length * scale); x++) {
+      const c = cells[Math.floor(y / scale)][Math.floor(x / scale)];
+      row.push(...(!inside(x, y) ? [0, 0, 0, 0] : COLOURS[c] ? hex(COLOURS[c]) : bg));
     }
+    rows.push(row);
   }
   return rows;
 }
 
-/** The same badge as SVG, plus a mask that cuts its gap out of whatever it sits on. */
-function svgBadge({ cx, cy, r, gap }) {
-  const k = (r / 46).toFixed(5);
-  const at = `translate(${cx - r} ${cy - r}) scale(${k})`;
-  const shape = (pad, fill) =>
-    `<rect x="${-DIAMOND.half - pad}" y="${-DIAMOND.half - pad}" width="${2 * (DIAMOND.half + pad)}" height="${2 * (DIAMOND.half + pad)}" rx="${DIAMOND.round + pad}" fill="${fill}" transform="translate(46 46) rotate(45)"/>`;
-  const p = (n) => n.toFixed(2);
-  const lines = LINES.map(([[x1, y1], [x2, y2]]) => `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}"/>`).join('');
-  const nodes = [TOP, RIGHT, BOTTOM].map(([x, y]) => `<circle cx="${x}" cy="${y}" r="${NODE}"/>`).join('');
-  return {
-    defs: `<defs>
-<clipPath id="git-diamond">${shape(0, '#000')}</clipPath>
-<mask id="git-gap" maskUnits="userSpaceOnUse"><rect x="-1" y="-1" width="999" height="999" fill="#fff"/><g transform="${at}">${shape(gap / (r / 46), '#000')}</g></mask>
-</defs>`,
-    badge: `<g transform="${at}" shape-rendering="geometricPrecision">${shape(0, GIT)}<g clip-path="url(#git-diamond)" fill="${WHITE}" stroke="${WHITE}" stroke-width="${p(2 * STROKE)}" stroke-linecap="round">${lines}</g><g fill="${WHITE}">${nodes}</g></g>`,
-  };
-}
-
-// Square canvas with the otter centred and a margin, as RGBA rows.
+// The dark rounded square with the otter, as RGBA rows; transparent outside the corners.
 function canvas(size) {
-  const cells = 20; // the drawing is 16 × 10; leave room around it
-  const scale = size / cells;
-  const ox = (cells - W) / 2;
-  const oy = (cells - H) / 2;
-  const bg = hex(BG);
   const radius = size * 0.18;
-  const rows = [];
-  for (let y = 0; y < size; y++) {
-    const row = [];
-    for (let x = 0; x < size; x++) {
-      // Rounded square background, transparent outside the corners.
-      const cx = Math.max(radius - x, x - (size - 1 - radius), 0);
-      const cy = Math.max(radius - y, y - (size - 1 - radius), 0);
-      if (cx * cx + cy * cy > radius * radius) {
-        row.push(0, 0, 0, 0);
-        continue;
-      }
-      const c = px[Math.floor(y / scale - oy)]?.[Math.floor(x / scale - ox)];
-      row.push(...(PALETTE[c] ? hex(PALETTE[c]) : bg));
-    }
-    rows.push(row);
-  }
-  return withBadge(rows, { ...scaled(BADGE.square, scale), gapColor: bg });
+  return paint(SQUARE, size / 40, hex(BG), (x, y) => {
+    const cx = Math.max(radius - x, x - (size - 1 - radius), 0);
+    const cy = Math.max(radius - y, y - (size - 1 - radius), 0);
+    return cx * cx + cy * cy <= radius * radius;
+  });
 }
 
 // Just the otter on transparency, cropped to the drawing: `scale` image pixels per drawing pixel.
-function bare(scale) {
-  const rows = [];
-  for (let y = 0; y < H * scale; y++) {
-    const row = [];
-    for (let x = 0; x < W * scale; x++) {
-      const c = px[Math.floor(y / scale)][Math.floor(x / scale)];
-      row.push(...(PALETTE[c] ? hex(PALETTE[c]) : [0, 0, 0, 0]));
-    }
-    rows.push(row);
-  }
-  return withBadge(rows, { ...scaled(BADGE.cropped, scale), gapColor: [0, 0, 0, 0] });
-}
+const bare = (scale) => paint(CROPPED, scale / 2);
 
 /** Encodes RGBA rows as a PNG; a number means the square background canvas of that size. */
 function png(image) {
@@ -182,24 +130,8 @@ function png(image) {
 }
 
 // ICO files may hold PNGs directly (Windows Vista and later).
-// The otter centred on a transparent square, for icons. 16 cells across, so the usual icon
-// sizes (16, 32, 48 … 256) are whole multiples and every pixel stays crisp.
-function bareSquare(size) {
-  const cells = 16;
-  const scale = size / cells;
-  const ox = Math.floor((cells - W) / 2);
-  const oy = Math.floor((cells - H) / 2);
-  const rows = [];
-  for (let y = 0; y < size; y++) {
-    const row = [];
-    for (let x = 0; x < size; x++) {
-      const c = px[Math.floor(y / scale) - oy]?.[Math.floor(x / scale) - ox];
-      row.push(...(PALETTE[c] ? hex(PALETTE[c]) : [0, 0, 0, 0]));
-    }
-    rows.push(row);
-  }
-  return withBadge(rows, { ...scaled(BADGE.icon, scale), gapColor: [0, 0, 0, 0] });
-}
+// The otter centred on a transparent square, for icons.
+const bareSquare = (size) => paint(ICON, size / 32);
 
 // An uncompressed 32-bit icon image: BITMAPINFOHEADER, BGRA rows bottom-up, then the 1-bit
 // transparency mask older readers use. Every program that reads .ico files reads these.
@@ -253,24 +185,16 @@ function ico(sizes, draw = canvas) {
 
 /** The logo as SVG: on its dark rounded square, or with `background: false` just the otter, cropped. */
 function svg({ background = true } = {}) {
-  const cells = background ? 20 : null;
-  const ox = background ? (cells - W) / 2 : 0;
-  const oy = background ? (cells - H) / 2 : 0;
+  const cells = background ? SQUARE : CROPPED;
   const rects = [];
-  px.forEach((row, y) =>
+  cells.forEach((row, y) =>
     [...row].forEach((c, x) => {
-      if (PALETTE[c]) rects.push(`<rect x="${x + ox}" y="${y + oy}" width="1.02" height="1.02" fill="${PALETTE[c]}"/>`);
+      if (COLOURS[c]) rects.push(`<rect x="${x}" y="${y}" width="1.02" height="1.02" fill="${COLOURS[c]}"/>`);
     }),
   );
-  const box = background ? `0 0 ${cells} ${cells}` : `0 0 ${W} ${H}`;
-  const { defs, badge } = svgBadge(background ? BADGE.square : BADGE.cropped);
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${box}" shape-rendering="crispEdges">
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${cells[0].length} ${cells.length}" shape-rendering="crispEdges">
 <title>Knot, the Tiller otter</title>
-${defs}
-${background ? `<rect width="${cells}" height="${cells}" rx="3.6" fill="${BG}"/>\n` : ''}<g mask="url(#git-gap)">
-${rects.join('\n')}
-</g>
-${badge}
+${background ? `<rect width="40" height="40" rx="7.2" fill="${BG}"/>\n` : ''}${rects.join('\n')}
 </svg>
 `;
 }
