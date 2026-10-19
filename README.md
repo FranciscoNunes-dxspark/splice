@@ -26,7 +26,11 @@ A keyboard-driven git client for the terminal, in the spirit of GitKraken, with 
 
 ## Install
 
-Needs Node 22+ and git on the PATH.
+**Download** the executable for your platform from [Releases](https://github.com/FranciscoNunes-dxspark/tiller/releases): `tiller-windows-x64.exe`, `tiller-linux-x64` / `-arm64`, `tiller-macos-arm64` / `-x64`. It's a single file with nothing else to install; it only needs git on the PATH. Rename it to `tiller` (`tiller.exe`) and put it in a folder on your PATH. `SHA256SUMS.txt` lists each file's checksum.
+
+The builds aren't code-signed, so Windows SmartScreen may ask before the first run ("More info" → "Run anyway"), and on macOS you may need `xattr -d com.apple.quarantine tiller-macos-arm64` once.
+
+**From source** (Node 22+):
 
 ```bash
 cd C:\Team\Tiller
@@ -112,7 +116,25 @@ npm test     # parser tests, plus end-to-end tests that drive the UI against a t
 npm start    # run from the checkout
 ```
 
-The `.jsx` sources run directly: `src/register.js` installs a loader that compiles them with esbuild as they're imported, so there is no build step.
+The `.jsx` sources run directly: `src/register.js` installs a loader that compiles them with esbuild as they're imported, so there is no build step for development.
+
+### Executables and releases
+
+```bash
+npm run build       # dist/ executable for this machine
+npm run build:all   # every platform (Bun cross-compiles)
+```
+
+The executables are made with [Bun](https://bun.sh)'s `--compile` (fetched by npx, so nothing to install), which bundles the code and a runtime into one file of about 85 MB.
+
+To publish a release, set the version in `package.json`, commit, and push a matching tag:
+
+```bash
+git tag v0.2.0
+git push origin v0.2.0
+```
+
+The Release workflow (`.github/workflows/release.yml`) checks that the tag matches `package.json`, runs the tests, builds every platform and publishes a GitHub Release with the files and generated notes. The Tests workflow runs the suite on Linux and Windows for every push to main and every pull request.
 
 - `src/parse.js`: pure parsers for git's porcelain output. Most tests target these.
 - `src/repo.js`: what's read from git for each view.
