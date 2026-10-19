@@ -76,7 +76,8 @@ test('the app shows a newer release, keeps the check in the config, and can be t
 
     const off = render(React.createElement(App, { initialPath: notRepo, config: { recent: [], roots: [], history: [], checkForUpdates: false }, checkUpdate }));
     try {
-      await until(() => /isn't inside a git repository/.test(off.lastFrame() ?? ''), 'the first load');
+      // Not a repository, so the first load ends in the Repos view (the note naming the path can be cut off).
+      await until(() => /Repositories/.test(off.lastFrame() ?? ''), 'the first load');
       await new Promise((r) => setTimeout(r, 200));
       assert.equal(calls, 1);
       assert.doesNotMatch(off.lastFrame(), /is out/);

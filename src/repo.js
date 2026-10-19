@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs';
+import { existsSync, realpathSync } from 'node:fs';
 import { readFile, readdir, stat } from 'node:fs/promises';
 import { basename, join, resolve } from 'node:path';
 import { samePath } from './config.js';
@@ -23,8 +23,17 @@ export async function findRepo(path) {
   const [root, gitDir, commonDir] = out.trim().split('\n');
   if (!root || !gitDir) throw new Error(`${path} isn't inside a git working tree`);
   // The common dir (shared refs, config, stash) is gitDir itself unless this is a linked worktree.
-  // Git may print it relative to `path`.
-  return { root: resolve(root), gitDir: resolve(gitDir), commonDir: resolve(path, commonDir || gitDir), name: basename(resolve(root)) };
+  // Git may print it relative to `path`, and so in whatever form `path` came in (a Windows short
+  // name like RUNNER~1, say), so it's made canonical: the same repo always gets the same one.
+  return { root: resolve(root), gitDir: resolve(gitDir), commonDir: canonical(resolve(path, commonDir || gitDir)), name: basename(resolve(root)) };
+}
+
+function canonical(p) {
+  try {
+    return realpathSync.native(p);
+  } catch {
+    return p;
+  }
 }
 
 /** Which multi-step operation is in progress, if any. */
