@@ -133,6 +133,7 @@ export function GraphView({ data, ctx, width, height, active, filter }) {
       if (input === 'K') return setDetailOffset((o) => Math.max(0, o - 3));
       if (sel?.wip) {
         if (key.return) ctx.setView('changes');
+        else if (input === 'R') a.claudeLook(ctx, 'review', { kind: 'changes' });
         return;
       }
       if (!c) return;
@@ -148,6 +149,7 @@ export function GraphView({ data, ctx, width, height, active, filter }) {
       else if (input === 'X') a.reset(ctx, c.hash, short);
       // From this commit (included) up to HEAD.
       else if (input === 'i') a.openRebase(ctx, c.parents[0] ?? null, short);
+      else if (input === 'e' || input === 'R') a.claudeLook(ctx, input === 'e' ? 'explain' : 'review', { kind: 'commit', hash: c.hash, subject: c.subject });
     },
     { isActive: active },
   );

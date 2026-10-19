@@ -88,12 +88,14 @@ export function PrView({ data, ctx, width, height, active, prVersion }) {
       if (!ctx.viewHasKeys()) return;
       if (nav.handle(input, key)) return;
       if (input === 'n') return a.createPr(ctx, '');
+      if (input === 'W') return a.draftPr(ctx, '');
       if (!pr) return;
       if (key.return) ctx.showPrDiff(pr);
       else if (input === 'c') a.prCheckout(ctx, pr);
       else if (input === 'a') a.prApprove(ctx, pr);
       else if (input === 'C') ctx.prefill('/comment ');
       else if (input === 'o') ctx.openUrl(pr.url);
+      else if (input === 'e' || input === 'R') a.claudeLook(ctx, input === 'e' ? 'explain' : 'review', { kind: 'pr', pr });
     },
     { isActive: active },
   );

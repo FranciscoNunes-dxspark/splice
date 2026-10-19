@@ -2,6 +2,7 @@
 // `ctx` is the app's handle: data, exec, confirm, note, prefill, and so on (see App.jsx).
 import { rm } from 'node:fs/promises';
 import { join } from 'node:path';
+import { READ_ONLY, cleanSubject, clip, commitPrompt, lookPrompt, parsePrDraft, prPrompt } from './claude.js';
 import { splitArgs } from './parse.js';
 import { buildPatch, coversAll, parseDiff } from './patch.js';
 import { cleanup, loadPlan, planProblem, planSummary, prepare } from './rebase.js';
@@ -488,16 +489,7 @@ export async function createPr(ctx, text) {
   if (!host) return;
   const { branch } = ctx.data.status;
   if (!branch.head) return ctx.note('HEAD is detached. Check out the branch you want to open a pull request from.', 'error');
-  const words = splitArgs(text ?? '');
-  let target = null;
-  let draft = false;
-  const titleWords = [];
-  for (let i = 0; i < words.length; i++) {
-    if (words[i] === '--into' || words[i] === '--base') target = words[++i];
-    else if (words[i] === '--draft') draft = true;
-    else titleWords.push(words[i]);
-  }
-  const title = titleWords.join(' ').trim();
+  let { target, draft, title } = prArgs(text);
   if (!title) {
     const last = ctx.data.graph.find((r) => r.commit?.refs.some((x) => x.head))?.commit.subject ?? '';
     return ctx.prefill(`/pr ${last}`);
@@ -509,23 +501,169 @@ export async function createPr(ctx, text) {
   }
   if (!target) return ctx.note('Say which branch it goes into: /pr <title> --into <branch>', 'error');
   if (target === branch.head) return ctx.note(`You're on ${target} itself. Switch to the branch with your changes first.`, 'error');
-  const ok = await ctx.confirm({
+  // A description Claude drafted for this branch (W in PRs) goes with it, if you say so.
+  const drafted = ctx.prDraft?.branch === branch.head && ctx.prDraft.body ? ctx.prDraft.body : '';
+  const answer = await ctx.confirm({
     title: `Open a ${draft ? 'draft ' : ''}pull request from ${branch.head} into ${target}?`,
     detail: `"${title}" on ${host.name}${!branch.upstream || branch.ahead ? '. Pushes the branch first.' : ''}`,
-    options: YES_NO('Yes, open it'),
+    options: drafted
+      ? [
+          { label: "Yes, with Claude's description", value: 'body' },
+          { label: 'Yes, without a description', value: 'bare' },
+          { label: 'No', value: false },
+        ]
+      : YES_NO('Yes, open it'),
   });
-  if (!ok) return;
+  if (!answer) return;
+  const body = answer === 'body' ? drafted : '';
   // The server can only see what has been pushed.
   if (!branch.upstream || branch.ahead) {
     const pushed = await push(ctx);
     if (!pushed?.ok) return;
   }
-  const r = await hostTask(ctx, `${cliName(host)} create "${title}"`, (signal) => host.create({ title, source: branch.head, target, draft }, signal), {
+  const r = await hostTask(ctx, `${cliName(host)} create "${title}"`, (signal) => host.create({ title, body, source: branch.head, target, draft }, signal), {
     label: 'Opening pull request',
     refresh: false,
   });
-  if (r.ok) ctx.prsChanged();
+  if (r.ok) {
+    ctx.prDraft = null;
+    ctx.prsChanged();
+  }
   return r;
+}
+
+// Claude, through the Claude Code CLI: App passes `ctx.askClaude` (claude.js's `ask`; tests pass a stub).
+// A call takes several seconds, so it runs as a task: the spinner, esc to cancel, one at a time.
+function askClaude(ctx, what, prompt, input, tools = []) {
+  return ctx.task(
+    `claude: ${what}`,
+    async (signal) => {
+      const text = typeof input === 'function' ? await input(signal) : input;
+      return { stdout: await ctx.askClaude(prompt, { input: clip(text), cwd: ctx.data.root, signal, tools }), stderr: '' };
+    },
+    { label: 'Asking Claude', refresh: false, quiet: true },
+  );
+}
+
+function needClaude(ctx) {
+  if (!needRepo(ctx)) return false;
+  if (ctx.askClaude) return true;
+  ctx.note('Claude is not available here.', 'error');
+  return false;
+}
+
+/** Claude writes the commit message for the staged changes; it lands in the prompt to edit. */
+export async function describeCommit(ctx) {
+  if (!needClaude(ctx)) return;
+  if (!ctx.data.changes.staged.length) {
+    return ctx.note('Stage what you want to commit first (space, or a for everything), then ask Claude for the message (W).', 'error');
+  }
+  const recent = (await ctx.git(['log', '-n15', '--format=%s']).catch(() => '')).split('\n').filter(Boolean);
+  const r = await askClaude(ctx, 'commit message', commitPrompt(recent), () => ctx.git(['diff', '--cached', '--stat', '--patch', '-M']));
+  if (!r.ok) return r;
+  const subject = cleanSubject(r.out);
+  if (!subject) return ctx.note("Claude didn't suggest a message. Try again, or write one: /commit <message>", 'error');
+  ctx.prefill(`/commit ${subject}`);
+  return r;
+}
+
+/** Claude drafts a pull request for the current branch: the title goes in the prompt, the description with it. */
+export async function draftPr(ctx, text) {
+  if (!needClaude(ctx)) return;
+  const host = needHost(ctx);
+  if (!host) return;
+  const { branch } = ctx.data.status;
+  if (!branch.head) return ctx.note('HEAD is detached. Check out the branch you want to open a pull request from.', 'error');
+  let { target } = prArgs(text);
+  const asked = target;
+  try {
+    target ??= await host.defaultBranch();
+  } catch (e) {
+    return ctx.note(`Couldn't read the default branch from ${host.name}: ${e.message.split('\n')[0]}`, 'error');
+  }
+  if (!target) return ctx.note('Say which branch it goes into: /draft-pr --into <branch>', 'error');
+  if (target === branch.head) return ctx.note(`You're on ${target} itself. Switch to the branch with your changes first.`, 'error');
+  // Compare with the server's copy of the target when there is one: that's what the PR will be against.
+  const { remotes } = ctx.data;
+  const remote = remotes.includes('origin') ? 'origin' : remotes[0];
+  const base = ctx.data.refs.remote.some((b) => b.name === `${remote}/${target}`) ? `${remote}/${target}` : target;
+  const log = await ctx.git(['log', '--reverse', '--format=%s%n%n%b', `${base}..HEAD`]).catch(() => '');
+  if (!log.trim()) return ctx.note(`${branch.head} has no commits that aren't in ${base}, so there's nothing to open a pull request for.`, 'error');
+  const r = await askClaude(ctx, 'pull request', prPrompt(branch.head, target), async () =>
+    `${log.trim()}\n\n${await ctx.git(['diff', '--stat', '--patch', '-M', `${base}...HEAD`])}`,
+  );
+  if (!r.ok) return r;
+  const { title, body } = parsePrDraft(r.out);
+  if (!title) return ctx.note("Claude didn't draft a title. Try again, or open it yourself: /pr <title>", 'error');
+  ctx.prDraft = { branch: branch.head, body };
+  ctx.showText(`Pull request draft: ${branch.head} → ${target}`, `${title}\n\n${body}`, { wrap: true });
+  ctx.prefill(`/pr ${title}${asked ? ` --into ${asked}` : ''}`);
+  return r;
+}
+
+/**
+ * Claude explains (`mode` "explain") or reviews ("review") something: a commit ({ kind: 'commit', hash, subject }),
+ * a pull request ({ kind: 'pr', pr }), or your changes ({ kind: 'changes' }: the staged ones, or else the unstaged).
+ * The answer opens in the viewer.
+ */
+export async function claudeLook(ctx, mode, target) {
+  if (!needClaude(ctx)) return;
+  let what;
+  let input;
+  if (target.kind === 'commit') {
+    what = `${target.hash.slice(0, 7)} ${target.subject}`;
+    input = () => ctx.git(['show', '--stat', '--patch', '-M', '--diff-merges=first-parent', '--format=fuller', target.hash]);
+  } else if (target.kind === 'pr') {
+    const { pr } = target;
+    const host = needHost(ctx);
+    if (!host) return;
+    what = `${pr.label} ${pr.title}`;
+    input = async () => `Pull request ${pr.label}: ${pr.title}\n\n${pr.description ?? ''}\n\n${await host.diff(pr)}`;
+  } else {
+    const { staged, unstaged } = ctx.data.changes;
+    if (!staged.length && !unstaged.length) return ctx.note('There are no changes to look at: the working tree is clean.', 'error');
+    what = staged.length ? 'your staged changes' : 'your unstaged changes';
+    input = () => ctx.git(staged.length ? ['diff', '--cached', '--stat', '--patch', '-M'] : ['diff', '--stat', '--patch', '-M']);
+  }
+  const subject = target.kind === 'commit' ? 'this commit' : target.kind === 'pr' ? 'this pull request' : 'these changes';
+  const r = await askClaude(ctx, `${mode} ${what}`, lookPrompt(mode, subject), input, READ_ONLY);
+  if (r.ok) ctx.showText(`${mode === 'explain' ? 'Claude explains' : 'Claude reviews'} ${what}`, r.out, { wrap: true });
+  return r;
+}
+
+/** /explain [ref] and /review [ref]: a commit by any name git knows. /review alone looks at your changes. */
+export async function claudeRef(ctx, mode, ref) {
+  if (!needClaude(ctx)) return;
+  if (!ref && mode === 'review') return claudeLook(ctx, mode, { kind: 'changes' });
+  let out;
+  try {
+    out = await ctx.git(['log', '-1', '--format=%H%x1f%s', ref || 'HEAD', '--']);
+  } catch {
+    return ctx.note(`No commit called ${ref || 'HEAD'}.`, 'error');
+  }
+  const [hash, subject] = out.trim().split('\x1f');
+  return claudeLook(ctx, mode, { kind: 'commit', hash, subject });
+}
+
+/**
+ * Splits "/pr" arguments into the flags (--into or --base <branch>, --draft) and the title. The title
+ * is kept as typed rather than split into words, so an apostrophe ("Don't ...") isn't taken for a quote.
+ */
+export function prArgs(text) {
+  let target = null;
+  let draft = false;
+  const title = (text ?? '')
+    .replace(/(^|\s)--(?:into|base)\s+(\S+)/g, (_, space, branch) => {
+      target = branch;
+      return space;
+    })
+    .replace(/(^|\s)--draft(?=\s|$)/g, (_, space) => {
+      draft = true;
+      return space;
+    })
+    .replace(/\s+/g, ' ')
+    .trim();
+  return { target, draft, title };
 }
 
 /** `!<args>`: any git command. Output longer than a few lines opens in the viewer. */

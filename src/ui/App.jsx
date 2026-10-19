@@ -38,11 +38,11 @@ const VIEWS = [
 ];
 
 const HINTS = {
-  graph: '↵ diff · c checkout · b branch · m merge · i rebase from here · C cherry-pick · v revert · X reset',
-  changes: 'space stage · ↵ hunks/lines · a all · u unstage all · d discard · c commit · A amend',
+  graph: '↵ diff · c checkout · b branch · m merge · i rebase from here · C cherry-pick · v revert · X reset · e/R Claude explains/reviews',
+  changes: 'space stage · ↵ hunks/lines · a all · u unstage all · d discard · c commit · A amend · W Claude writes it · R review',
   branches: '↵ checkout · n new · m merge · e rebase · d delete',
   stash: '↵ diff · s stash · a apply · o pop · x drop',
-  prs: '↵ diff · c checkout · a approve · C comment · o open in browser · n new PR',
+  prs: '↵ diff · c checkout · a approve · C comment · o open in browser · n new PR · W Claude drafts one · e/R explain/review',
   repos: '↵ open · s scan folder · x forget',
   worktrees: '↵ open · n new · x remove or prune',
 };
@@ -104,7 +104,7 @@ function activityRows(entries) {
   return out.slice(-6);
 }
 
-export function App({ initialPath, config: initialConfig, checkUpdate }) {
+export function App({ initialPath, config: initialConfig, checkUpdate, askClaude }) {
   const { exit } = useApp();
   const { columns, rows } = useTerminalSize();
   const [config, setConfigState] = useState(initialConfig);
@@ -323,6 +323,8 @@ export function App({ initialPath, config: initialConfig, checkUpdate }) {
       return ctx.hostCache.host;
     },
     prsChanged: () => setPrVersion((v) => v + 1),
+    // claude.js's `ask`, from cli.jsx. Tests pass a stub, or nothing (and the Claude keys say it's unavailable).
+    askClaude,
     openUrl,
     note,
     confirm,
