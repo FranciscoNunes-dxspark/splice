@@ -1,6 +1,11 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" shape-rendering="crispEdges">
 <title>Knot, the Tiller otter</title>
+<defs>
+<clipPath id="git-diamond"><rect x="-32.526911934581186" y="-32.526911934581186" width="65.05382386916237" height="65.05382386916237" rx="4.2" fill="#000" transform="translate(46 46) rotate(45)"/></clipPath>
+<mask id="git-gap" maskUnits="userSpaceOnUse"><rect x="-1" y="-1" width="999" height="999" fill="#fff"/><g transform="translate(11 11) scale(0.08696)"><rect x="-39.426911934581184" y="-39.426911934581184" width="78.85382386916237" height="78.85382386916237" rx="11.100000000000001" fill="#000" transform="translate(46 46) rotate(45)"/></g></mask>
+</defs>
 <rect width="20" height="20" rx="3.6" fill="#16201a"/>
+<g mask="url(#git-gap)">
 <rect x="5" y="5" width="1.02" height="1.02" fill="#5fd787"/>
 <rect x="6" y="5" width="1.02" height="1.02" fill="#5fd787"/>
 <rect x="13" y="5" width="1.02" height="1.02" fill="#5fd787"/>
@@ -123,4 +128,6 @@
 <rect x="12" y="14" width="1.02" height="1.02" fill="#5fd787"/>
 <rect x="13" y="14" width="1.02" height="1.02" fill="#5fd787"/>
 <rect x="14" y="14" width="1.02" height="1.02" fill="#5fd787"/>
+</g>
+<g transform="translate(11 11) scale(0.08696)" shape-rendering="geometricPrecision"><rect x="-32.526911934581186" y="-32.526911934581186" width="65.05382386916237" height="65.05382386916237" rx="4.2" fill="#f05032" transform="translate(46 46) rotate(45)"/><g clip-path="url(#git-diamond)" fill="#ffffff" stroke="#ffffff" stroke-width="5.79" stroke-linecap="round"><line x1="20" y1="1" x2="46.38" y2="27.5"/><line x1="46.38" y1="27.5" x2="46.2" y2="65.67"/><line x1="46.38" y1="27.5" x2="65.29" y2="46.54"/></g><g fill="#ffffff"><circle cx="46.38" cy="27.5" r="7.04"/><circle cx="65.29" cy="46.54" r="7.04"/><circle cx="46.2" cy="65.67" r="7.04"/></g></g>
 </svg>
