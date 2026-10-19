@@ -1,0 +1,100 @@
+# Tiller
+
+A keyboard-driven git client for the terminal, in the spirit of GitKraken, with an interface modelled on Claude Code: titled rounded panels, a prompt box with slash commands and completion, `!` to run any git command, and a running log of what each command did.
+
+```
+✻ Tiller  │  Keel  ⎇ main → origin/main ↑1  ● 2 changes                              C:\Team\Keel
+ 1 Graph   2 Changes 2   3 Branches   4 Stash   5 Repos
+╭─ Commits ────────────────────────────────── 125 ─╮╭─ Commit ──────────────── J/K scroll ─╮
+│❯ ◌  // WIP  2 changed files                      ││4e9f0080cb  19/10/2026, 15:14:35      │
+│  ●    ● main ⇅ origin  Compact view on the Pro…  ││Francisco Nunes                       │
+│  ●   Merge pull request #27 from …               ││                                      │
+│  │\                                              ││Compact view on the Production page   │
+│  ● │ Add CLAUDE.md for Claude Code               ││                                      │
+│  │ ●  origin/ccr-618ea99b  Don't show an old …   ││6 files changed                       │
+│  │/                                              ││M README.md                           │
+╰──────────────────────────────────────────────────╯╰──────────────────────────────────────╯
+● git push
+  ⎿  To github.com:you/keel.git
+     4e9f008..d9c8c5a  main -> main
+╭──────────────────────────────────────────────────────────────────────────────────────────╮
+│ > /checkout feat                                                                         │
+╰──────────────────────────────────────────────────────────────────────────────────────────╯
+  feature/login
+  feature/totals
+```
+
+## Install
+
+Needs Node 22+ and git on the PATH.
+
+```bash
+cd C:\Team\Tiller
+npm install
+npm link          # puts a `tiller` command on your PATH
+```
+
+Without `npm link`, run it with `node C:\Team\Tiller\bin\tiller.js`.
+
+## Use
+
+```bash
+tiller              # the repository you're in
+tiller C:\Team\Keel # a specific one
+tiller C:\Team      # not a repository: lists the ones it finds inside
+```
+
+Press `?` inside for every shortcut. The essentials:
+
+| Where | Keys |
+| --- | --- |
+| Anywhere | `1`–`5` or `tab` switch views · `/` commands · `!` any git command · `f` fetch · `p` pull · `P` push · `r` refresh · `esc` cancel the running command · `q` quit |
+| Lists | `j`/`k` or arrows · `g`/`G` top/bottom · `ctrl+d`/`ctrl+u` page · `J`/`K` scroll the right-hand pane |
+| Graph | `↵` full diff · `c` check out · `b` branch here · `t` tag here · `m` merge · `C` cherry-pick · `v` revert · `X` reset to here |
+| Changes | `space` stage/unstage · `a` stage all · `u` unstage all · `d` discard · `c` commit · `A` amend · on conflicts `O` ours / `T` theirs |
+| Branches | `↵` check out (remote branches get a tracking branch) · `n` new from here · `m` merge · `e` rebase onto · `d` delete |
+| Stash | `↵` diff · `s` stash · `a` apply · `o` pop · `x` drop |
+| Repos | `↵` open · `s` add a folder to scan · `x` forget |
+
+### Slash commands
+
+Type `/` and the menu narrows as you type; `tab` completes, `↑`/`↓` picks, `↵` runs. Commands that take a branch complete branch, tag and remote names.
+
+`/commit <msg>` `/amend [msg]` `/checkout <ref>` `/branch <name> [start]` `/delete <ref>` `/merge <ref>` `/rebase <ref>` `/reset <ref>` `/tag <name> [ref]` `/fetch` `/pull [--rebase]` `/push [--force]` `/stash [msg]` `/pop` `/continue` `/abort` `/find <text>` `/open <path>` `/scan <folder>` `/last` `/refresh` `/help` `/quit`
+
+### Running git directly
+
+`!log --stat -5`, `!remote -v`, `!clean -n`: anything after `!` runs as a git command in the open repository. Short output appears in the activity lines; longer output opens in the viewer. Commands that need a terminal of their own (`add -p`, `rebase -i`, anything that opens an editor) won't work here, because git runs without one.
+
+## How it behaves
+
+- **Safe by default.** Discarding, force-deleting a branch, deleting a remote branch, dropping a stash, rebasing, resetting and force-pushing all ask first. `/push --force` uses `--force-with-lease`. Deleting a branch tries `git branch -d` first and only offers `-D` when git says the branch isn't merged.
+- **First push sets the upstream** (`push -u origin <branch>`), so `P` works on a new branch.
+- **Committing with nothing staged** offers to stage everything first.
+- **Merges, rebases, cherry-picks and reverts that stop on conflicts** show a banner in the header. Resolve files in Changes (`space` marks one resolved, `O`/`T` take a side), then `/continue`, or `/abort`.
+- **Outside changes show up on their own.** While open, Tiller checks the repository every 3 seconds and reloads when the status or any ref changes.
+- **Never hangs on a prompt.** Git runs with `GIT_TERMINAL_PROMPT=0`; credentials come from your credential helper (Git Credential Manager on Windows). Esc cancels a slow fetch or push.
+- The graph loads 400 commits at a time and fetches more as you scroll to the bottom. `/find` filters the loaded commits by message, author, hash or branch name.
+
+## Settings
+
+`~/.tiller/config.json` holds the recent repositories, the folders to scan, and the prompt history. You can also set the accent colour:
+
+```json
+{ "accent": "#5fd787" }
+```
+
+## Development
+
+```bash
+npm test     # parser tests, plus end-to-end tests that drive the UI against a throwaway repo
+npm start    # run from the checkout
+```
+
+The `.jsx` sources run directly: `src/register.js` installs a loader that compiles them with esbuild as they're imported, so there is no build step.
+
+- `src/parse.js`: pure parsers for git's porcelain output. Most tests target these.
+- `src/repo.js`: what's read from git for each view.
+- `src/actions.js`: every git operation, written once; keys and slash commands both call these.
+- `src/commands.js`: the slash command list and the completion logic.
+- `src/ui/`: Ink (React for the terminal) components. `App.jsx` owns the layout, focus, the prompt and the `ctx` handle the actions use.

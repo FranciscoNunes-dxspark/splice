@@ -1,0 +1,27 @@
+{
+  "name": "tiller",
+  "version": "0.1.0",
+  "description": "A keyboard-driven git client for the terminal",
+  "type": "module",
+  "bin": {
+    "tiller": "bin/tiller.js"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node bin/tiller.js",
+    "test": "node --import ./src/register.js --test test/*.test.js"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "cli-truncate": "^4.0.0",
+    "esbuild": "^0.25.10",
+    "ink": "^6.8.0",
+    "react": "^19.2.0",
+    "string-width": "^7.2.0"
+  },
+  "devDependencies": {
+    "ink-testing-library": "^4.0.0"
+  }
+}
