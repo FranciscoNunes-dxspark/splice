@@ -160,14 +160,7 @@ npm run build:all   # every platform (Bun cross-compiles)
 
 The executables are made with [Bun](https://bun.sh)'s `--compile` (fetched by npx, so nothing to install), which bundles the code and a runtime into one file of about 85 MB.
 
-To publish a release, set the version in `package.json`, commit, and push a matching tag:
-
-```bash
-git tag v0.2.0
-git push origin v0.2.0
-```
-
-The Release workflow (`.github/workflows/release.yml`) checks that the tag matches `package.json`, runs the tests, builds every platform and publishes a GitHub Release with the files and generated notes. The Tests workflow runs the suite on Linux and Windows for every push to main and every pull request.
+Releases are automatic: bump the version in `package.json` (`npm version patch --no-git-tag-version`, or `minor` / `major`) and get the commit onto main. The Release workflow (`.github/workflows/release.yml`) runs on every push to main; when the version has no GitHub Release yet, it runs the tests, builds every platform and publishes release `v<version>` with the files and generated notes, creating the tag. Pushes that don't change the version publish nothing. To retry a failed release, use "Run workflow" on the Release workflow in the Actions tab. The Tests workflow runs the suite on Linux and Windows for every push to main and every pull request.
 
 - `src/parse.js`: pure parsers for git's porcelain output. Most tests target these.
 - `src/repo.js`: what's read from git for each view.
