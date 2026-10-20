@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import React from 'react';
 import { render } from 'ink-testing-library';
+import { removeTemp } from './temp.js';
 import { App } from '../src/ui/App.jsx';
 
 const KEYS = { down: '\x1b[B', enter: '\r', esc: '\x1b', backspace: '\x7f' };
@@ -16,10 +17,10 @@ let dir;
 const git = (...args) => execFileSync('git', args, { cwd: dir, encoding: 'utf8' }).trim();
 
 before(() => {
-  base = mkdtempSync(join(tmpdir(), 'tiller-'));
+  base = mkdtempSync(join(tmpdir(), 'splice-'));
   dir = join(base, 'repo');
   mkdirSync(dir);
-  process.env.TILLER_HOME = join(base, 'home');
+  process.env.SPLICE_HOME = join(base, 'home');
   git('init', '-q', '-b', 'main');
   git('config', 'core.autocrlf', 'false');
   git('config', 'user.name', 'Test');
@@ -37,7 +38,8 @@ before(() => {
   writeFileSync(join(dir, 'new.txt'), 'brand new\n');
 });
 
-after(() => rmSync(base, { recursive: true, force: true }));
+// On Windows a git still finishing for an unmounted app keeps the folder busy for a moment.
+after(() => removeTemp(base));
 
 let lastApp = null;
 
@@ -173,6 +175,26 @@ test('interactive rebase from the graph: fix up the last commit into the one bef
   }
 });
 
+test('the window title names the repo and branch, and follows a switch made outside Splice', async () => {
+  const other = join(base, 'titled');
+  mkdirSync(other);
+  const g = (...args) => execFileSync('git', args, { cwd: other, encoding: 'utf8' }).trim();
+  g('init', '-q', '-b', 'main');
+  g('config', 'user.name', 'T');
+  g('config', 'user.email', 't@example.com');
+  g('commit', '-q', '--allow-empty', '-m', 'Start');
+  const titles = [];
+  lastApp = render(React.createElement(App, { initialPath: other, config: { recent: [], roots: [], history: [] }, setTitle: (t) => titles.push(t) }));
+  const app = lastApp;
+  try {
+    await until(() => titles.at(-1) === 'titled (main) — Splice', 'the title for main');
+    g('switch', '-q', '-c', 'topic');
+    await until(() => titles.at(-1) === 'titled (topic) — Splice', 'the title for topic');
+  } finally {
+    app.unmount();
+  }
+});
+
 test('discarding asks first, and "No" leaves the file alone', async () => {
   const app = start();
   const frame = () => app.lastFrame() ?? '';
@@ -194,7 +216,9 @@ test('discarding asks first, and "No" leaves the file alone', async () => {
 test('/discard throws away every change, keeping untracked files if asked', async () => {
   const other = join(base, 'discard-repo');
   mkdirSync(other);
-  const g = (...args) => execFileSync('git', args, { cwd: other, encoding: 'utf8' }).trim();
+  // The status checks polled below mustn't take the index lock from under Splice's own git.
+  const env = { ...process.env, GIT_OPTIONAL_LOCKS: '0' };
+  const g = (...args) => execFileSync('git', args, { cwd: other, encoding: 'utf8', env }).trim();
   g('init', '-q', '-b', 'main');
   g('config', 'core.autocrlf', 'false');
   g('config', 'user.name', 'T');
@@ -247,7 +271,7 @@ test('worktrees: listed, opened, pruned when missing, and removed after asking',
   g(main, 'worktree', 'add', '-q', '--detach', '../wt-repo-temp');
   rmSync(join(base, 'wt-repo-gone'), { recursive: true, force: true });
   const listed = () => g(main, 'worktree', 'list');
-  // On Windows, reading the list while Tiller is deleting a worktree's files can fail; that's "not yet".
+  // On Windows, reading the list while Splice is deleting a worktree's files can fail; that's "not yet".
   const gone = (name) => {
     try {
       return !listed().includes(name);
@@ -273,16 +297,16 @@ test('worktrees: listed, opened, pruned when missing, and removed after asking',
   };
   try {
     await until(() => frame().includes('Start'), 'the graph');
-    app.stdin.write('7');
+    app.stdin.write('4');
     await until(() => frame().includes('wt-repo-feat') && frame().includes('missing'), 'the Worktrees view');
     assert.match(frame(), /● wt-repo\s+main/);
-    assert.match(frame(), /7 Worktrees 4/);
+    assert.match(frame(), /4 Worktrees 4/);
 
     await pick('wt-repo-feat');
     app.stdin.write(KEYS.enter);
     await until(() => frame().includes('⎇ feat'), 'the feat worktree to open');
 
-    app.stdin.write('7');
+    app.stdin.write('4');
     await until(() => /● wt-repo-feat/.test(frame()), 'the Worktrees view, from feat');
     await pick('wt-repo-gone');
     app.stdin.write('x');

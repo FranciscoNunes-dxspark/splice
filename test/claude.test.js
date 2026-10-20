@@ -1,11 +1,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import React from 'react';
 import { render } from 'ink-testing-library';
+import { removeTemp } from './temp.js';
 import { READ_ONLY, cleanSubject, clip, commitPrompt, parsePrDraft } from '../src/claude.js';
 import { prArgs } from '../src/actions.js';
 import { App } from '../src/ui/App.jsx';
@@ -44,16 +45,17 @@ test('prompts carry the repository style, and big inputs are cut with a note', (
 });
 
 test('through the UI: Claude writes the commit message, then explains and reviews', async () => {
-  const base = mkdtempSync(join(tmpdir(), 'tiller-claude-'));
+  const base = mkdtempSync(join(tmpdir(), 'splice-claude-'));
   const dir = join(base, 'repo');
   mkdirSync(dir);
-  const prevHome = process.env.TILLER_HOME;
-  process.env.TILLER_HOME = join(base, 'home');
+  const prevHome = process.env.SPLICE_HOME;
+  process.env.SPLICE_HOME = join(base, 'home');
   const git = (...args) => execFileSync('git', args, { cwd: dir, encoding: 'utf8' }).trim();
   git('init', '-q', '-b', 'main');
   git('config', 'user.name', 'T');
   git('config', 'user.email', 't@example.com');
   git('config', 'core.autocrlf', 'false');
+  // No background maintenance after the commit, holding the folder open while the test cleans up.
   writeFileSync(join(dir, 'a.txt'), 'one\n');
   git('add', '.');
   git('commit', '-q', '-m', 'Start the notes');
@@ -109,8 +111,9 @@ test('through the UI: Claude writes the commit message, then explains and review
     assert.equal(asked.length, 2);
   } finally {
     app.unmount();
-    if (prevHome === undefined) delete process.env.TILLER_HOME;
-    else process.env.TILLER_HOME = prevHome;
-    rmSync(base, { recursive: true, force: true });
+    if (prevHome === undefined) delete process.env.SPLICE_HOME;
+    else process.env.SPLICE_HOME = prevHome;
+    // On Windows a git still finishing for the unmounted app keeps the folder busy for a moment.
+    await removeTemp(base);
   }
 });

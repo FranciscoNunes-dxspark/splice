@@ -1,11 +1,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import React from 'react';
 import { render } from 'ink-testing-library';
-import { checkForUpdate, compareVersions } from '../src/update.js';
+import { removeTemp } from './temp.js';
+import { assetName, checkForUpdate, compareVersions, installUpdate, parseChecksums, removeOldExecutables } from '../src/update.js';
 import { App } from '../src/ui/App.jsx';
 
 test('versions compare by number, with pre-releases before their release', () => {
@@ -42,9 +44,9 @@ test('asks at most once a day, and only says "newer" for a newer release', async
 });
 
 test('the app shows a newer release, keeps the check in the config, and can be told not to ask', async () => {
-  const home = mkdtempSync(join(tmpdir(), 'tiller-update-'));
-  const prevHome = process.env.TILLER_HOME;
-  process.env.TILLER_HOME = join(home, 'home');
+  const home = mkdtempSync(join(tmpdir(), 'splice-update-'));
+  const prevHome = process.env.SPLICE_HOME;
+  process.env.SPLICE_HOME = join(home, 'home');
   const notRepo = join(home, 'empty');
   const until = async (check, what) => {
     const end = Date.now() + 8000;
@@ -62,7 +64,7 @@ test('the app shows a newer release, keeps the check in the config, and can be t
   try {
     const app = render(React.createElement(App, { initialPath: notRepo, config: { recent: [], roots: [], history: [] }, checkUpdate }));
     try {
-      await until(() => /Tiller 9\.9\.9 is out/.test(app.lastFrame() ?? ''), 'the update note');
+      await until(() => /Splice 9\.9\.9 is out/.test(app.lastFrame() ?? ''), 'the update note');
       await until(() => {
         try {
           return JSON.parse(readFileSync(join(home, 'home', 'config.json'), 'utf8')).lastUpdateCheck?.latest === '9.9.9';
@@ -85,8 +87,132 @@ test('the app shows a newer release, keeps the check in the config, and can be t
       off.unmount();
     }
   } finally {
-    if (prevHome === undefined) delete process.env.TILLER_HOME;
-    else process.env.TILLER_HOME = prevHome;
-    rmSync(home, { recursive: true, force: true });
+    if (prevHome === undefined) delete process.env.SPLICE_HOME;
+    else process.env.SPLICE_HOME = prevHome;
+    await removeTemp(home);
+  }
+});
+
+test('the release file for each platform, and the checksums file', () => {
+  assert.equal(assetName('win32', 'x64'), 'splice-windows-x64.exe');
+  assert.equal(assetName('darwin', 'arm64'), 'splice-macos-arm64');
+  assert.equal(assetName('linux', 'x64'), 'splice-linux-x64');
+  assert.equal(assetName('win32', 'arm64'), null);
+  const a = 'a'.repeat(64);
+  const b = 'B'.repeat(64);
+  const sums = parseChecksums(`${a}  splice-linux-x64\r\n${b} *splice-windows-x64.exe\nnot a line\n`);
+  assert.deepEqual([...sums], [
+    ['splice-linux-x64', a],
+    ['splice-windows-x64.exe', 'b'.repeat(64)],
+  ]);
+});
+
+test('installing an update swaps the executable, only with a matching checksum, and tidies up after', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'splice-install-'));
+  const sha = (s) => createHash('sha256').update(s).digest('hex');
+  // Stands in for GitHub: the release's files, written where installUpdate asks.
+  const release = (content, sum = sha(content)) => async (version, names, into) => {
+    assert.equal(version, '0.3.0');
+    writeFileSync(join(into, names[0]), content);
+    writeFileSync(join(into, names[1]), `${sum}  ${names[0]}\n`);
+  };
+  const leftovers = () => readdirSync(dir).filter((f) => f.startsWith('.splice-update-'));
+  try {
+    // Windows: the running one is renamed aside, and the new one takes its name.
+    const exe = join(dir, 'splice.exe');
+    writeFileSync(exe, 'old build');
+    const win = { exe, platform: 'win32', arch: 'x64', installed: async () => '0.2.0' };
+    assert.equal(await installUpdate('0.3.0', { ...win, download: release('new build') }), 'installed');
+    assert.equal(readFileSync(exe, 'utf8'), 'new build');
+    const aside = readdirSync(dir).filter((f) => f.startsWith('splice.exe.old.'));
+    assert.equal(aside.length, 1);
+    assert.equal(readFileSync(join(dir, aside[0]), 'utf8'), 'old build');
+    assert.deepEqual(leftovers(), []);
+
+    // A download that doesn't match its checksum leaves everything as it was.
+    writeFileSync(exe, 'current');
+    await assert.rejects(installUpdate('0.3.0', { ...win, download: release('tampered', sha('something else')) }), /doesn't match its checksum/);
+    assert.equal(readFileSync(exe, 'utf8'), 'current');
+    assert.deepEqual(leftovers(), []);
+
+    // Already that version (another window installed it): nothing is downloaded.
+    let downloads = 0;
+    const counted = async (...args) => {
+      downloads++;
+      return release('x')(...args);
+    };
+    assert.equal(await installUpdate('0.3.0', { ...win, installed: async () => '0.3.0', download: counted }), 'already');
+    assert.equal(downloads, 0);
+
+    // macOS and Linux: a rename replaces it in one step, with nothing set aside.
+    const unixExe = join(dir, 'splice');
+    writeFileSync(unixExe, 'old build');
+    await installUpdate('0.3.0', { exe: unixExe, platform: 'linux', arch: 'x64', installed: async () => '0.2.0', download: release('new build') });
+    assert.equal(readFileSync(unixExe, 'utf8'), 'new build');
+    assert.ok(!readdirSync(dir).some((f) => f.startsWith('splice.old.')));
+
+    await assert.rejects(installUpdate('0.3.0', { ...win, arch: 'arm64', download: release('x') }), /no release build/);
+  } finally {
+    await removeTemp(dir);
+  }
+});
+
+test('old executables and abandoned downloads are removed, but not a download still going', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'splice-old-'));
+  try {
+    const exe = join(dir, 'splice.exe');
+    writeFileSync(exe, 'current');
+    writeFileSync(join(dir, 'splice.exe.old.1700000000000'), 'old');
+    writeFileSync(join(dir, 'notes.txt'), 'mine');
+    mkdirSync(join(dir, '.splice-update-stale'));
+    mkdirSync(join(dir, '.splice-update-busy'));
+    const twoHoursAgo = (Date.now() - 2 * 60 * 60 * 1000) / 1000;
+    utimesSync(join(dir, '.splice-update-stale'), twoHoursAgo, twoHoursAgo);
+    await removeOldExecutables(exe);
+    assert.deepEqual(readdirSync(dir).sort(), ['.splice-update-busy', 'notes.txt', 'splice.exe']);
+  } finally {
+    await removeTemp(dir);
+  }
+});
+
+test('the app installs a newer release in the background, says when it can\'t, and can be told only to tell', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'splice-autoupdate-'));
+  const prevHome = process.env.SPLICE_HOME;
+  process.env.SPLICE_HOME = join(home, 'home');
+  const notRepo = join(home, 'empty');
+  const until = async (check, what) => {
+    const end = Date.now() + 8000;
+    while (!check()) {
+      if (Date.now() > end) throw new Error(`Timed out waiting for ${what}`);
+      await new Promise((r) => setTimeout(r, 40));
+    }
+  };
+  const checkUpdate = async () => ({ checked: { at: 5, latest: '9.9.9', url: 'https://example.com/latest' }, newer: true });
+  const open = async (config, installUpdate, check) => {
+    const app = render(React.createElement(App, { initialPath: notRepo, config: { recent: [], roots: [], history: [], ...config }, checkUpdate, installUpdate }));
+    try {
+      await until(() => check(app.lastFrame() ?? ''), 'the update note');
+    } finally {
+      app.unmount();
+    }
+  };
+  try {
+    const asked = [];
+    await open({}, async (v) => asked.push(v), (f) => /Splice 9\.9\.9 is installed/.test(f));
+    assert.deepEqual(asked, ['9.9.9']);
+
+    await open({}, async () => {
+      throw new Error("can't write to C:\\Program Files\\Splice\nmore detail");
+    }, (f) => /couldn't be installed: can't write to/.test(f) && /example\.com\/latest/.test(f));
+
+    let called = false;
+    await open({ autoUpdate: false }, async () => {
+      called = true;
+    }, (f) => /Splice 9\.9\.9 is out/.test(f));
+    assert.equal(called, false);
+  } finally {
+    if (prevHome === undefined) delete process.env.SPLICE_HOME;
+    else process.env.SPLICE_HOME = prevHome;
+    await removeTemp(home);
   }
 });

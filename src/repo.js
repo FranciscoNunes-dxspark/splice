@@ -4,14 +4,18 @@ import { basename, join, resolve } from 'node:path';
 import { samePath } from './config.js';
 import { git } from './git.js';
 import {
+  COMMIT_FORMAT,
   LOG_FORMAT,
   REF_FORMAT,
   STASH_FORMAT,
   groupChanges,
+  parseAheadBehind,
+  parseCommits,
   parseGraph,
   parseNameStatus,
   parseRefs,
   parseStash,
+  parseStashFiles,
   parseStatus,
   parseWorktrees,
 } from './parse.js';
@@ -183,9 +187,9 @@ export async function commitDetail(root, hash) {
   };
 }
 
-/** The patch a commit introduces (first parent for merges), with its header. */
-export function commitPatch(root, hash) {
-  return git(root, ['show', '--stat', '--patch', '-M', '--diff-merges=first-parent', '--format=fuller', hash]);
+/** The patch a commit introduces (first parent for merges), with its header; only to `paths`, if given. */
+export function commitPatch(root, hash, paths = []) {
+  return git(root, ['show', '--stat', '--patch', '-M', '--diff-merges=first-parent', '--format=fuller', hash, ...(paths.length ? ['--', ...paths] : [])]);
 }
 
 const MAX_PREVIEW = 512 * 1024;
@@ -228,6 +232,23 @@ export async function refLog(root, ref, n = 60) {
     });
 }
 
+/**
+ * How `ref` compares with `base` (the default branch), for the Branches view: how far it is ahead and
+ * behind, the commits it has that `base` doesn't (up to `n`), and its other recent commits. Three gits,
+ * run side by side.
+ */
+export async function compareRefs(root, ref, base, n = 60) {
+  const range = `${base}...${ref}`;
+  const [counts, mine, log] = await Promise.all([
+    git(root, ['rev-list', '--left-right', '--count', range, '--']),
+    git(root, ['log', `-n${n}`, `--format=${COMMIT_FORMAT}`, `${base}..${ref}`, '--']),
+    git(root, ['log', `-n${n}`, `--format=${COMMIT_FORMAT}`, ref, '--']),
+  ]);
+  const ahead = parseCommits(mine);
+  const own = new Set(ahead.map((c) => c.full));
+  return { ...parseAheadBehind(counts), commits: ahead, history: parseCommits(log).filter((c) => !own.has(c.full)) };
+}
+
 /** Status and recent commits of one worktree, for the Worktrees view. */
 export async function worktreeDetail(path, n = 40) {
   const [status, log] = await Promise.all([
@@ -257,4 +278,20 @@ export function stashPatch(root, ref) {
   return git(root, ['stash', 'show', '--patch', '--include-untracked', ref]).catch(() =>
     git(root, ['stash', 'show', '--patch', ref]),
   );
+}
+
+/** Each file in a stash with its change (M, A, D), then the untracked files it took, from its third parent. */
+export async function stashFiles(root, ref) {
+  const [tracked, untracked] = await Promise.all([
+    git(root, ['diff', '--name-status', '-z', '--no-renames', `${ref}^1`, ref]),
+    // Only a stash made with --include-untracked (as Splice's are) has a third parent.
+    git(root, ['ls-tree', '-r', '-z', '--name-only', `${ref}^3`]).catch(() => ''),
+  ]);
+  return parseStashFiles(tracked, untracked);
+}
+
+/** One file's diff in a stash: against the commit it was made on, or all added for an untracked one. */
+export function stashFileDiff(root, ref, file) {
+  if (file.untracked) return git(root, ['show', '--format=', `${ref}^3`, '--', file.path]);
+  return git(root, ['diff', `${ref}^1`, ref, '--', file.path]);
 }

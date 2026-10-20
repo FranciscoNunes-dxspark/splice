@@ -1,16 +1,16 @@
 {
-  "name": "tiller",
+  "name": "splice",
   "version": "0.2.0",
   "description": "A keyboard-driven git client for the terminal",
   "type": "module",
   "bin": {
-    "tiller": "bin/tiller.js"
+    "splice": "bin/splice.js"
   },
   "engines": {
     "node": ">=22"
   },
   "scripts": {
-    "start": "node bin/tiller.js",
+    "start": "node bin/splice.js",
     "test": "node --import ./src/register.js --test test/*.test.js",
     "build": "npx --yes bun@1.4.2 scripts/build.js",
     "build:all": "npx --yes bun@1.4.2 scripts/build.js --all"

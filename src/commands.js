@@ -6,16 +6,21 @@ import { splitArgs } from './parse.js';
 export const COMMANDS = [
   { name: 'commit', args: '<message>', desc: 'Commit the staged changes', run: (ctx, s) => a.commit(ctx, s) },
   { name: 'amend', args: '[message]', desc: 'Amend the last commit (keeps its message if none given)', run: (ctx, s) => a.commit(ctx, s, { amend: true }) },
+  { name: 'fixup', args: '[ref]', desc: 'Make the staged changes a fix for an earlier commit (picked from a list), then fold it in', complete: 'refs', run: (ctx, s) => a.fixup(ctx, s) },
   { name: 'checkout', args: '<branch|tag|hash>', desc: 'Switch to a branch, tag or commit', complete: 'refs', run: (ctx, s) => a.checkout(ctx, s) },
   { name: 'branch', args: '<name> [start]', desc: 'Create a branch and switch to it', run: (ctx, s) => a.createBranch(ctx, s) },
   { name: 'delete', args: '<branch|tag>', desc: 'Delete a branch (local or remote) or a tag', complete: 'refs', run: (ctx, s) => a.deleteRef(ctx, s) },
+  { name: 'cleanup', desc: 'Delete branches and remove worktrees with nothing of yours on them (asks first)', run: (ctx) => a.cleanUp(ctx) },
   { name: 'merge', args: '<ref>', desc: 'Merge a ref into the current branch', complete: 'refs', run: (ctx, s) => a.merge(ctx, s) },
   { name: 'rebase', args: '[-i] <ref>', desc: 'Rebase the current branch onto a ref (-i: edit the commits after it)', complete: 'refs', run: (ctx, s) => a.rebase(ctx, s) },
+  { name: 'compare', args: '<ref> [base]', desc: 'Full diff of what a branch adds to the default branch (or to base)', complete: 'refs', run: (ctx, s) => a.compare(ctx, s) },
   { name: 'fetch', args: '[remote]', desc: 'Fetch all remotes and prune deleted branches', run: (ctx, s) => a.fetch(ctx, splitArgs(s)) },
   { name: 'pull', args: '[--rebase]', desc: 'Pull the current branch', run: (ctx, s) => a.pull(ctx, splitArgs(s)) },
   { name: 'push', args: '[--force]', desc: 'Push the current branch (sets the upstream the first time)', run: (ctx, s) => a.push(ctx, splitArgs(s)) },
-  { name: 'stash', args: '[message]', desc: 'Stash all changes, untracked files included', run: (ctx, s) => a.stash(ctx, s) },
+  { name: 'stash', args: '[message]', desc: 'Stash all changes, untracked files included, with an optional message', run: (ctx, s) => a.stash(ctx, s) },
   { name: 'discard', desc: 'Discard all uncommitted changes (asks first)', run: (ctx) => a.discardAll(ctx) },
+  { name: 'undo', desc: 'Undo the last commit, amend, merge, rebase, reset, switch or discard (asks first)', run: (ctx) => a.undo(ctx) },
+  { name: 'reflog', desc: 'Where HEAD has been: see, reset to or check out any earlier position', run: (ctx) => a.showReflog(ctx) },
   { name: 'pop', args: '[stash@{n}]', desc: 'Apply a stash and drop it', run: (ctx, s) => a.stashApply(ctx, s, { pop: true }) },
   { name: 'tag', args: '<name> [ref]', desc: 'Create a tag', run: (ctx, s) => a.tag(ctx, s) },
   { name: 'worktree', args: '<path> [ref]', desc: 'Add a worktree at a path (relative to the repository), checking out a ref', run: (ctx, s) => a.addWorktree(ctx, s) },
@@ -35,13 +40,27 @@ export const COMMANDS = [
   },
   { name: 'continue', desc: 'Continue the merge, rebase, cherry-pick or revert', run: (ctx) => a.continueOp(ctx) },
   { name: 'abort', desc: 'Abort the merge, rebase, cherry-pick or revert', run: (ctx) => a.abortOp(ctx) },
-  { name: 'find', args: '<text>', desc: 'Filter the graph by message, author or hash', run: (ctx, s) => ctx.find(s) },
+  { name: 'history', args: '<path>', desc: "A file's commits, following renames (deleted files too)", complete: 'files', run: (ctx, s) => a.fileHistory(ctx, s) },
+  { name: 'blame', args: '<path>', desc: 'Who last changed each line of a file', complete: 'files', run: (ctx, s) => a.blame(ctx, s) },
+  {
+    name: 'find',
+    args: '<text>',
+    desc: 'Filter the graph by message, author or hash; -S <text> or -G <regex> search all history for code changes',
+    complete: 'flags',
+    flags: [
+      { flag: '-S', hint: '<text>', desc: 'Commits anywhere in history that add or remove the text' },
+      { flag: '-G', hint: '<regex>', desc: 'Commits anywhere in history whose changed lines match the regex' },
+    ],
+    run: (ctx, s) => a.find(ctx, s),
+  },
   { name: 'open', args: '<path>', desc: 'Open a repository', complete: 'repos', run: (ctx, s) => (s ? ctx.openRepo(s) : ctx.prefill('/open ')) },
   { name: 'scan', args: '<folder>', desc: 'Add a folder to scan for repositories', run: (ctx, s) => ctx.addRoot(s) },
   { name: 'last', desc: 'Show the full output of the last command', run: (ctx) => ctx.showLast() },
+  { name: 'settings', desc: 'Every setting, changed in place: accent colour, updates, folders, recent, history', run: (ctx) => a.settings(ctx) },
+  { name: 'accent', args: '<#rrggbb|default>', desc: 'The accent colour, saved and repainted straight away', run: (ctx, s) => a.accent(ctx, s) },
   { name: 'refresh', desc: 'Reload the repository', run: (ctx) => ctx.refresh() },
   { name: 'help', desc: 'Keyboard shortcuts', run: (ctx) => ctx.showHelp() },
-  { name: 'quit', desc: 'Exit Tiller', run: (ctx) => ctx.quit() },
+  { name: 'quit', desc: 'Exit Splice', run: (ctx) => ctx.quit() },
 ];
 
 /** Exact name, or an unambiguous prefix of one. */
@@ -53,8 +72,16 @@ export function findCommand(name) {
   return matches.length === 1 ? matches[0] : null;
 }
 
-function completions(kind, data, repos) {
+/** The kind of list (`complete`) offered for what's typed so far, while its first argument is being typed. */
+export function completionKind(value) {
+  const m = /^\/(\S+) (\S*)$/.exec(value);
+  return (m && findCommand(m[1])?.complete) || null;
+}
+
+function completions(kind, data, repos, files) {
   if (kind === 'repos') return repos.map((r) => r.path);
+  // Tracked files, relative to the repository root; App loads them when first asked for (see completionKind).
+  if (kind === 'files') return files ?? [];
   if (!data) return [];
   const { local, remote, tags } = data.refs;
   return [...local.map((b) => b.name), ...remote.map((b) => b.name), ...tags.map((t) => t.name)];
@@ -69,10 +96,10 @@ function ranked(names, query) {
 
 /**
  * What to offer under the prompt for `value`: commands while the name is being typed,
- * then refs or repos for commands that complete their argument.
+ * then refs, repos or files for commands that complete their argument.
  * `insert` replaces the prompt text; `run` means picking it can run straight away.
  */
-export function suggestionsFor(value, { data, repos = [] }) {
+export function suggestionsFor(value, { data, repos = [], files = [] }) {
   if (!value.startsWith('/')) return [];
   const space = value.indexOf(' ');
   if (space < 0) {
@@ -86,7 +113,13 @@ export function suggestionsFor(value, { data, repos = [] }) {
   const cmd = findCommand(value.slice(1, space));
   const rest = value.slice(space + 1);
   if (!cmd?.complete || rest.includes(' ')) return [];
-  const names = ranked(completions(cmd.complete, data, repos), rest);
+  // Flags the command takes before its text: offered until something else is typed.
+  if (cmd.complete === 'flags') {
+    return cmd.flags
+      .filter((f) => f.flag.startsWith(rest) && f.flag !== rest)
+      .map((f) => ({ label: f.flag, hint: f.hint, desc: f.desc, insert: `/${cmd.name} ${f.flag} ` }));
+  }
+  const names = ranked(completions(cmd.complete, data, repos, files), rest);
   if (names.length === 1 && names[0] === rest) return [];
   return names.slice(0, 7).map((n) => ({ label: n, insert: `/${cmd.name} ${n}`, run: true }));
 }

@@ -5,6 +5,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { removeTemp } from './temp.js';
 import { commitDetail, findRepo, loadRepo, snapshot } from '../src/repo.js';
 
 let base;
@@ -12,7 +13,7 @@ let dir;
 const git = (...args) => execFileSync('git', args, { cwd: dir, encoding: 'utf8' }).trim();
 
 before(() => {
-  base = mkdtempSync(join(tmpdir(), 'tiller-repo-'));
+  base = mkdtempSync(join(tmpdir(), 'splice-repo-'));
   dir = join(base, 'repo');
   mkdirSync(dir);
   git('init', '-q', '-b', 'main');
@@ -35,7 +36,7 @@ before(() => {
   git('tag', 'light');
 });
 
-after(() => rmSync(base, { recursive: true, force: true }));
+after(() => removeTemp(base));
 
 test('a load and a poll agree on the signature, so polling only reloads on real changes', async () => {
   const repo = await findRepo(dir);

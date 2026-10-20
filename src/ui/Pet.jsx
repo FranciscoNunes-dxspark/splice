@@ -1,16 +1,16 @@
 import React, { useEffect, useState } from 'react';
 import { Box, Text } from 'ink';
-import { knotRows, moodLine } from '../knot.js';
+import { PET, moodLine, petRows } from '../pet.js';
 import { theme } from '../theme.js';
 import { fit } from '../text.js';
 import { VERSION } from '../version.js';
 import { Row } from './parts.jsx';
 
-export const KNOT_WIDTH = 16;
+export const PET_WIDTH = 16;
 export const WELCOME_HEIGHT = 7;
 
-/** Knot in pixels. While git works ("look") Knot glances from side to side. */
-export function Knot({ mood }) {
+/** The pet in pixels. While git works ("look") it glances from side to side. */
+export function Pet({ mood }) {
   const [tick, setTick] = useState(0);
   useEffect(() => {
     if (mood !== 'look') return;
@@ -18,28 +18,35 @@ export function Knot({ mood }) {
     return () => clearInterval(t);
   }, [mood]);
   const shown = mood === 'look' && tick % 2 ? 'idle' : mood;
-  return knotRows(shown).map((segs, i) => <Row key={i} pointer={false} width={KNOT_WIDTH} segments={segs} />);
+  return petRows(shown).map((segs, i) => <Row key={i} pointer={false} width={PET_WIDTH} segments={segs} />);
 }
 
-/** The box shown when Tiller starts, like Claude Code's welcome. Esc or the first command clears it. */
+// The welcome box's line about a newer release, by how far installing it has got.
+const UPDATE_LINES = {
+  out: (v) => `Splice ${v} is out (you have ${VERSION}). The link is below.`,
+  installing: (v) => `Splice ${v} is out; downloading it in the background.`,
+  installed: (v) => `Splice ${v} is installed and starts the next time you open Splice.`,
+};
+
+/** The box shown when Splice starts, like Claude Code's welcome. Esc or the first command clears it. */
 export function Welcome({ mood, data, width, update }) {
-  const textW = Math.max(10, width - KNOT_WIDTH - 7);
+  const textW = Math.max(10, width - PET_WIDTH - 7);
   return (
     <Box borderStyle="round" borderColor={theme.accent} width={width} height={WELCOME_HEIGHT} paddingX={1}>
-      <Box flexDirection="column" width={KNOT_WIDTH}>
-        <Knot mood={mood} />
+      <Box flexDirection="column" width={PET_WIDTH}>
+        <Pet mood={mood} />
       </Box>
       <Box flexDirection="column" marginLeft={2} width={textW}>
         <Text wrap="truncate">
-          <Text bold>Welcome to Tiller</Text>
+          <Text bold>Welcome to Splice</Text>
           <Text color={theme.dim}>{`  v${VERSION}`}</Text>
         </Text>
         <Text color={theme.dim} wrap="truncate">
-          {fit(`Knot the otter here. ${moodLine(mood, data)}`, textW).trimEnd()}
+          {fit(`${PET.name} the ${PET.kind} here. ${moodLine(mood, data)}`, textW).trimEnd()}
         </Text>
         {update ? (
           <Text color={theme.warn} wrap="truncate">
-            {fit(`Tiller ${update.latest} is out (you have ${VERSION}). The link is below.`, textW).trimEnd()}
+            {fit(UPDATE_LINES[update.state ?? 'out'](update.latest), textW).trimEnd()}
           </Text>
         ) : (
           <Text> </Text>

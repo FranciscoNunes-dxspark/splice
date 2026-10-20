@@ -1,9 +1,10 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { removeTemp } from './temp.js';
 import { buildPatch, coversAll, hunkPicks, parseDiff } from '../src/patch.js';
 import { run } from '../src/git.js';
 
@@ -63,7 +64,7 @@ const git = (...args) => execFileSync('git', args, { cwd: dir, encoding: 'utf8' 
 const lines = (n, edit = {}) => Array.from({ length: n }, (_, i) => edit[i + 1] ?? `line ${i + 1}`).join('\n') + '\n';
 
 before(() => {
-  dir = mkdtempSync(join(tmpdir(), 'tiller-patch-'));
+  dir = mkdtempSync(join(tmpdir(), 'splice-patch-'));
   git('init', '-q', '-b', 'main');
   git('config', 'core.autocrlf', 'false');
   git('config', 'user.name', 'T');
@@ -72,7 +73,7 @@ before(() => {
   git('add', '.');
   git('commit', '-q', '-m', 'base');
 });
-after(() => rmSync(dir, { recursive: true, force: true }));
+after(() => removeTemp(dir));
 
 const applyCached = (patch, ...flags) => run(dir, ['apply', '--cached', ...flags, '--recount', '-'], { input: patch });
 

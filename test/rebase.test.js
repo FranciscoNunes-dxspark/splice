@@ -1,11 +1,24 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { removeTemp } from './temp.js';
 import { run } from '../src/git.js';
-import { buildTodo, cleanup, loadPlan, planProblem, planSummary, prepare } from '../src/rebase.js';
+import {
+  COMMIT_LIST_FORMAT,
+  buildTodo,
+  cleanup,
+  fixupExclusions,
+  fixupLogArgs,
+  foldArgs,
+  loadPlan,
+  parseCommitList,
+  planProblem,
+  planSummary,
+  prepare,
+} from '../src/rebase.js';
 
 const row = (hash, action = 'pick', extra = {}) => ({ hash, subject: `s ${hash}`, action, ...extra });
 
@@ -24,11 +37,36 @@ test('plan problems and summary', () => {
   assert.equal(planSummary([row('a'), row('b')]), 'reordered');
 });
 
+test('fixup: which refs to leave out of the candidates, the log that lists them, and the fold', () => {
+  const local = ['main', 'feature'];
+  const def = { name: 'main', ref: 'origin/main' };
+  // On a feature branch: its upstream and the default branch, both copies.
+  assert.deepEqual(fixupExclusions({ head: 'feature', upstream: 'origin/feature', def, local }), ['origin/feature', 'main', 'origin/main']);
+  // A default branch with no local copy.
+  assert.deepEqual(fixupExclusions({ head: 'feature', upstream: null, def: { name: 'develop', ref: 'origin/develop' }, local }), ['origin/develop']);
+  // On the default branch itself, only its upstream counts; with no upstream, nothing does.
+  assert.deepEqual(fixupExclusions({ head: 'main', upstream: 'origin/main', def, local }), ['origin/main']);
+  assert.deepEqual(fixupExclusions({ head: 'main', upstream: null, def: { name: 'main', ref: 'main' }, local: ['main'] }), []);
+  assert.deepEqual(fixupExclusions({ head: 'topic', upstream: null, def: { name: 'master', ref: 'master' }, local: ['master', 'topic'] }), ['master']);
+  assert.deepEqual(fixupExclusions({ head: 'topic', upstream: null, def: null, local: ['topic'] }), []);
+
+  assert.deepEqual(fixupLogArgs(['origin/feature', 'main']), ['log', '-n200', '--no-merges', `--format=${COMMIT_LIST_FORMAT}`, 'HEAD', '--not', 'origin/feature', 'main', '--']);
+  assert.deepEqual(fixupLogArgs([]), ['log', '-n30', '--no-merges', `--format=${COMMIT_LIST_FORMAT}`, 'HEAD', '--']);
+
+  const list = parseCommitList('aaa\x1fppp\x1f1700000000\x1fFix it\nbbb\x1f\x1f1600000000\x1fFirst: a, b\n');
+  assert.deepEqual(list, [
+    { hash: 'aaa', parents: ['ppp'], time: 1700000000, subject: 'Fix it' },
+    { hash: 'bbb', parents: [], time: 1600000000, subject: 'First: a, b' },
+  ]);
+  assert.deepEqual(foldArgs(list[0]), ['rebase', '-i', '--autosquash', 'ppp']);
+  assert.deepEqual(foldArgs(list[1], { autostash: true }), ['rebase', '-i', '--autosquash', '--autostash', '--root']);
+});
+
 let dir;
 const git = (...args) => execFileSync('git', args, { cwd: dir, encoding: 'utf8' }).trim();
 
 before(() => {
-  dir = mkdtempSync(join(tmpdir(), 'tiller rebase '));
+  dir = mkdtempSync(join(tmpdir(), 'splice rebase '));
   git('init', '-q', '-b', 'main');
   git('config', 'core.autocrlf', 'false');
   git('config', 'user.name', 'T');
@@ -39,7 +77,7 @@ before(() => {
     git('commit', '-q', '-m', `Add ${n}`);
   }
 });
-after(() => rmSync(dir, { recursive: true, force: true }));
+after(() => removeTemp(dir));
 
 test('a real rebase: drop, squash, reword and reorder in one go, in a path with spaces', async () => {
   const base = git('rev-parse', 'HEAD~4');
@@ -60,5 +98,5 @@ test('a real rebase: drop, squash, reword and reorder in one go, in a path with 
   assert.doesNotMatch(squashed, /^#/m);
   assert.equal(existsSync(join(dir, 'four.txt')), false);
   assert.equal(existsSync(join(dir, 'three.txt')), true);
-  assert.equal(existsSync(join(gitDir, 'tiller-rebase')), false);
+  assert.equal(existsSync(join(gitDir, 'splice-rebase')), false);
 });

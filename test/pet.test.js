@@ -1,10 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { FACES, PALETTE, knotPixels, knotRows, moodFor } from '../src/knot.js';
+import { FACES, PALETTE, petPixels, petRows, moodFor } from '../src/pet.js';
 
 test('every mood is a full 16 × 10 drawing in palette colours', () => {
   for (const mood of Object.keys(FACES)) {
-    const px = knotPixels(mood);
+    const px = petPixels(mood);
     assert.equal(px.length, 10, mood);
     for (const row of px) {
       assert.equal(row.length, 16, `${mood}: ${row}`);
@@ -14,7 +14,7 @@ test('every mood is a full 16 × 10 drawing in palette colours', () => {
 });
 
 test('the terminal version is 5 rows of 16 half-block cells', () => {
-  const rows = knotRows('idle');
+  const rows = petRows('idle');
   assert.equal(rows.length, 5);
   assert.ok(rows.every((r) => r.length === 16 && r.every((s) => [' ', '▀', '▄'].includes(s.text))));
   // A cell with both pixels filled draws the bottom one as background.

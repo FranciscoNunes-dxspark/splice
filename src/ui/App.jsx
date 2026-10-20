@@ -1,13 +1,13 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Box, Text, useApp, useInput } from 'ink';
+import { Box, Text, useApp, useInput, useStdin } from 'ink';
 import { existsSync } from 'node:fs';
 import { basename, resolve } from 'node:path';
 import * as a from '../actions.js';
-import { findCommand, suggestionsFor } from '../commands.js';
+import { completionKind, findCommand, suggestionsFor } from '../commands.js';
 import { samePath, saveConfig, withRecent } from '../config.js';
 import { git, run } from '../git.js';
 import { HELP } from '../help.js';
-import { changeDiff, commitPatch, findRepo, loadRepo, snapshot, stashPatch } from '../repo.js';
+import { changeDiff, commitPatch, findRepo, loadRepo, snapshot, stashFileDiff, stashPatch } from '../repo.js';
 import { discover, eachLimited, summarize } from '../repos.js';
 import { BULLET, theme } from '../theme.js';
 import { fitSegments, stringWidth } from '../text.js';
@@ -23,28 +23,29 @@ import { WorktreesView } from './WorktreesView.jsx';
 import { PrView } from './PrView.jsx';
 import { hostFor, openUrl } from '../hosting.js';
 import { TextViewer } from './TextViewer.jsx';
+import { Picker } from './Picker.jsx';
 import { RebaseEditor } from './RebaseEditor.jsx';
-import { WELCOME_HEIGHT, Welcome } from './Knot.jsx';
-import { FACES, moodFor } from '../knot.js';
+import { WELCOME_HEIGHT, Welcome } from './Pet.jsx';
+import { FACES, moodFor } from '../pet.js';
 
 const VIEWS = [
   { id: 'graph', label: 'Graph' },
   { id: 'changes', label: 'Changes' },
   { id: 'branches', label: 'Branches' },
+  { id: 'worktrees', label: 'Worktrees' },
   { id: 'stash', label: 'Stash' },
   { id: 'prs', label: 'PRs' },
   { id: 'repos', label: 'Repos' },
-  { id: 'worktrees', label: 'Worktrees' },
 ];
 
 const HINTS = {
   graph: '↵ diff · c checkout · b branch · m merge · i rebase from here · C cherry-pick · v revert · X reset · e/R Claude explains/reviews',
-  changes: 'space stage · ↵ hunks/lines · a all · u unstage all · d discard · c commit · A amend · W Claude writes it · R review',
-  branches: '↵ checkout · n new · m merge · e rebase · d delete',
-  stash: '↵ diff · s stash · a apply · o pop · x drop',
+  changes: 'space stage · ↵ hunks/lines · a all · u unstage all · d discard · s stash file · c commit · A amend · F fix up · H history · B blame · W Claude writes it · R review',
+  branches: '↵ checkout · n new · m merge · e rebase · d delete · D diff vs default · o open PR · C clean up',
+  stash: '↵ diff · s stash · S with a message · a apply · o pop · x drop · F files, to restore one',
   prs: '↵ diff · c checkout · a approve · C comment · o open in browser · n new PR · W Claude drafts one · e/R explain/review',
   repos: '↵ open · s scan folder · x forget',
-  worktrees: '↵ open · n new · x remove or prune',
+  worktrees: '↵ open · n new · x remove or prune · C clean up',
 };
 
 const POLL_MS = 3000;
@@ -54,7 +55,7 @@ const showArg = (s) => (/[\s"]/.test(s) || s === '' ? JSON.stringify(s) : s);
 function Header({ data, width, loading, mood }) {
   const segs = [
     { text: `${FACES[mood]} `, color: theme.accent, bold: true },
-    { text: 'Tiller', bold: true },
+    { text: 'Splice', bold: true },
   ];
   if (data) {
     const b = data.status.branch;
@@ -74,6 +75,13 @@ function Header({ data, width, loading, mood }) {
   const pathW = Math.min(stringWidth(full), Math.max(0, width - 60));
   const path = pathW < full.length ? `…${full.slice(-(pathW - 1))}` : full;
   return <Row pointer={false} width={width} segments={[...fitSegments(segs, width - pathW - 1), { text: ' ' }, { text: path, color: theme.dim }]} />;
+}
+
+/** The terminal window's title: the repo and branch, which is what tells one Splice tab from another. */
+export function windowTitle(data) {
+  if (!data) return 'Splice';
+  const b = data.status.branch;
+  return `${data.name} (${b.head ?? `detached at ${(b.oid ?? '').slice(0, 7)}`}) — Splice`;
 }
 
 function Tabs({ view, data, width }) {
@@ -104,7 +112,8 @@ function activityRows(entries) {
   return out.slice(-6);
 }
 
-export function App({ initialPath, config: initialConfig, checkUpdate, askClaude }) {
+// `makeHost` stands in for hosting.js's hostFor in tests, so they never call gh or az.
+export function App({ initialPath, reopenLast = false, config: initialConfig, checkUpdate, installUpdate, askClaude, setTitle, makeHost = hostFor }) {
   const { exit } = useApp();
   const { columns, rows } = useTerminalSize();
   const [config, setConfigState] = useState(initialConfig);
@@ -119,10 +128,10 @@ export function App({ initialPath, config: initialConfig, checkUpdate, askClaude
   const [entries, setEntries] = useState([]);
   const [busy, setBusy] = useState(null);
   const [repos, setRepos] = useState([]);
-  const [filter, setFilter] = useState('');
+  const [filter, setFilter] = useState(null);
   const [welcome, setWelcome] = useState(true);
   const [update, setUpdate] = useState(null);
-  // Knot looks happy (or worried) for a few seconds after a result; re-render when that wears off.
+  // The pet looks happy (or worried) for a few seconds after a result; re-render when that wears off.
   const [, setMoodTick] = useState(0);
   useEffect(() => {
     const t = setTimeout(() => setMoodTick((n) => n + 1), 8100);
@@ -144,6 +153,16 @@ export function App({ initialPath, config: initialConfig, checkUpdate, askClaude
   const lastOutput = useRef(null);
   const polling = useRef(false);
   const loadingMore = useRef(false);
+  // Counts keypresses, ahead of every handler, so the dispatcher can tell the key that opened the prompt.
+  const keySeq = useRef(0);
+  const prefillKey = useRef(-1);
+  const { internal_eventEmitter: inputEvents } = useStdin();
+  useEffect(() => {
+    if (!inputEvents) return;
+    const count = () => keySeq.current++;
+    inputEvents.prependListener('input', count);
+    return () => inputEvents.removeListener('input', count);
+  }, [inputEvents]);
 
   const setConfig = (update) => {
     const next = update(configRef.current);
@@ -159,9 +178,14 @@ export function App({ initialPath, config: initialConfig, checkUpdate, askClaude
     setFocusState(f);
   };
   const setOverlay = (next) => {
-    overlayRef.current = typeof next === 'function' ? next(overlayRef.current) : next;
-    setOverlayState(overlayRef.current);
+    const cur = overlayRef.current;
+    let o = typeof next === 'function' ? next(cur) : next;
+    // An overlay opened from a picker (a diff of the picked commit) goes back to the picker when closed.
+    if (o && o !== cur && !o.back && cur?.kind === 'picker' && typeof next !== 'function') o = { ...o, back: cur };
+    overlayRef.current = o;
+    setOverlayState(o);
   };
+  const pickerIds = useRef(0);
 
   const setPrompt = (value, cursor = value.length) => {
     promptRef.current = { value, cursor };
@@ -260,6 +284,8 @@ export function App({ initialPath, config: initialConfig, checkUpdate, askClaude
     setSugIndex(0);
     historyPos.current = -1;
     setFocus('prompt');
+    // Noted so that the key that did this (c in Changes, say) isn't also typed into the prompt (see the dispatcher).
+    prefillKey.current = keySeq.current;
   };
 
   // `summaries` runs git status in every listed repo, which only the Repos view shows.
@@ -288,7 +314,7 @@ export function App({ initialPath, config: initialConfig, checkUpdate, askClaude
     repoRef.current = repo;
     dataRef.current = null;
     setData(null);
-    setFilter('');
+    setFilter(null);
     setOverlay(null);
     setLoading(true);
     await reload();
@@ -308,18 +334,18 @@ export function App({ initialPath, config: initialConfig, checkUpdate, askClaude
   };
 
   const ctxRef = useRef(null);
-  if (!ctxRef.current) ctxRef.current = { get data() { return dataRef.current; } };
+  if (!ctxRef.current) ctxRef.current = { get data() { return dataRef.current; }, get config() { return configRef.current; } };
   const ctx = ctxRef.current;
   Object.assign(ctx, {
     exec,
     task,
-    // A read that doesn't show in the activity lines or block other commands.
-    git: (args) => git(repoRef.current.root, args),
+    // A read that doesn't show in the activity lines or block other commands. `opts.signal` cancels it.
+    git: (args, opts) => git(repoRef.current.root, args, opts),
     // The PR host (GitHub or Azure DevOps) of the open repository, kept while the remotes don't change.
     host: () => {
       const d = dataRef.current;
       const key = d ? `${d.root}|${JSON.stringify(d.remoteUrls)}` : null;
-      if (ctx.hostCache?.key !== key) ctx.hostCache = { key, host: d ? hostFor(d) : null };
+      if (ctx.hostCache?.key !== key) ctx.hostCache = { key, host: d ? makeHost(d) : null };
       return ctx.hostCache.host;
     },
     prsChanged: () => setPrVersion((v) => v + 1),
@@ -346,8 +372,9 @@ export function App({ initialPath, config: initialConfig, checkUpdate, askClaude
       loadingMore.current = true;
       reload({ graphLimit: d.graphLimit + 400 }).finally(() => (loadingMore.current = false));
     },
-    find: (text) => {
-      setFilter(text.trim());
+    // The graph's filter: text matches the loaded commits; { mode: 'S' | 'G', query, rows } holds a history search's results.
+    find: (f) => {
+      setFilter(typeof f === 'string' ? (f.trim() ? { mode: 'text', query: f.trim() } : null) : f);
       setView('graph');
     },
     addRoot: (dir) => {
@@ -358,6 +385,8 @@ export function App({ initialPath, config: initialConfig, checkUpdate, askClaude
       note(`Scanning ${full} for repositories`);
       setView('repos');
       refreshRepos();
+      // Added from the folders list in /settings: show it there.
+      a.redrawSettings(ctx);
     },
     forgetRepo: (path) => {
       setConfig((c) => ({ ...c, recent: c.recent.filter((r) => !samePath(r, path)) }));
@@ -365,17 +394,42 @@ export function App({ initialPath, config: initialConfig, checkUpdate, askClaude
     },
     showText: (title, text, opts = {}) => setOverlay({ title, text, ...opts }),
     showRebase: (plan) => setOverlay({ kind: 'rebase', plan }),
+    // A list to pick from: { title, hint, items | load, onPick, keys, empty } (see Picker.jsx).
+    // `replace`: swaps the picker on screen for this one (the same list, redrawn after a change), keeping
+    // where it goes back to, instead of opening on top of it.
+    showPicker: (picker, { replace = false } = {}) => {
+      const next = { ...picker, kind: 'picker', id: ++pickerIds.current };
+      if (replace) setOverlay((cur) => ({ ...next, back: cur?.back }));
+      else setOverlay(next);
+    },
+    overlay: () => overlayRef.current,
+    // Settings change through App's copy, the only one written to disk (ctx.config reads it).
+    setConfig,
     closeOverlay: () => {
+      const closing = overlayRef.current;
       ctx.rebaseEditor = null;
-      setOverlay(null);
+      // As a function, so a picker going back to another picker (blame to history) isn't given this one to return to.
+      setOverlay((cur) => cur?.back ?? null);
+      // An action waiting for the viewer to close (showText(..., { onClosed })) carries on.
+      closing?.onClosed?.();
     },
     overlayHasKeys: () => focusRef.current === 'view' && !confirmRef.current,
     showHelp: () => setOverlay({ title: 'Keyboard shortcuts', text: HELP }),
     showLast: () => (lastOutput.current ? setOverlay({ ...lastOutput.current }) : note('No command has run yet.')),
-    showPatch: (c) => showAsync(`${c.hash.slice(0, 7)} ${c.subject}`, () => commitPatch(dataRef.current.root, c.hash), { diff: true }),
+    // `paths` limits it to some files (a file's history: its path then, and the one before a rename).
+    showPatch: (c, paths = []) =>
+      showAsync(`${c.hash.slice(0, 7)} ${c.subject}${paths.length ? ` · ${paths.at(-1)}` : ''}`, () => commitPatch(dataRef.current.root, c.hash, paths), { diff: true }),
     showChange: (f) => showAsync(`${f.path} (${f.area})`, () => changeDiff(dataRef.current.root, f), { diff: true }),
     showPrDiff: (pr) => showAsync(`${pr.label} ${pr.title}`, () => ctx.host().diff(pr), { diff: true }),
+    // What `ref` adds to `base`: the diff from where they forked (three dots), as a pull request would show it.
+    showCompare: (ref, base) =>
+      showAsync(
+        `${base}...${ref}`,
+        async () => (await git(dataRef.current.root, ['diff', '--stat', '--patch', '-M', `${base}...${ref}`, '--'])) || `${ref} has no changes that ${base} doesn't.`,
+        { diff: true },
+      ),
     showStash: (s) => showAsync(`${s.ref} ${s.message}`, () => stashPatch(dataRef.current.root, s.ref), { diff: true }),
+    showStashFile: (s, file) => showAsync(`${file.path} in ${s.ref}`, () => stashFileDiff(dataRef.current.root, s.ref, file), { diff: true }),
   });
 
   const submit = async (raw) => {
@@ -397,25 +451,53 @@ export function App({ initialPath, config: initialConfig, checkUpdate, askClaude
     }
   };
 
-  // First load: the given folder if it's a repo, otherwise the repo picker scanning that folder.
+  // First load: the given folder if it's a repo. Otherwise, when Splice was started without a path, the
+  // repository open last time (the most recent one still there); failing that, the repo picker scanning that folder.
   useEffect(() => {
     (async () => {
-      const ok = await openRepo(initialPath, { silent: true });
+      const here = await openRepo(initialPath, { silent: true });
+      let reopened = null;
+      if (!here && reopenLast) {
+        for (const path of configRef.current.recent.filter((r) => existsSync(r)).slice(0, 3)) {
+          if (await openRepo(path, { silent: true })) {
+            reopened = path;
+            break;
+          }
+        }
+      }
       setLoading(false);
-      if (!ok) {
+      if (reopened) {
+        note(`Opened ${basename(reopened)}, the repository you had open last (${initialPath} isn't one). Repos lists the others.`);
+      } else if (!here) {
         setView('repos');
         note(`${initialPath} isn't inside a git repository. Pick one below, or /open <path>.`);
       }
       // Opening a repo only needs the paths (for /open completion); the Repos view fills in the rest when shown.
-      refreshRepos(ok ? [] : [initialPath], { summaries: !ok });
-      // After the first load, so it doesn't slow it down. cli.jsx passes the check; tests don't, so they stay offline.
+      refreshRepos(here ? [] : [initialPath], { summaries: !here && !reopened });
+      // After the first load, so it doesn't slow it down. cli.jsx passes the check and the install; tests
+      // leave them out or pass stubs, so they stay offline and never replace anything.
       if (checkUpdate && configRef.current.checkForUpdates !== false) {
         checkUpdate(configRef.current.lastUpdateCheck).then(
           ({ checked, newer }) => {
             setConfig((c) => ({ ...c, lastUpdateCheck: checked }));
             if (!newer) return;
-            setUpdate(checked);
-            note(`Tiller ${checked.latest} is out (you have ${VERSION}).\nDownload it from ${checked.url}`);
+            const outNote = (why = '') => note(`Splice ${checked.latest} is out (you have ${VERSION})${why}.\nDownload it from ${checked.url}`);
+            if (!installUpdate || configRef.current.autoUpdate === false) {
+              setUpdate({ ...checked, state: 'out' });
+              return outNote();
+            }
+            // In the background, without the spinner: nothing waits on it, and it only counts from the next start.
+            setUpdate({ ...checked, state: 'installing' });
+            installUpdate(checked.latest).then(
+              () => {
+                setUpdate({ ...checked, state: 'installed' });
+                note(`Splice ${checked.latest} is installed. It starts the next time you open Splice.`);
+              },
+              (e) => {
+                setUpdate({ ...checked, state: 'out' });
+                outNote(`, but it couldn't be installed: ${firstLine(e.message)}`);
+              },
+            );
           },
           // Offline, or no way to ask: try again next time.
           () => {},
@@ -428,7 +510,31 @@ export function App({ initialPath, config: initialConfig, checkUpdate, askClaude
     if (view === 'repos') refreshRepos();
   }, [view]);
 
-  // Notice changes made outside Tiller (an editor saving, a commit from another terminal).
+  // Tracked files for completing paths (/history, /blame): listed the first time they're asked
+  // for, and again only once the repository has changed since.
+  const [files, setFiles] = useState(null);
+  const filesFor = useRef(null);
+  const wantFiles = focus === 'prompt' && data && completionKind(prompt.value) === 'files';
+  useEffect(() => {
+    if (!wantFiles) return;
+    const key = `${data.root}\n${data.signature}`;
+    if (filesFor.current === key) return;
+    // Another repository's files aren't worth showing while these load.
+    if (!filesFor.current?.startsWith(`${data.root}\n`)) setFiles(null);
+    filesFor.current = key;
+    git(data.root, ['ls-files', '-z']).then(
+      (out) => filesFor.current === key && setFiles(out.split('\0').filter(Boolean)),
+      () => filesFor.current === key && setFiles([]),
+    );
+  }, [wantFiles, data]);
+
+  // cli.jsx passes the terminal's title setter; tests pass a stub or nothing.
+  const title = windowTitle(data);
+  useEffect(() => {
+    setTitle?.(title);
+  }, [title]);
+
+  // Notice changes made outside Splice (an editor saving, a commit from another terminal).
   useEffect(() => {
     const t = setInterval(async () => {
       const repo = repoRef.current;
@@ -446,13 +552,13 @@ export function App({ initialPath, config: initialConfig, checkUpdate, askClaude
     return () => clearInterval(t);
   }, []);
 
-  const suggestions = focus === 'prompt' && !confirmReq ? suggestionsFor(prompt.value, { data, repos }) : [];
+  const suggestions = focus === 'prompt' && !confirmReq ? suggestionsFor(prompt.value, { data, repos, files: files ?? [] }) : [];
   const sel = Math.min(sugIndex, Math.max(0, suggestions.length - 1));
 
   // Line editing in the prompt.
   const promptKeys = (input, key) => {
     const { value, cursor } = promptRef.current;
-    const items = suggestionsFor(value, { data: dataRef.current, repos });
+    const items = suggestionsFor(value, { data: dataRef.current, repos, files: files ?? [] });
     const pick = items[Math.min(sugIndex, items.length - 1)];
     const edit = (v, c) => {
       setPrompt(v, c);
@@ -505,6 +611,7 @@ export function App({ initialPath, config: initialConfig, checkUpdate, askClaude
     if (input === '/' || input === ':') return prefill('/');
     if (input === '!') return prefill('!');
     if (input === '?') return ctx.showHelp();
+    if (input === ',') return a.settings(ctx);
     if (input === 'q') return exit();
     const n = Number(input);
     if (n >= 1 && n <= VIEWS.length) return setView(VIEWS[n - 1].id);
@@ -516,12 +623,15 @@ export function App({ initialPath, config: initialConfig, checkUpdate, askClaude
     if (input === 'p') return a.pull(ctx);
     if (input === 'P') return a.push(ctx);
     if (input === 'r') return ctx.refresh();
+    if (input === 'z') return a.undo(ctx);
   };
 
   // One dispatcher reading focus from refs, which change the instant focus moves. Handlers that
   // switch on with the next render would let fast typing (or a paste) after "/" leak into the view.
   useInput((input, key) => {
-    if (focusRef.current === 'prompt' && !confirmRef.current) return promptKeys(input, key);
+    // Ink calls the handlers for a key in no fixed order. When a view's ran first and opened the prompt
+    // (c in Changes prefills "/commit "), this same key mustn't then be typed into it.
+    if (focusRef.current === 'prompt' && !confirmRef.current) return prefillKey.current === keySeq.current ? undefined : promptKeys(input, key);
     if (key.ctrl && input === 'c') return exit();
     if (confirmRef.current || overlayRef.current) return;
     globalKeys(input, key);
@@ -541,14 +651,16 @@ export function App({ initialPath, config: initialConfig, checkUpdate, askClaude
   let main;
   if (overlay?.kind === 'rebase') {
     main = <RebaseEditor plan={overlay.plan} ctx={ctx} width={W} height={mainH} active={focus === 'view' && !confirmReq} />;
+  } else if (overlay?.kind === 'picker') {
+    main = <Picker key={overlay.id} picker={overlay} ctx={ctx} width={W} height={mainH} active={focus === 'view' && !confirmReq} />;
   } else if (overlay) {
-    main = <TextViewer {...overlay} width={W} height={mainH} active={focus === 'view' && !confirmReq} onClose={() => setOverlay(null)} />;
+    main = <TextViewer {...overlay} width={W} height={mainH} active={focus === 'view' && !confirmReq} onClose={ctx.closeOverlay} />;
   } else if (view === 'repos') {
     main = <ReposView repos={repos} roots={[...config.roots, ...extraRoots.current]} current={data?.root} ctx={ctx} width={W} height={mainH} active={viewActive} />;
   } else if (!data) {
     main = (
       <Panel title={VIEWS.find((v) => v.id === view).label} width={W} height={mainH}>
-        <Text color={theme.dim}>{loading ? '  Loading…' : '  No repository open. Press 6 to pick one, or /open <path>.'}</Text>
+        <Text color={theme.dim}>{loading ? '  Loading…' : '  No repository open. Press 7 to pick one, or /open <path>.'}</Text>
       </Panel>
     );
   } else {
@@ -561,10 +673,12 @@ export function App({ initialPath, config: initialConfig, checkUpdate, askClaude
       ? 'enter run · tab complete · ↑↓ pick or history · esc back'
       : overlay?.kind === 'rebase'
         ? '↵ start the rebase · esc cancel'
-        : overlay
+        : overlay?.kind === 'picker'
+          ? 'j/k move · esc close'
+          : overlay
           ? 'j/k scroll · space page · n/N hunk · esc close'
           : HINTS[view];
-  const right = focus === 'prompt' ? '' : '  f fetch · p pull · P push · / commands · ! git · ? help';
+  const right = focus === 'prompt' ? '' : '  f fetch · p pull · P push · z undo · / commands · ! git · ? help';
 
   return (
     <Box flexDirection="column" width={W} height={H}>

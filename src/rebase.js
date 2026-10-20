@@ -1,4 +1,4 @@
-// Interactive rebase without an editor: Tiller writes git's todo list itself and hands it over
+// Interactive rebase without an editor: Splice writes git's todo list itself and hands it over
 // through GIT_SEQUENCE_EDITOR. Rewording runs `git commit --amend -F <file>` right after the pick.
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -56,7 +56,7 @@ export function buildTodo(rows, messageFile) {
 
 /** Writes the todo and message files under .git and returns the env that makes `git rebase -i` use them. */
 export async function prepare(gitDir, rows) {
-  const dir = join(gitDir, 'tiller-rebase');
+  const dir = join(gitDir, 'splice-rebase');
   await rm(dir, { recursive: true, force: true });
   await mkdir(dir, { recursive: true });
   const { todo, messages } = buildTodo(rows, (i) => join(dir, `message-${i}.txt`));
@@ -69,7 +69,47 @@ export async function prepare(gitDir, rows) {
 
 /** Removes the files once no rebase needs them (a stopped rebase still runs its exec lines later). */
 export function cleanup(gitDir) {
-  return rm(join(gitDir, 'tiller-rebase'), { recursive: true, force: true });
+  return rm(join(gitDir, 'splice-rebase'), { recursive: true, force: true });
+}
+
+// Fixups: `git commit --fixup=<hash>`, then an autosquash rebase folds the fixup! commit into its target.
+
+export const COMMIT_LIST_FORMAT = '%H%x1f%P%x1f%at%x1f%s';
+
+/** Parses `git log --format=COMMIT_LIST_FORMAT`. */
+export function parseCommitList(raw) {
+  return raw
+    .split('\n')
+    .filter((l) => l.includes('\x1f'))
+    .map((l) => {
+      const [hash, parents, time, subject] = l.split('\x1f');
+      return { hash, parents: parents ? parents.split(' ') : [], time: Number(time), subject: subject ?? '' };
+    });
+}
+
+/**
+ * The refs whose commits a fixup shouldn't offer as targets: the branch's upstream and the default
+ * branch (local and on the remote), unless that is the branch itself. `def` is parse.js's
+ * `defaultBranch()`: { name, ref }.
+ */
+export function fixupExclusions({ head, upstream, def = null, local = [] }) {
+  const out = [];
+  const add = (r) => r && !out.includes(r) && out.push(r);
+  add(upstream);
+  if (!def || def.name === head) return out;
+  if (local.includes(def.name)) add(def.name);
+  add(def.ref);
+  return out;
+}
+
+/** Log arguments for the commits a fixup can target: the branch's own commits, or (`exclude` empty) the latest ones. */
+export function fixupLogArgs(exclude, n = exclude.length ? 200 : 30) {
+  return ['log', `-n${n}`, '--no-merges', `--format=${COMMIT_LIST_FORMAT}`, 'HEAD', ...(exclude.length ? ['--not', ...exclude] : []), '--'];
+}
+
+/** The rebase that folds fixup! commits into `target` ({ parents }): from its parent, or from the root. */
+export function foldArgs(target, { autostash = false } = {}) {
+  return ['rebase', '-i', '--autosquash', ...(autostash ? ['--autostash'] : []), target.parents[0] ?? '--root'];
 }
 
 /** "2 squashed, 1 dropped, 1 reworded" */

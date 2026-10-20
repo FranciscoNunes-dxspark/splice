@@ -1,6 +1,6 @@
 // Pull requests on the server a repository's remote points at: GitHub (through the gh CLI)
 // or Azure DevOps (through the az CLI and its azure-devops extension). Both CLIs use the
-// sign-in you already have, so Tiller never sees or stores a token.
+// sign-in you already have, so Splice never sees or stores a token.
 import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
@@ -49,7 +49,7 @@ const GH_REVIEW = {
   REVIEW_REQUIRED: { text: 'Review required', tone: 'wait' },
 };
 
-/** One GitHub PR from `gh pr list --json`, in Tiller's shape. */
+/** One GitHub PR from `gh pr list --json`, in Splice's shape. */
 export function githubPr(p, me) {
   return {
     id: p.number,
@@ -84,7 +84,7 @@ export function azureReview(reviewers) {
   return { text: 'No votes yet', tone: 'none' };
 }
 
-/** One Azure DevOps PR from `az repos pr list`, in Tiller's shape. */
+/** One Azure DevOps PR from `az repos pr list`, in Splice's shape. */
 export function azurePr(p, me, remote) {
   const reviewers = (p.reviewers ?? []).map((r) => ({
     name: r.displayName,
@@ -119,6 +119,28 @@ export function azurePr(p, me, remote) {
 export function sortPrs(prs) {
   const rank = (p) => (p.reviewMe ? 0 : p.mine ? 1 : 2);
   return [...prs].sort((a, b) => rank(a) - rank(b) || b.time - a.time);
+}
+
+/**
+ * The open PR of each branch, for the Branches view, keyed `local:<name>` and `remote:<name>`.
+ * A PR's source is a branch name on the host's remote (`remoteName`): it matches that remote's
+ * branch (origin/feature), and a local branch that tracks it, or has the same name and no upstream
+ * elsewhere. Where a branch has several PRs (into different targets), the first in `prs` wins.
+ */
+export function prsByBranch(prs, refs, remoteName) {
+  const bySource = new Map();
+  for (const p of prs ?? []) if (p.source && !bySource.has(p.source)) bySource.set(p.source, p);
+  const out = new Map();
+  if (!bySource.size) return out;
+  const prefix = `${remoteName}/`;
+  for (const b of refs.remote) {
+    if (b.name.startsWith(prefix) && bySource.has(b.name.slice(prefix.length))) out.set(`remote:${b.name}`, bySource.get(b.name.slice(prefix.length)));
+  }
+  for (const b of refs.local) {
+    const source = !b.upstream ? b.name : b.upstream.startsWith(prefix) ? b.upstream.slice(prefix.length) : null;
+    if (source && bySource.has(source)) out.set(`local:${b.name}`, bySource.get(source));
+  }
+  return out;
 }
 
 // Runs a CLI and resolves with stdout. On Windows az is a .cmd wrapper that Node won't start
@@ -249,7 +271,7 @@ function azure(root, remote, remoteName) {
     approve: (pr, signal) => az(['repos', 'pr', 'set-vote', '--id', String(pr.id), '--vote', 'approve'], { signal }),
     async comment(pr, text, signal) {
       // Posting a thread needs a JSON body, which `az devops invoke` only takes from a file.
-      const dir = await mkdtemp(join(tmpdir(), 'tiller-'));
+      const dir = await mkdtemp(join(tmpdir(), 'splice-'));
       const file = join(dir, 'thread.json');
       try {
         await writeFile(file, JSON.stringify({ comments: [{ parentCommentId: 0, content: text, commentType: 1 }], status: 1 }));
@@ -273,7 +295,7 @@ function azure(root, remote, remoteName) {
   };
 }
 
-/** The PR host for a loaded repository: origin first, else the first remote Tiller recognises. */
+/** The PR host for a loaded repository: origin first, else the first remote Splice recognises. */
 export function hostFor(data) {
   if (!data?.remoteUrls) return null;
   const names = Object.keys(data.remoteUrls).sort((a, b) => (a === 'origin' ? -1 : b === 'origin' ? 1 : 0));
