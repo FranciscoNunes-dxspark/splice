@@ -129,3 +129,12 @@ test('/body: a file, text with \\n for line breaks, or nothing', async () => {
   assert.deepEqual(bodyArgs('--file /tmp/a b.md'), { file: '/tmp/a b.md' });
   assert.deepEqual(bodyArgs('Fixes it.\\nAlso tests.'), { text: 'Fixes it.\nAlso tests.' });
 });
+
+test('/release: the tag, --draft and a title; and the gh release arguments', async () => {
+  const { releaseArgs, githubReleaseArgs } = await import('../src/hosting.js');
+  assert.deepEqual(releaseArgs('v1.2 --draft The big one'), { tag: 'v1.2', title: 'The big one', draft: true });
+  assert.deepEqual(releaseArgs('v1.2'), { tag: 'v1.2', title: '', draft: false });
+  assert.deepEqual(releaseArgs(''), { tag: null, title: '', draft: false });
+  assert.deepEqual(githubReleaseArgs('o/r', { tag: 'v1', title: 'One', draft: true }), ['release', 'create', 'v1', '-R', 'o/r', '--verify-tag', '--generate-notes', '--title', 'One', '--draft']);
+  assert.deepEqual(githubReleaseArgs('o/r', { tag: 'v1', title: '', draft: false }), ['release', 'create', 'v1', '-R', 'o/r', '--verify-tag', '--generate-notes']);
+});

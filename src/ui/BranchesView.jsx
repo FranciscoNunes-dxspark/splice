@@ -109,6 +109,8 @@ export function BranchesView({ data, ctx, width, height, active, prVersion }) {
     if (input === 'C') return a.cleanUp(ctx);
     if (!sel?.ref) return;
     const { name } = sel.ref;
+    if (sel.type === 'tag' && input === 'u') return a.pushTag(ctx, name);
+    if (sel.type === 'tag' && input === 'R') return a.createRelease(ctx, name);
     if (key.return) a.checkout(ctx, name);
     else if (input === 'y') ctx.copy(name);
     else if (input === 'n') ctx.prefill(`/branch  ${name}`, 8);
@@ -131,7 +133,7 @@ export function BranchesView({ data, ctx, width, height, active, prVersion }) {
     if (nav.pick(e.y - 1) && e.double) keys('', { return: true });
   });
 
-  const hint = [vsDefault ? 'D diff' : '', selPr ? 'o open PR' : ''].filter(Boolean).join(' · ');
+  const hint = [vsDefault ? 'D diff' : '', selPr ? 'o open PR' : '', sel?.type === 'tag' ? 'u push · R release · d delete' : ''].filter(Boolean).join(' · ');
   return (
     <Box width={width} height={height}>
       <Panel title="Branches" hint={`${local.length} local · ${remote.length} remote`} width={listW} height={height} focused={active}>

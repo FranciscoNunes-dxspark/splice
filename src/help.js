@@ -79,6 +79,10 @@ Branches
   The right-hand pane: how far it is ahead of and behind the default branch, its commits the default
   branch doesn't have, then its history
   C                Clean up: delete branches with nothing unpushed or unmerged, and clean worktrees (/cleanup)
+  On a tag (Tags, at the bottom of the list):
+  u                Push it (/tag-push <tag> [remote])
+  d                Delete it: here, on the remote, or both (asks first)
+  R                Create a GitHub release for it, published or as a draft (/release <tag> [--draft] [title])
 
 Worktrees (● the one open here)
   ↵                Open it in Splice
@@ -141,6 +145,7 @@ Slash commands
                                      or changing lines that match the regex
   /pr <title> [--into <branch>] [--draft]   /comment <text>   /approve   /reply <text>
   /merge-pr [squash|merge|rebase] [--delete-branch] [--auto]   /ci
+  /tag-push <tag> [remote]   /release <tag> [--draft] [title]
   /reviewer <name>   /draft   /ready   /title <text>   /body [--file <path> | text]
   /rebase -i <ref>   /reword <message>   /fixup [ref]   /worktree <path> [ref]   /compare <ref> [base]
   /history <path>   /blame <path>   /cleanup

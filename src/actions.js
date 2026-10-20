@@ -8,7 +8,7 @@ import { cleanupChoice, cleanupCount, cleanupOptions, cleanupText, planCleanup, 
 import { configFile } from './config.js';
 import { matchLineEndings, parseConflicts, takeSide, unifiedDiff } from './conflict.js';
 import { blamePicker, historyPicker, repoPath } from './history.js';
-import { MERGE_LABELS, bodyArgs, mergePrArgs } from './hosting.js';
+import { MERGE_LABELS, bodyArgs, mergePrArgs, releaseArgs } from './hosting.js';
 import { defaultBranch, findArgs, firstBadCommit, parseGraph, parseStatus, relTime, searchArgs, splitArgs } from './parse.js';
 import { buildPatch, coversAll, parseDiff } from './patch.js';
 import {
@@ -185,8 +185,85 @@ export async function deleteRef(ctx, name) {
     if (ok) return ctx.exec(['push', rb.remote, '--delete', branch], { label: 'Deleting remote branch' });
     return;
   }
-  if (tags.some((t) => t.name === name)) return ctx.exec(['tag', '-d', name], { label: 'Deleting tag' });
+  if (tags.some((t) => t.name === name)) return deleteTag(ctx, name);
   ctx.note(`No branch or tag called ${name}.`, 'error');
+}
+
+/** The remote tags are pushed to: origin, else the first one. */
+function mainRemote(ctx) {
+  const { remotes } = ctx.data;
+  return remotes.includes('origin') ? 'origin' : (remotes[0] ?? null);
+}
+
+/** Deletes a tag here, on the main remote, or both, as asked. */
+async function deleteTag(ctx, name) {
+  const remote = mainRemote(ctx);
+  const where = await ctx.confirm({
+    title: `Delete the tag ${name}?`,
+    detail: remote ? `Deleting it on ${remote} removes it for everyone; their copies stay until they prune.` : 'The commit it points at stays.',
+    options: [
+      { label: 'Delete it here', value: 'local' },
+      ...(remote
+        ? [
+            { label: `Delete it here and on ${remote}`, value: 'both' },
+            { label: `Delete it only on ${remote}`, value: 'remote' },
+          ]
+        : []),
+      { label: 'No', value: null },
+    ],
+    danger: true,
+  });
+  if (!where) return;
+  let r;
+  if (where !== 'local') {
+    r = await ctx.exec(['push', remote, '--delete', `refs/tags/${name}`], { label: 'Deleting the tag on the remote', refresh: where === 'remote' });
+    if (!r.ok) return r;
+  }
+  if (where !== 'remote') r = await ctx.exec(['tag', '-d', name], { label: 'Deleting tag' });
+  return r;
+}
+
+/** u on a tag in Branches, /tag-push <tag> [remote]: sends the tag to the remote (origin unless named). */
+export function pushTag(ctx, text) {
+  if (!needRepo(ctx)) return;
+  const [name, given] = splitArgs(text ?? '');
+  if (!name) return ctx.prefill('/tag-push ');
+  if (!ctx.data.refs.tags.some((t) => t.name === name)) return ctx.note(`No tag called ${name}.`, 'error');
+  const remote = given ?? mainRemote(ctx);
+  if (!remote) return ctx.note('This repository has no remote. Add one with: /remote add origin <url>', 'error');
+  return ctx.exec(['push', remote, `refs/tags/${name}`], { label: 'Pushing tag' });
+}
+
+/**
+ * R on a tag in Branches, /release <tag> [--draft] [title]: a GitHub release for the tag, with notes GitHub
+ * writes from what was merged since the last one. Pushes the tag first, since the release needs the server to have it.
+ */
+export async function createRelease(ctx, text) {
+  if (!needRepo(ctx)) return;
+  const { tag, title, draft } = releaseArgs(text);
+  if (!tag) return ctx.prefill('/release ');
+  const host = needHost(ctx);
+  if (!host) return;
+  if (!host.createRelease) return ctx.note(`${host.name} has no releases made from tags: Splice only creates them on GitHub. u pushes the tag.`, 'error');
+  if (!ctx.data.refs.tags.some((t) => t.name === tag)) return ctx.note(`No tag called ${tag}. t on a commit in the graph makes one.`, 'error');
+  const asDraft =
+    draft ||
+    (await ctx.confirm({
+      title: `Create a GitHub release for ${tag}${title ? ` called "${title}"` : ''}?`,
+      detail: `Pushes ${tag} to ${host.remoteName} first. GitHub writes the notes from what was merged since the last release.`,
+      options: [
+        { label: 'Yes, publish it', value: 'publish' },
+        { label: 'Save it as a draft', value: true },
+        { label: 'No', value: null },
+      ],
+    }));
+  if (!asDraft) return;
+  const pushed = await ctx.exec(['push', host.remoteName, `refs/tags/${tag}`], { label: 'Pushing tag', refresh: false });
+  if (!pushed.ok) return pushed;
+  return hostTask(ctx, `gh release create ${tag}${asDraft === true ? ' --draft' : ''}`, (signal) => host.createRelease({ tag, title, draft: asDraft === true }, signal), {
+    label: 'Creating the release',
+    refresh: false,
+  });
 }
 
 function currentName(ctx) {

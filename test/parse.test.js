@@ -156,7 +156,7 @@ test('a local branch absorbs its remote twin in the pills', () => {
 test('slash suggestions: command names, then ref completion', () => {
   const data = { refs: { local: [{ name: 'main' }, { name: 'feature/login' }], remote: [{ name: 'origin/main' }], tags: [] } };
   const names = suggestionsFor('/pu', { data }).map((s) => s.label);
-  assert.deepEqual(names, ['/pull', '/push']);
+  assert.deepEqual(names, ['/pull', '/push', '/tag-push']);
   const checkout = suggestionsFor('/checkout ', { data });
   assert.equal(checkout[0].insert, '/checkout main');
   assert.deepEqual(suggestionsFor('/checkout log', { data }).map((s) => s.label), ['feature/login']);
