@@ -4,13 +4,15 @@
 /** Who the pet is; the welcome box, the mood lines and the logo's title all say it from here. */
 export const PET = { name: 'Twig', kind: 'beaver' };
 
+// The accent's family, as Trawl's Glim and Keel's Pinch are coloured from theirs: the accent for the
+// outline, a darker and a paler shade, a near-black with its tint, and one contrasting colour.
 export const PALETTE = {
   G: '#5fd787', // outline, the accent green
-  D: '#a0672f', // fur
-  L: '#e6c39a', // muzzle
-  E: '#1a0f08', // eyes, nose
+  D: '#2e8b57', // fur
+  L: '#b4f0cc', // muzzle
+  E: '#0e1a13', // eyes, nose
   W: '#ffffff', // eye shine
-  T: '#fff6dc', // teeth
+  T: '#ffb35f', // teeth, the one warm colour: a beaver's really are orange
 };
 
 // 16 × 10 pixels; '.' is transparent. The head is columns 0–13; 14–15 are room for a waving paw.
