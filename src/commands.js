@@ -9,6 +9,7 @@ export const COMMANDS = [
   { name: 'checkout', args: '<branch|tag|hash>', desc: 'Switch to a branch, tag or commit', complete: 'refs', run: (ctx, s) => a.checkout(ctx, s) },
   { name: 'branch', args: '<name> [start]', desc: 'Create a branch and switch to it', run: (ctx, s) => a.createBranch(ctx, s) },
   { name: 'delete', args: '<branch|tag>', desc: 'Delete a branch (local or remote) or a tag', complete: 'refs', run: (ctx, s) => a.deleteRef(ctx, s) },
+  { name: 'cleanup', desc: 'Delete branches and remove worktrees with nothing of yours on them (asks first)', run: (ctx) => a.cleanUp(ctx) },
   { name: 'merge', args: '<ref>', desc: 'Merge a ref into the current branch', complete: 'refs', run: (ctx, s) => a.merge(ctx, s) },
   { name: 'rebase', args: '[-i] <ref>', desc: 'Rebase the current branch onto a ref (-i: edit the commits after it)', complete: 'refs', run: (ctx, s) => a.rebase(ctx, s) },
   { name: 'fetch', args: '[remote]', desc: 'Fetch all remotes and prune deleted branches', run: (ctx, s) => a.fetch(ctx, splitArgs(s)) },

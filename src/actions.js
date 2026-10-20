@@ -3,11 +3,13 @@
 import { rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { READ_ONLY, cleanSubject, clip, commitPrompt, lookPrompt, parsePrDraft, prPrompt } from './claude.js';
+import { cleanupChoice, cleanupCount, cleanupOptions, cleanupText, planCleanup, readCleanup } from './cleanup.js';
 import { splitArgs } from './parse.js';
 import { buildPatch, coversAll, parseDiff } from './patch.js';
 import { cleanup, loadPlan, planProblem, planSummary, prepare } from './rebase.js';
 
 const short = (hash) => hash.slice(0, 7);
+const firstLine = (s) => String(s ?? '').split('\n')[0];
 const YES_NO = (yes) => [
   { label: yes, value: true },
   { label: 'No', value: false },
@@ -270,6 +272,110 @@ export async function removeWorktree(ctx, wt) {
     danger: true,
   });
   if (force) return ctx.exec(['worktree', 'remove', '--force', wt.path], { label: 'Removing worktree' });
+}
+
+/**
+ * The repository's default branch and the remote it's on: the remote's HEAD as last fetched, else
+ * what the PR host says (as /pr asks it), else main or master if there is one. `name` is null if none fits.
+ */
+async function defaultBranch(ctx) {
+  const { remotes, refs } = ctx.data;
+  const host = ctx.host();
+  const remote = host?.remoteName ?? (remotes.includes('origin') ? 'origin' : remotes[0]) ?? null;
+  if (remote) {
+    const head = (await ctx.git(['symbolic-ref', '-q', '--short', `refs/remotes/${remote}/HEAD`]).catch(() => '')).trim();
+    if (head.startsWith(`${remote}/`)) return { name: head.slice(remote.length + 1), remote };
+  }
+  if (host) {
+    const name = await host.defaultBranch().catch(() => null);
+    if (name) return { name, remote };
+  }
+  const name = ['main', 'master'].find((n) => refs.local.some((b) => b.name === n) || refs.remote.some((b) => b.name === `${remote}/${n}`));
+  return { name: name ?? null, remote };
+}
+
+/**
+ * /cleanup: removes the linked worktrees with no uncommitted changes (pruning those whose folder is gone),
+ * then deletes the local branches with no commits that exist only here: all on a remote, or merged into
+ * the default branch. Lists them first and asks.
+ */
+export async function cleanUp(ctx) {
+  if (!needRepo(ctx)) return;
+  const { root, refs, remotes } = ctx.data;
+  let plan;
+  const read = await ctx.task(
+    'Looking for branches and worktrees to clean up',
+    async () => {
+      const { name, remote } = await defaultBranch(ctx);
+      const mergedRefs = name ? [name, `${remote}/${name}`].filter((r) => refs.local.some((b) => b.name === r) || refs.remote.some((b) => b.name === r)) : [];
+      plan = planCleanup(await readCleanup(root, { defaultBranch: name, mergedRefs, hasRemotes: remotes.length > 0 }));
+      return { stdout: '', stderr: '' };
+    },
+    { label: 'Looking for things to clean up', refresh: false, quiet: true },
+  );
+  if (!read.ok) return read;
+  if (!plan.worktrees.length && !plan.branches.length) {
+    return ctx.note('Nothing to clean up: every other branch and worktree has something of yours on it.');
+  }
+  // The full list goes in the viewer, so the question stays short however much there is.
+  ctx.showText('Clean up: what goes and what stays', cleanupText(plan, root));
+  const choice = await ctx.confirm({
+    title: `Delete ${cleanupCount(plan)} with nothing of yours on them?`,
+    detail: 'Listed above, with why. Branches that have commits only here, and worktrees with changes, stay.',
+    options: cleanupOptions(plan),
+    danger: true,
+  });
+  ctx.closeOverlay();
+  if (!choice) return;
+  const { worktrees, branches } = cleanupChoice(plan, choice);
+  const problems = [];
+  const removed = new Set();
+  let stopped = false;
+  const step = async (args, label, opts) => {
+    const r = await ctx.exec(args, { label, refresh: false, ...opts });
+    if (r.error?.cancelled) stopped = true;
+    return r;
+  };
+  if (worktrees.some((w) => w.prune)) {
+    const r = await step(['worktree', 'prune'], 'Pruning worktrees');
+    for (const w of worktrees.filter((x) => x.prune)) {
+      if (r.ok) removed.add(w.path);
+      else problems.push(`${w.path}: ${firstLine(r.error.message)}`);
+    }
+  }
+  // Plain remove: it refuses to lose changes, should any have appeared since the list was made.
+  for (const w of worktrees.filter((x) => !x.prune)) {
+    if (stopped) break;
+    const r = await step(['worktree', 'remove', w.path], 'Removing worktree');
+    if (r.ok) removed.add(w.path);
+    else problems.push(`${w.path}: ${firstLine(r.error.message)}`);
+  }
+  // A branch whose worktree couldn't go is still checked out there, so it stays too.
+  const names = branches.filter((b) => !b.worktree || removed.has(b.worktree)).map((b) => b.name);
+  let message = '';
+  if (names.length && !stopped) {
+    const r = await step(['branch', '-d', ...names], 'Deleting branches', { quietError: true });
+    // -d also wants each branch merged into HEAD (or its upstream). These were checked against the
+    // remotes and the default branch instead, so the ones it refuses for that alone are forced.
+    message = r.ok ? '' : r.error.message;
+    const refused = names.filter((n) => message.includes(`'${n}' is not fully merged`));
+    if (refused.length && !stopped) await step(['branch', '-D', ...refused], 'Deleting branches');
+  }
+  await ctx.reload();
+  const left = new Set(ctx.data.refs.local.map((b) => b.name));
+  const deleted = names.filter((n) => !left.has(n));
+  for (const b of branches) {
+    if (!left.has(b.name)) continue;
+    if (!names.includes(b.name)) problems.push(`${b.name}: kept, as its worktree is still there`);
+    else if (!stopped) {
+      const line = message.split('\n').find((l) => l.includes(`'${b.name}'`) && !/not fully merged|^hint:/.test(l));
+      problems.push(`${b.name}: ${line ? line.replace(/^error:\s*/, '') : 'not deleted'}`);
+    }
+  }
+  const done = cleanupCount({ worktrees: [...removed], branches: deleted });
+  const head = stopped ? `Stopped${done ? ` after ${done}` : ''}` : done ? `Cleaned up ${done}` : 'Nothing was cleaned up';
+  const lines = [...(deleted.length ? [`Deleted ${deleted.join(', ')}`] : []), ...problems];
+  ctx.note([head, ...lines].join('\n'), problems.length || stopped ? 'error' : 'ok');
 }
 
 export function tag(ctx, argText) {

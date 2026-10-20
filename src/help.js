@@ -50,11 +50,13 @@ Branches
   n                New branch from it
   m  e             Merge it in · Rebase onto it
   d                Delete (asks before force-deleting or deleting on the remote)
+  C                Clean up: delete branches with nothing unpushed or unmerged, and clean worktrees (/cleanup)
 
 Worktrees (● the one open here)
   ↵                Open it in Tiller
   n                New worktree (/worktree <path> [ref]; the path is relative to the repository)
   x                Remove it (asks first; the branch stays), or prune one whose folder is gone
+  C                Clean up: remove worktrees without changes, and branches with nothing unpushed (/cleanup)
 
 Stash
   ↵                Full diff       s           Stash the current changes
@@ -87,7 +89,7 @@ Slash commands
   /fetch   /pull [--rebase]   /push [--force]   /stash [msg]   /pop   /discard
   /continue   /abort   /find <text>   /open <path>   /scan <folder>   /last   /quit
   /pr <title> [--into <branch>] [--draft]   /comment <text>   /approve
-  /rebase -i <ref>   /reword <message>   /worktree <path> [ref]
+  /rebase -i <ref>   /reword <message>   /worktree <path> [ref]   /cleanup
 
 Viewer (diffs, output, this help)
   j k  space  g G  Scroll         n N         Next, previous hunk
