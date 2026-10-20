@@ -102,6 +102,10 @@ export function ChangesView({ data, ctx, width, height, active }) {
   const target = !f ? null : f.area === 'conflict' ? 'conflict' : 'diff';
   const pane = paneState === target ? paneState : 'files';
   const fileKey = f ? `${f.area}:${f.path}` : null;
+  // v in the file list: the first row of a selection of files, to stash together (s).
+  const [filesFrom, setFilesFrom] = useState(null);
+  const fileSpan = filesFrom == null ? null : [Math.min(filesFrom, nav.index), Math.max(filesFrom, nav.index)];
+  const selectedFiles = () => (fileSpan ? rows.slice(fileSpan[0], fileSpan[1] + 1).filter((r) => r.file).map((r) => r.file) : f ? [f] : []);
   const [anchor, setAnchor] = useState(null);
   const [anchorFor, setAnchorFor] = useState(null);
   if (anchorFor !== fileKey) {
@@ -142,6 +146,13 @@ export function ChangesView({ data, ctx, width, height, active }) {
   const cf = useConflicts(data.root, f, data.loadedAt, split || pane === 'conflict', height);
 
   const fileKeys = (input, key) => {
+    if (key.escape && fileSpan) return setFilesFrom(null);
+    if (input === 'v') return setFilesFrom(fileSpan ? null : nav.index);
+    if (input === 's' && fileSpan) {
+      const list = selectedFiles();
+      setFilesFrom(null);
+      return a.stashFiles(ctx, list);
+    }
     if (nav.handle(input, key)) return;
     if (input === 'J') return target === 'conflict' ? cf.page(1) : dnav.handle('', { pageDown: true });
     if (input === 'K') return target === 'conflict' ? cf.page(-1) : dnav.handle('', { pageUp: true });
@@ -188,10 +199,11 @@ export function ChangesView({ data, ctx, width, height, active }) {
     if (input === 'N' || input === '[') return jumpHunk(-1);
     if (input === 'v') return setAnchor(anchor == null ? dnav.index : null);
     if (key.return) return ctx.showChange(f);
-    if ((input === ' ' || input === 'd') && fresh) {
+    if ((input === ' ' || input === 'd' || input === 's') && fresh) {
       const p = picks();
       if (!p) return;
-      await a.applyLines(ctx, f, raw, p, { discard: input === 'd' });
+      if (input === 's') await a.stashLines(ctx, f, raw, p);
+      else await a.applyLines(ctx, f, raw, p, { discard: input === 'd' });
       setAnchor(null);
     }
   };
@@ -238,9 +250,13 @@ export function ChangesView({ data, ctx, width, height, active }) {
       : pane === 'conflict'
         ? 'o ours · t theirs · b both · n/N · esc'
         : range
-        ? `space ${verb} lines${f.area === 'unstaged' ? ' · d discard' : ''} · esc`
+        ? `space ${verb} lines${f.area === 'unstaged' ? ' · d discard · s stash' : ''} · esc`
         : `space ${verb} hunk · v lines · n/N · esc`;
-  const listHint = f?.area === 'conflict' ? 'space resolved · O ours · T theirs · C Claude' : 'space stage/unstage';
+  const listHint = fileSpan
+    ? `${selectedFiles().length} selected · s stash`
+    : f?.area === 'conflict'
+      ? 'space resolved · O ours · T theirs · C Claude'
+      : 'space stage/unstage';
 
   return (
     <Box width={width} height={height}>
@@ -270,6 +286,7 @@ export function ChangesView({ data, ctx, width, height, active }) {
                 key={`${row.file.area}:${row.file.path}`}
                 width={listW - 2}
                 selected={idx === nav.index}
+                marked={fileSpan && idx >= fileSpan[0] && idx <= fileSpan[1]}
                 focused={active && pane === 'files'}
                 segments={fileSegments(row.file)}
               />

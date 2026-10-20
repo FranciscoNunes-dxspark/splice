@@ -84,6 +84,8 @@ export function checkGpgKey(cfg, { cwd } = {}) {
       if (!err) return resolve();
       reject(new Error((stderr || err.message).trim()));
     });
+    // gpg may stop before reading anything (no key, say): that's its answer, not an error of ours.
+    child.stdin.on('error', () => {});
     child.stdin.end('splice\n');
   });
 }

@@ -39,6 +39,7 @@ Changes
   a  u             Stage all · Unstage all
   d                Discard the file's changes
   s                Stash just this file, staged and unstaged changes (its path is the stash's message)
+  v                Select several files (v, move, then s stashes them all together; esc clears it)
   c  A             Commit · Amend the last commit
   F                Fix up an earlier commit with the staged changes (pick it; then fold it in, or keep it for later)
   W                Claude writes the commit message for the staged changes, into the prompt to edit
@@ -56,6 +57,7 @@ Changes, in the diff
   space            Stage the hunk under the cursor (unstage it, for a staged file)
   v                Start or end a line selection; space then stages just those lines
   d                Discard the hunk or the selected lines (asks first)
+  s                Stash the hunk or the selected lines: they leave the file, and pop brings them back
   ↵                Full-screen diff        esc  ←  h    Back to the file list
 
 Changes, in a conflict (ours, the base in diff3 style, theirs)
@@ -99,6 +101,7 @@ Worktrees (● the one open here)
 Stash
   ↵                Full diff
   s  S             Stash the current changes · The same, typing a message first (/stash <message>)
+                   Untracked files go too, unless turned off in /settings; /stash -u or --no-untracked overrides
   a  o  x          Apply · Pop · Drop
   F                Its files. ↵ restores one into the working tree, as apply
                    would: a change unstaged, a file the stash added staged, an untracked file
@@ -142,7 +145,7 @@ Prompt
 Slash commands
   /commit <msg>   /amend [msg]   /checkout <ref>   /branch <name> [start]
   /delete <ref>   /merge <ref>   /rebase <ref>     /reset <ref>   /tag <name> [ref]
-  /fetch   /pull [--rebase]   /push [--force] [remote]   /stash [msg]   /pop   /discard
+  /fetch   /pull [--rebase]   /push [--force] [remote]   /stash [-u] [msg]   /pop   /discard
   /undo   /reflog   /submodule-update [path]
   /bisect <good|bad|skip|reset> [ref]
   /continue   /abort   /find <text>   /open <path>   /scan <folder>   /last   /quit

@@ -511,3 +511,19 @@ export function parseSubmodules(raw, files = []) {
   }
   return out;
 }
+
+/**
+ * "/stash [-u | --no-untracked] [message]" as `git stash push` arguments. Untracked files go in when -u says
+ * so, or by default when `untracked` (the setting) is on; --no-untracked leaves them out either way.
+ */
+export function stashArgs(text, { untracked = true } = {}) {
+  let include = untracked;
+  const message = (text ?? '')
+    .replace(/(^|\s)(-u|--include-untracked|--no-untracked|--tracked)(?=\s|$)/g, (_, space, flag) => {
+      include = flag === '-u' || flag === '--include-untracked';
+      return space;
+    })
+    .replace(/\s+/g, ' ')
+    .trim();
+  return { args: ['stash', 'push', ...(include ? ['--include-untracked'] : []), ...(message ? ['-m', message] : [])], untracked: include, message };
+}

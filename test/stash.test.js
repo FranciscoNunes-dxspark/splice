@@ -175,3 +175,73 @@ test('stashing one file, restoring single files from a stash, and asking before 
     app.unmount();
   }
 });
+
+test('/stash arguments: -u and --no-untracked over the setting, and the message', async () => {
+  const { stashArgs } = await import('../src/parse.js');
+  assert.deepEqual(stashArgs('', { untracked: true }).args, ['stash', 'push', '--include-untracked']);
+  assert.deepEqual(stashArgs('wip', { untracked: false }).args, ['stash', 'push', '-m', 'wip']);
+  assert.deepEqual(stashArgs('-u wip on it', { untracked: false }).args, ['stash', 'push', '--include-untracked', '-m', 'wip on it']);
+  assert.deepEqual(stashArgs('half --no-untracked done', { untracked: true }), { args: ['stash', 'push', '-m', 'half done'], untracked: false, message: 'half done' });
+});
+
+test('stashing several files at once, just one hunk of a file, and leaving untracked files out', async () => {
+  git('stash', 'clear');
+  const lines = (edit) => `${Array.from({ length: 30 }, (_, i) => edit[i] ?? `l${i + 1}`).join('\n')}\n`;
+  writeFileSync(join(dir, 'long.txt'), lines({}));
+  git('add', 'long.txt');
+  git('commit', '-q', '-m', 'Long file');
+  writeFileSync(join(dir, 'a.txt'), 'a\nfirst\n');
+  writeFileSync(join(dir, 'b.txt'), 'b\nsecond\n');
+  writeFileSync(join(dir, 'long.txt'), lines({ 1: 'TOP', 27: 'BOTTOM' }));
+  writeFileSync(join(dir, 'new.txt'), 'new\n');
+  const app = start();
+  const frame = () => app.lastFrame() ?? '';
+  const pick = async (re, what) => {
+    while (!re.test(frame())) {
+      const before = frame();
+      app.stdin.write('j');
+      await until(() => frame() !== before || re.test(frame()), `the cursor to move towards ${what}`);
+    }
+    await until(() => re.test(frame()), `the cursor on ${what}`);
+  };
+  try {
+    await until(() => frame().includes('Long file'), 'the graph');
+    app.stdin.write('2');
+    await until(() => frame().includes('Unstaged (4)') && /❯ M a\.txt/.test(frame()), 'the Changes view');
+    app.stdin.write('v');
+    await until(() => frame().includes('1 selected'), 'the selection started');
+    app.stdin.write('j');
+    await until(() => frame().includes('2 selected'), 'two files selected');
+    app.stdin.write('s');
+    await until(() => git('stash', 'list', '--format=%gs') === 'On main: a.txt and 1 more' && read('a.txt') === 'a\n' && read('b.txt') === 'b\n', 'both files stashed');
+    assert.equal(git('stash', 'show', '--name-only', 'stash@{0}'), 'a.txt\nb.txt');
+
+    await until(() => frame().includes('Unstaged (2)'), 'the view to refresh');
+    app.stdin.write('g');
+    await until(() => /❯ M long\.txt/.test(frame()), 'the cursor on long.txt');
+    app.stdin.write('\r');
+    await until(() => frame().includes('▌@@ -1,'), 'the diff pane');
+    app.stdin.write('s');
+    await until(() => git('stash', 'list').split('\n').length === 2 && !read('long.txt').includes('TOP'), 'the first hunk stashed');
+    assert.match(read('long.txt'), /BOTTOM/, 'the other hunk stays');
+    const shown = git('stash', 'show', '-p', 'stash@{0}');
+    assert.match(shown, /^\+TOP$/m);
+    assert.doesNotMatch(shown, /BOTTOM/);
+    assert.equal(git('stash', 'list', '-1', '--format=%gs'), 'On main: long.txt (some lines)');
+    // Popping it (o in Stash) brings back just that hunk, next to the one that stayed, which git's own
+    // stash pop refuses to do.
+    app.stdin.write('\x1b');
+    app.stdin.write('5');
+    await until(() => /❯ stash@\{0\}\s+\S+\s+On main: long\.txt/.test(frame()), 'the Stash view');
+    app.stdin.write('o');
+    await until(() => read('long.txt') === lines({ 1: 'TOP', 27: 'BOTTOM' }) && git('stash', 'list').split('\n').length === 1, 'the hunk popped back');
+    app.stdin.write('2');
+    app.stdin.write('/');
+    await type(app.stdin, 'stash --no-untracked tracked only');
+    await until(() => frame().includes('/stash --no-untracked tracked only'), 'the typed command');
+    app.stdin.write(KEYS.enter);
+    await until(() => git('stash', 'list', '-1', '--format=%gs') === 'On main: tracked only' && git('status', '--porcelain') === '?? new.txt', 'the stash without the untracked file');
+  } finally {
+    app.unmount();
+  }
+});

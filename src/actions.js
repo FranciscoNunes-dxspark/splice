@@ -9,7 +9,7 @@ import { configFile } from './config.js';
 import { matchLineEndings, parseConflicts, takeSide, unifiedDiff } from './conflict.js';
 import { blamePicker, historyPicker, repoPath } from './history.js';
 import { MERGE_LABELS, bodyArgs, mergePrArgs, releaseArgs } from './hosting.js';
-import { defaultBranch, findArgs, firstBadCommit, parseGraph, parseStatus, relTime, remoteArgs, searchArgs, splitArgs, upstreamArgs } from './parse.js';
+import { defaultBranch, findArgs, firstBadCommit, parseGraph, parseStatus, relTime, remoteArgs, searchArgs, splitArgs, stashArgs, upstreamArgs } from './parse.js';
 import { buildPatch, coversAll, parseDiff } from './patch.js';
 import {
   COMMIT_LIST_FORMAT,
@@ -490,22 +490,98 @@ export async function bisect(ctx, how, ref) {
   if (found) ctx.note(`Found it: ${short(found)} is the first bad commit (↵ on it shows its diff). /abort ends the bisect and goes back to where you were.`);
 }
 
-export function stash(ctx, message) {
+/**
+ * s in Stash, /stash [-u | --no-untracked] [message]: stashes every change. Untracked files go too while the
+ * "Stash untracked files" setting is on (it is unless turned off); -u and --no-untracked override it.
+ */
+export function stash(ctx, text) {
   if (!needRepo(ctx)) return;
-  if (!ctx.data.status.files.length) return ctx.note('No changes to stash.', 'error');
-  return ctx.exec(['stash', 'push', '--include-untracked', ...(message ? ['-m', message] : [])], { label: 'Stashing' });
+  const { files } = ctx.data.status;
+  if (!files.length) return ctx.note('No changes to stash.', 'error');
+  const { args, untracked } = stashArgs(text, { untracked: ctx.config.stashUntracked !== false });
+  if (!untracked && files.every((f) => f.kind === 'untracked')) return ctx.note('Only untracked files have changed. /stash -u takes them too.', 'error');
+  return ctx.exec(args, { label: 'Stashing' });
+}
+
+/** Why a file from Changes can't be stashed on its own, or null when it can. */
+function cantStash(f) {
+  if (f.area === 'conflict') return `${f.path} has conflicts, which can't be stashed. Resolve it first (space marks it resolved).`;
+  // With a path, git stash can't find a file that only the last commit has: the old side of a rename, a staged deletion.
+  if (f.kind === 'renamed' || (f.area === 'staged' && f.x === 'D')) {
+    return `git can't stash a staged ${f.kind === 'renamed' ? 'rename' : 'deletion'} (${f.path}) on its own. Unstage it first (space), then stash it.`;
+  }
+  return null;
 }
 
 /** Stashes one file from Changes, staged and unstaged changes alike, with its path as the message. */
 export function stashFile(ctx, f) {
+  return stashFiles(ctx, [f]);
+}
+
+/**
+ * s in Changes, on a file or on files selected with v: stashes just those, staged and unstaged changes alike.
+ * The message is the path (or the first path and how many more).
+ */
+export function stashFiles(ctx, list) {
   if (!needRepo(ctx)) return;
-  if (f.area === 'conflict') return ctx.note(`${f.path} has conflicts, which can't be stashed. Resolve it first (space marks it resolved).`, 'error');
-  // With a path, git stash can't find a file that only the last commit has: the old side of a rename, a staged deletion.
-  if (f.kind === 'renamed' || (f.area === 'staged' && f.x === 'D')) {
-    return ctx.note(`git can't stash a staged ${f.kind === 'renamed' ? 'rename' : 'deletion'} on its own. Unstage it first (space), then stash it.`, 'error');
+  const problem = list.map(cantStash).find(Boolean);
+  if (problem) return ctx.note(problem, 'error');
+  const paths = [...new Set(list.map((f) => f.path))];
+  if (!paths.length) return ctx.note('Nothing selected to stash.', 'error');
+  const untracked = list.some((f) => f.kind === 'untracked') ? ['--include-untracked'] : [];
+  const message = paths.length === 1 ? paths[0] : `${paths[0]} and ${paths.length - 1} more`;
+  return ctx.exec(['stash', 'push', ...untracked, '-m', message, '--', ...paths], { label: 'Stashing' });
+}
+
+/**
+ * s in a file's diff in Changes: stashes the hunk under the cursor, or the lines selected with v, and takes them
+ * out of the working tree; the rest of the file stays. git stash can't do part of a file without a terminal
+ * (stash -p asks), so the stash is made by hand: its base and index are the index as it is, its working tree
+ * the index plus the picked lines. Applying or popping it later brings back just those lines.
+ */
+export async function stashLines(ctx, f, diffText, picks) {
+  if (!needRepo(ctx)) return;
+  if (f.area !== 'unstaged' || f.kind === 'untracked') {
+    return ctx.note(f.kind === 'untracked' ? 'This is a new file: stash the whole file from the list instead (s).' : 'Only unstaged lines can be stashed on their own. Unstage them first.', 'error');
   }
-  const untracked = f.kind === 'untracked' ? ['--include-untracked'] : [];
-  return ctx.exec(['stash', 'push', ...untracked, '-m', f.path, '--', f.path], { label: 'Stashing' });
+  if (isInitial(ctx)) return ctx.note('There are no commits yet to stash against.', 'error');
+  const patch = buildPatch(parseDiff(diffText), picks);
+  if (!patch) return;
+  const { gitDir } = ctx.data;
+  const branch = ctx.data.status.branch.head ?? '(no branch)';
+  const message = `On ${branch}: ${f.path} (some lines)`;
+  const index = join(gitDir, 'splice-stash-index');
+  let made;
+  const r = await ctx.task(
+    `Stash the picked lines of ${f.path}`,
+    async (signal) => {
+      const g = (args, opts = {}) => ctx.git(args, { signal, ...opts }).then((s) => s.trim());
+      const env = { GIT_INDEX_FILE: index };
+      try {
+        const head = await g(['rev-parse', 'HEAD']);
+        const indexTree = await g(['write-tree']);
+        await g(['read-tree', indexTree], { env });
+        await g(['apply', '--cached', '--recount', '--whitespace=nowarn', '-'], { env, input: patch });
+        const worktreeTree = await g(['write-tree'], { env });
+        // Never signed: these are a stash's own commits, and signing could ask for a passphrase.
+        const commit = (tree, parents, msg) => g(['commit-tree', '--no-gpg-sign', tree, ...parents.flatMap((p) => ['-p', p]), '-m', msg]);
+        const base = await commit(indexTree, [head], `base of ${message}`);
+        const idx = await commit(indexTree, [base], `index on ${branch}`);
+        made = await commit(worktreeTree, [base, idx], message);
+        await g(['stash', 'store', '-m', message, made]);
+      } finally {
+        await rm(index, { force: true });
+      }
+      return { stdout: `Saved ${message}`, stderr: '' };
+    },
+    { label: 'Stashing', refresh: false },
+  );
+  if (!r.ok) return ctx.reload();
+  // Kept in the stash now: take the lines out of the working tree. Should that fail, the stash goes again.
+  const out = await apply(ctx, patch, ['--reverse'], 'Stashing', { refresh: false });
+  if (!out.ok) await ctx.exec(['stash', 'drop', '-q', 'stash@{0}'], { quiet: true, refresh: false });
+  await ctx.reload();
+  return out;
 }
 
 /**
@@ -551,8 +627,26 @@ export async function restoreStashFile(ctx, s, file) {
 export async function stashApply(ctx, ref, { pop = false } = {}) {
   if (!needRepo(ctx)) return;
   if (!ctx.data.stashes.length) return ctx.note('There are no stashes.', 'error');
-  await ctx.exec(['stash', pop ? 'pop' : 'apply', ref || 'stash@{0}'], { label: pop ? 'Popping stash' : 'Applying stash' });
+  const stash = ref || 'stash@{0}';
+  const label = pop ? 'Popping stash' : 'Applying stash';
+  const r = await ctx.exec(['stash', pop ? 'pop' : 'apply', stash], { label, quietError: true });
+  // git won't apply a stash to files with uncommitted changes, even elsewhere in the file (the rest of a file
+  // some lines were stashed from, say). Its changes to tracked files can still go on top, as a patch.
+  if (!r.ok && /would be overwritten by merge/.test(r.error?.message ?? '')) {
+    const untracked = await ctx.git(['rev-parse', '-q', '--verify', `${stash}^3`]).then(() => true, () => false);
+    const patch = untracked ? null : await ctx.git(['diff', '--binary', `${stash}^1`, stash]).catch(() => null);
+    if (patch) {
+      const applied = await ctx.exec(['apply', '--whitespace=nowarn', '-'], { input: patch, label, quietError: true, refresh: !pop });
+      if (applied.ok) {
+        if (pop) await ctx.exec(['stash', 'drop', '-q', stash], { quiet: true });
+        ctx.note(`${pop ? 'Popped' : 'Applied'} ${stash} on top of your uncommitted changes`, 'ok');
+        return applied;
+      }
+    }
+  }
+  if (!r.ok && !r.error?.cancelled) ctx.note(r.error.message, 'error');
   afterConflicts(ctx);
+  return r;
 }
 
 export async function stashDrop(ctx, s) {
