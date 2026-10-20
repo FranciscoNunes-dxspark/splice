@@ -88,7 +88,7 @@ test('the app shows a newer release, keeps the check in the config, and can be t
   } finally {
     if (prevHome === undefined) delete process.env.TILLER_HOME;
     else process.env.TILLER_HOME = prevHome;
-    rmSync(home, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
   }
 });
 
@@ -152,7 +152,7 @@ test('installing an update swaps the executable, only with a matching checksum, 
 
     await assert.rejects(installUpdate('0.3.0', { ...win, arch: 'arm64', download: release('x') }), /no release build/);
   } finally {
-    rmSync(dir, { recursive: true, force: true, maxRetries: 10 });
+    rmSync(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
   }
 });
 
@@ -170,7 +170,7 @@ test('old executables and abandoned downloads are removed, but not a download st
     await removeOldExecutables(exe);
     assert.deepEqual(readdirSync(dir).sort(), ['.tiller-update-busy', 'notes.txt', 'tiller.exe']);
   } finally {
-    rmSync(dir, { recursive: true, force: true, maxRetries: 10 });
+    rmSync(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
   }
 });
 
@@ -212,6 +212,6 @@ test('the app installs a newer release in the background, says when it can\'t, a
   } finally {
     if (prevHome === undefined) delete process.env.TILLER_HOME;
     else process.env.TILLER_HOME = prevHome;
-    rmSync(home, { recursive: true, force: true, maxRetries: 10 });
+    rmSync(home, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
   }
 });

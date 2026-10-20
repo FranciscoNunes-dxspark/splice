@@ -35,7 +35,7 @@ before(() => {
   git('tag', 'light');
 });
 
-after(() => rmSync(base, { recursive: true, force: true, maxRetries: 10 }));
+after(() => rmSync(base, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 }));
 
 test('a load and a poll agree on the signature, so polling only reloads on real changes', async () => {
   const repo = await findRepo(dir);

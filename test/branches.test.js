@@ -106,7 +106,7 @@ before(() => {
   git('commit', '-q', '-am', 'Main moves on');
 });
 
-after(() => rmSync(base, { recursive: true, force: true, maxRetries: 10 }));
+after(() => rmSync(base, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 }));
 
 let lastApp = null;
 
