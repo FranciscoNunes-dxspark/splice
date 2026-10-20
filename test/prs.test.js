@@ -136,3 +136,54 @@ test("s in PRs lists the checks, failed first; ↵ shows a check's log and R re-
     app.unmount();
   }
 });
+
+test('A asks for reviewers, D makes it a draft, E retitles it and B edits its description through a file', async () => {
+  const calls = [];
+  const app = start(
+    stubHost(calls, {
+      addReviewers: async (pr, names) => {
+        calls.push(['reviewers', pr.id, names]);
+      },
+      setDraft: async (pr, draft) => {
+        calls.push(['draft', pr.id, draft]);
+      },
+      edit: async (pr, change) => {
+        calls.push(['edit', pr.id, change]);
+      },
+    }),
+  );
+  const frame = () => app.lastFrame() ?? '';
+  try {
+    await until(() => frame().includes('First commit'), 'the graph');
+    app.stdin.write('6');
+    await until(() => /❯.*Bump b/.test(frame()), 'the PR');
+    app.stdin.write('A');
+    await until(() => frame().includes('> /reviewer'), 'the reviewer prompt');
+    await type(app.stdin, 'ana, bo');
+    app.stdin.write('\r');
+    await until(() => calls.length === 1, 'the reviewers');
+    assert.deepEqual(calls[0], ['reviewers', 7, ['ana', 'bo']]);
+
+    app.stdin.write('D');
+    await until(() => calls.length === 2, 'the draft');
+    assert.deepEqual(calls[1], ['draft', 7, true]);
+
+    app.stdin.write('E');
+    await until(() => frame().includes('> /title Bump b'), 'the title to edit');
+    await type(app.stdin, ' to 2');
+    app.stdin.write('\r');
+    await until(() => calls.length === 3, 'the new title');
+    assert.deepEqual(calls[2], ['edit', 7, { title: 'Bump b to 2' }]);
+
+    app.stdin.write('B');
+    const file = join(dir, '.git', 'splice-pr-7.md');
+    await until(() => frame().includes('> /body --file'), 'the body file in the prompt');
+    assert.equal(readFileSync(file, 'utf8'), 'Old body');
+    writeFileSync(file, 'New body\r\n\r\nWith a second paragraph\r\n');
+    app.stdin.write('\r');
+    await until(() => calls.length === 4, 'the new description');
+    assert.deepEqual(calls[3], ['edit', 7, { body: 'New body\n\nWith a second paragraph' }]);
+  } finally {
+    app.unmount();
+  }
+});

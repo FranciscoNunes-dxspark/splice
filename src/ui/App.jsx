@@ -43,7 +43,7 @@ const HINTS = {
   changes: 'space stage · ↵ hunks/lines · a all · u unstage all · d discard · s stash file · c commit · A amend · F fix up · H history · B blame · W Claude writes it · R review',
   branches: '↵ checkout · n new · m merge · e rebase · d delete · D diff vs default · o open PR · C clean up',
   stash: '↵ diff · s stash · S with a message · a apply · o pop · x drop · F files, to restore one',
-  prs: '↵ diff · c checkout · a approve · m merge · s checks · C comment · o open in browser · n new PR · W Claude drafts one · e/R explain/review',
+  prs: '↵ diff · c checkout · a approve · m merge · s checks · A reviewers · D draft/ready · E title · B description · C comment · o open in browser · n new PR · W Claude drafts one · e/R explain/review',
   repos: '↵ open · s scan folder · x forget',
   worktrees: '↵ open · n new · x remove or prune · C clean up',
 };

@@ -104,6 +104,10 @@ PRs (GitHub through gh, Azure DevOps through az: your existing sign-in)
                    deleting the branch or not (/merge-pr [squash|merge|rebase] [--delete-branch] [--auto])
   s                Its checks (/ci), failed first: ↵ the log (a failed job's failed steps), o open in
                    the browser, R re-run the failed ones
+  A                Ask for reviewers (/reviewer <name> [name ...])
+  D                Draft, or ready for review (/draft, /ready)
+  E  B             Retitle it (/title <text>) · Edit its description: written to a file for your own
+                   editor, then /body --file <it> sends it (/body <text> sends text, \\n for a new line)
   o                Open in the browser
   n                New pull request from the current branch (/pr <title> [--into <branch>] [--draft])
   W                Claude drafts one: title into the prompt, description offered when you open it
@@ -137,6 +141,7 @@ Slash commands
                                      or changing lines that match the regex
   /pr <title> [--into <branch>] [--draft]   /comment <text>   /approve   /reply <text>
   /merge-pr [squash|merge|rebase] [--delete-branch] [--auto]   /ci
+  /reviewer <name>   /draft   /ready   /title <text>   /body [--file <path> | text]
   /rebase -i <ref>   /reword <message>   /fixup [ref]   /worktree <path> [ref]   /compare <ref> [base]
   /history <path>   /blame <path>   /cleanup
 

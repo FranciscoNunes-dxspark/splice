@@ -94,6 +94,10 @@ export function PrView({ data, ctx, width, height, active, prVersion }) {
     else if (input === 'a') a.prApprove(ctx, pr);
     else if (input === 'm') a.prMerge(ctx, pr);
     else if (input === 's') a.prChecks(ctx, pr);
+    else if (input === 'A') ctx.prefill('/reviewer ');
+    else if (input === 'D') a.prSetDraft(ctx);
+    else if (input === 'E') a.prTitle(ctx, '');
+    else if (input === 'B') a.prBody(ctx, '');
     else if (input === 'C') ctx.prefill('/comment ');
     else if (input === 'o') ctx.openUrl(pr.url);
     else if (input === 'e' || input === 'R') a.claudeLook(ctx, input === 'e' ? 'explain' : 'review', { kind: 'pr', pr });

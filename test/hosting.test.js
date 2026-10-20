@@ -120,3 +120,12 @@ test("checks: GitHub's rollup with Actions run and job ids, Azure DevOps policie
     [{ id: 4, name: 'a' }, { id: 9, name: 'b' }],
   );
 });
+
+test('/body: a file, text with \\n for line breaks, or nothing', async () => {
+  const { bodyArgs } = await import('../src/hosting.js');
+  assert.deepEqual(bodyArgs(''), {});
+  assert.deepEqual(bodyArgs('--file'), { file: null });
+  assert.deepEqual(bodyArgs('--file "C:\\My Docs\\pr.md"'), { file: 'C:\\My Docs\\pr.md' });
+  assert.deepEqual(bodyArgs('--file /tmp/a b.md'), { file: '/tmp/a b.md' });
+  assert.deepEqual(bodyArgs('Fixes it.\\nAlso tests.'), { text: 'Fixes it.\nAlso tests.' });
+});

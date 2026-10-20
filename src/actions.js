@@ -8,7 +8,7 @@ import { cleanupChoice, cleanupCount, cleanupOptions, cleanupText, planCleanup, 
 import { configFile } from './config.js';
 import { matchLineEndings, parseConflicts, takeSide, unifiedDiff } from './conflict.js';
 import { blamePicker, historyPicker, repoPath } from './history.js';
-import { MERGE_LABELS, mergePrArgs } from './hosting.js';
+import { MERGE_LABELS, bodyArgs, mergePrArgs } from './hosting.js';
 import { defaultBranch, findArgs, firstBadCommit, parseGraph, parseStatus, relTime, searchArgs, splitArgs } from './parse.js';
 import { buildPatch, coversAll, parseDiff } from './patch.js';
 import {
@@ -1086,6 +1086,77 @@ export function prChecks(ctx, pr, { replace = false } = {}) {
     },
     { replace },
   );
+}
+
+function pickedPr(ctx) {
+  const host = needHost(ctx);
+  if (!host) return {};
+  const pr = ctx.selectedPr;
+  if (!pr) ctx.note('Pick a pull request in PRs (6) first.', 'error');
+  return { host, pr };
+}
+
+async function prEdit(ctx, host, pr, title, label, fn) {
+  const r = await hostTask(ctx, title, fn, { label, refresh: false });
+  if (r.ok) ctx.prsChanged();
+  return r;
+}
+
+/** A in PRs, /reviewer <name> [name ...]: asks them to review the picked pull request. */
+export function prReviewers(ctx, text) {
+  const { host, pr } = pickedPr(ctx);
+  if (!pr) return;
+  const names = splitArgs((text ?? '').replace(/,/g, ' '));
+  if (!names.length) return ctx.prefill('/reviewer ');
+  return prEdit(ctx, host, pr, `Ask ${names.join(', ')} to review ${pr.label}`, 'Adding reviewers', (signal) => host.addReviewers(pr, names, signal));
+}
+
+/** D in PRs, /draft and /ready: makes the picked pull request a draft, or ready for review. `draft` null switches it. */
+export function prSetDraft(ctx, draft = null) {
+  const { host, pr } = pickedPr(ctx);
+  if (!pr) return;
+  const want = draft ?? !pr.draft;
+  if (want === pr.draft) return ctx.note(`${pr.label} is ${want ? 'already a draft' : 'already ready for review'}.`, 'error');
+  return prEdit(ctx, host, pr, `${pr.label}: ${want ? 'back to draft' : 'ready for review'}`, want ? 'Making it a draft' : 'Marking it ready', (signal) => host.setDraft(pr, want, signal));
+}
+
+/** E in PRs, /title <text>: renames the picked pull request (E starts from its title as it is). */
+export function prTitle(ctx, text) {
+  const { host, pr } = pickedPr(ctx);
+  if (!pr) return;
+  const title = (text ?? '').trim();
+  if (!title) return ctx.prefill(`/title ${pr.title}`);
+  if (title === pr.title) return ctx.note('That is its title already.');
+  return prEdit(ctx, host, pr, `${pr.label}: retitle "${title}"`, 'Retitling', (signal) => host.edit(pr, { title }, signal));
+}
+
+/**
+ * B in PRs, /body: the picked pull request's description. With nothing after it, writes the description as it
+ * is to a file in .git for you to edit in your own editor, and puts /body --file <it> in the prompt to send it
+ * once saved. /body --file <path> sends a file; /body <text> sends the text (\n for a line break).
+ */
+export async function prBody(ctx, text) {
+  const { host, pr } = pickedPr(ctx);
+  if (!pr) return;
+  const args = bodyArgs(text);
+  if (args.file === undefined && args.text === undefined) {
+    const file = join(ctx.data.gitDir, `splice-pr-${String(pr.id).replace(/[^\w-]/g, '')}.md`);
+    await writeFile(file, pr.description ?? '');
+    ctx.note(`Wrote ${pr.label}'s description to ${file}\nEdit it in your editor and save, then press enter here to send it.`);
+    return ctx.prefill(`/body --file ${file}`);
+  }
+  let body = args.text;
+  if (args.file !== undefined) {
+    if (!args.file) return ctx.prefill('/body --file ');
+    try {
+      body = (await readFile(args.file, 'utf8')).replace(/\r\n/g, '\n').trimEnd();
+    } catch (e) {
+      return ctx.note(`Couldn't read ${args.file}: ${firstLine(e.message)}`, 'error');
+    }
+  }
+  const r = await prEdit(ctx, host, pr, `${pr.label}: new description`, 'Updating the description', (signal) => host.edit(pr, { body }, signal));
+  if (r.ok && args.file?.startsWith(ctx.data.gitDir)) await rm(args.file, { force: true });
+  return r;
 }
 
 /** `/pr <title> [--into <branch>] [--draft]`: opens a PR from the current branch, pushing it first if needed. */

@@ -233,6 +233,18 @@ export function mergePrArgs(text) {
   return out;
 }
 
+/**
+ * Reads "/body" arguments: `--file <path>` (the description is that file), text (with \n for a line
+ * break), or nothing, which asks for the file to be made.
+ */
+export function bodyArgs(text) {
+  const s = (text ?? '').trim();
+  const file = /^--file(?:\s+([\s\S]*))?$/.exec(s);
+  if (file) return { file: (file[1] ?? '').trim().replace(/^(["'])(.*)\1$/, '$2') || null };
+  if (!s) return {};
+  return { text: s.replace(/\\n/g, '\n') };
+}
+
 /** `gh pr merge` arguments. --auto merges once the required checks and reviews pass. */
 export function githubMergeArgs(pr, repo, { method, deleteBranch, auto }) {
   return ['pr', 'merge', String(pr.id), '-R', repo, `--${method}`, ...(deleteBranch ? ['--delete-branch'] : []), ...(auto ? ['--auto'] : [])];
@@ -364,6 +376,14 @@ function github(root, remote) {
       const out = check.state === 'fail' ? await log(true).catch(() => '') : '';
       return out.trim() ? out : log(false);
     },
+    addReviewers: (pr, names, signal) => gh(['pr', 'edit', String(pr.id), ...repoArg, '--add-reviewer', names.join(',')], { signal }),
+    setDraft: (pr, draft, signal) => gh(['pr', 'ready', String(pr.id), ...repoArg, ...(draft ? ['--undo'] : [])], { signal }),
+    // The body goes on stdin (--body-file -): it can be long, and is taken as it is.
+    edit: (pr, { title, body }, signal) =>
+      gh(['pr', 'edit', String(pr.id), ...repoArg, ...(title != null ? ['--title', title] : []), ...(body != null ? ['--body-file', '-'] : [])], {
+        signal,
+        input: body ?? undefined,
+      }),
     canRerun: true,
     async rerun(pr, checks, signal) {
       const runs = [...new Set(checks.filter((c) => c.state === 'fail' && c.runId).map((c) => c.runId))];
@@ -452,6 +472,11 @@ function azure(root, remote, remoteName) {
       for (const l of logs) parts.push(`##[section] ${l.name}`, ...((await build('logs', `logId=${l.id}`)).value ?? []), '');
       return parts.join('\n');
     },
+    addReviewers: (pr, names, signal) => az(['repos', 'pr', 'reviewer', 'add', '--id', String(pr.id), '--reviewers', ...names], { signal }),
+    setDraft: (pr, draft, signal) => az(['repos', 'pr', 'update', '--id', String(pr.id), '--draft', String(draft)], { signal }),
+    // az takes the description as one value per line, as in create.
+    edit: (pr, { title, body }, signal) =>
+      az(['repos', 'pr', 'update', '--id', String(pr.id), ...(title != null ? ['--title', title] : []), ...(body != null ? ['--description', ...(body ? body.split('\n') : [''])] : [])], { signal }),
     canRerun: true,
     async rerun(pr, checks, signal) {
       const evals = checks.filter((c) => c.state === 'fail' && c.evaluationId);
