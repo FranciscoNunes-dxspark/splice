@@ -168,8 +168,16 @@ test('interactive rebase from the graph: fix up the last commit into the one bef
     app.stdin.write('\r');
     await until(() => frame().includes('Rewrite 2 commits on main? (1 fixed up)'), 'the confirmation');
     app.stdin.write('1');
-    await until(() => g('log', '--format=%s') === 'Beta\nAlpha', 'the rebase to finish');
-    assert.equal(g('show', '--name-only', '--format=', 'HEAD'), 'Beta.txt\nGamma.txt');
+    // The log already reads Beta, Alpha after the pick, before Gamma is folded in, so wait for the fold.
+    const folded = () => {
+      try {
+        return g('show', '--name-only', '--format=', 'HEAD') === 'Beta.txt\nGamma.txt';
+      } catch {
+        return false;
+      }
+    };
+    await until(folded, 'the rebase to finish');
+    assert.equal(g('log', '--format=%s'), 'Beta\nAlpha');
   } finally {
     app.unmount();
   }
