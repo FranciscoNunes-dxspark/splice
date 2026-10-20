@@ -3,14 +3,14 @@
 import { existsSync } from 'node:fs';
 import { readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { READ_ONLY, cleanSubject, clip, commitPrompt, lookPrompt, parsePrDraft, parseResolution, prPrompt, resolveInput, resolvePrompt } from './claude.js';
+import { READ_ONLY, cleanSubject, clip, commitPrompt, lookPrompt, parsePrDraft, parseResolution, parseSplit, prPrompt, resolveInput, resolvePrompt, splitInput, splitPrompt } from './claude.js';
 import { cleanupChoice, cleanupCount, cleanupOptions, cleanupText, planCleanup, readCleanup } from './cleanup.js';
 import { configFile } from './config.js';
 import { matchLineEndings, parseConflicts, takeSide, unifiedDiff } from './conflict.js';
 import { blamePicker, historyPicker, repoPath } from './history.js';
 import { MERGE_LABELS, bodyArgs, mergePrArgs, releaseArgs } from './hosting.js';
 import { defaultBranch, filterArgs, filterLabel, filterLogArgs, findArgs, firstBadCommit, parseGraph, parseStatus, relTime, remoteArgs, searchArgs, splitArgs, stashArgs, upstreamArgs } from './parse.js';
-import { buildPatch, coversAll, parseDiff } from './patch.js';
+import { buildPatch, coversAll, parseDiff, picksBySignature, splitUnits } from './patch.js';
 import {
   COMMIT_LIST_FORMAT,
   cleanup,
@@ -1589,6 +1589,133 @@ export async function describeCommit(ctx) {
   if (!subject) return ctx.note("Claude didn't suggest a message. Try again, or write one: /commit <message>", 'error');
   ctx.prefill(`/commit ${subject}`);
   return r;
+}
+
+/**
+ * S in Changes, /split: Claude splits all the uncommitted changes into a few logical commits, grouping their
+ * hunks. Each proposed commit is shown as a diff to review, then committed (just its hunks staged), skipped,
+ * or the whole thing stopped; what isn't committed stays as it was, uncommitted.
+ */
+export async function claudeSplit(ctx) {
+  if (!needClaude(ctx)) return;
+  const { state } = ctx.data;
+  if (state) return ctx.note(`A ${OP[state]} is in progress. Finish it first (/continue or /abort).`, 'error');
+  if (isInitial(ctx)) return ctx.note('Make the first commit yourself; Claude can split the changes after that.', 'error');
+  const { staged, unstaged, conflicts } = ctx.data.changes;
+  if (conflicts.length) return ctx.note('Resolve the conflicts first (space marks a file resolved).', 'error');
+  if (!staged.length && !unstaged.length) return ctx.note('There are no changes to split: the working tree is clean.', 'error');
+  if (staged.length) {
+    const ok = await ctx.confirm({
+      title: 'Unstage everything first, so Claude can split all your changes?',
+      detail: 'Nothing is lost: the changes stay in the working tree, and each commit stages its own part.',
+      options: YES_NO('Yes, unstage and split'),
+    });
+    if (!ok) return;
+    if (!(await ctx.exec(['reset', '-q'], { quiet: true, refresh: false })).ok) return;
+  }
+  // New files take part as intended additions, so their hunks show in the diff; the ones not committed go back.
+  const added = unstaged.filter((f) => f.kind === 'untracked').map((f) => f.path);
+  if (added.length && !(await ctx.exec(['add', '--intent-to-add', '--', ...added], { quiet: true, refresh: false })).ok) return;
+  const putBack = async () => {
+    const left = added.filter((p) => ctx.data.status.files.some((f) => f.path === p));
+    if (left.length) await ctx.exec(['reset', '-q', '--', ...left], { quiet: true });
+    else await ctx.reload();
+  };
+  const units = splitUnits(await ctx.git(['diff', '--no-ext-diff']));
+  if (units.length < 2) {
+    await putBack();
+    return ctx.note('There is only one change, so there is nothing to split: commit it (c), or W for a message.', 'error');
+  }
+  const recent = (await ctx.git(['log', '-n15', '--format=%s']).catch(() => '')).split('\n').filter(Boolean);
+  const r = await askClaude(ctx, 'split into commits', splitPrompt(recent), splitInput(units));
+  if (!r.ok) return putBack();
+  const plan = parseSplit(r.out, units.map((u) => u.id));
+  if (plan.error) {
+    ctx.note(plan.error, 'error');
+    return putBack();
+  }
+  if ((await readySigning(ctx)) === false) return putBack();
+  const byId = new Map(units.map((u) => [u.id, u]));
+  const made = [];
+  let stopped = false;
+  for (const [i, g] of plan.groups.entries()) {
+    const parts = g.ids.map((id) => byId.get(id));
+    const files = [...new Set(parts.map((u) => u.path))];
+    const choice = await reviewWith(ctx, `Commit ${i + 1} of ${plan.groups.length}: ${g.message}`, parts.map((u) => u.text).join('\n'), {
+      title: `Commit ${i + 1} of ${plan.groups.length}: "${g.message}"?`,
+      detail: `${parts.length} hunk${parts.length === 1 ? '' : 's'} in ${files.length === 1 ? files[0] : `${files.length} files`}, shown above.`,
+      options: [
+        { label: 'Yes, commit it', value: 'commit' },
+        { label: 'Skip it: leave these changes uncommitted', value: 'skip' },
+        { label: 'Stop here', value: null },
+      ],
+    });
+    if (!choice) {
+      stopped = true;
+      break;
+    }
+    if (choice === 'skip') continue;
+    const problem = await stageUnits(ctx, parts);
+    if (problem) {
+      ctx.note(`Couldn't stage "${g.message}": ${problem}`, 'error');
+      await ctx.exec(['reset', '-q'], { quiet: true, refresh: false });
+      stopped = true;
+      break;
+    }
+    const c = await ctx.exec(['commit', '-q', '-m', g.message], { label: 'Committing' });
+    if (!c.ok) {
+      stopped = true;
+      break;
+    }
+    made.push(g.message);
+  }
+  ctx.closeOverlay();
+  await putBack();
+  const left = ctx.data.status.files.length;
+  const said = [
+    `${made.length ? `Made ${made.length} commit${made.length === 1 ? '' : 's'}` : 'No commits made'}${stopped ? ', then stopped' : ''}`,
+    ...made.map((m) => `  ${m}`),
+    ...(left ? [`${left} file${left === 1 ? '' : 's'} still with uncommitted changes.`] : []),
+    ...(plan.leftover.length ? [`Claude left ${plan.leftover.length} hunk${plan.leftover.length === 1 ? '' : 's'} out of every commit.`] : []),
+  ];
+  ctx.note(said.join('\n'), made.length ? 'ok' : 'info');
+  return r;
+}
+
+/** Stages just these units (split hunks) of the working tree, found again by their changed lines. Returns a problem, or null. */
+async function stageUnits(ctx, units) {
+  const byPath = new Map();
+  for (const u of units) byPath.set(u.path, [...(byPath.get(u.path) ?? []), u]);
+  for (const [path, list] of byPath) {
+    if (list.some((u) => u.whole)) {
+      const r = await ctx.exec(['add', '--', path], { quiet: true, refresh: false });
+      if (!r.ok) return firstLine(r.error.message);
+      continue;
+    }
+    const fresh = parseDiff(await ctx.git(['diff', '--no-ext-diff', '--', path]));
+    const { picks, missing } = picksBySignature(fresh, list.map((u) => u.signature));
+    if (missing) return `${path} changed since Claude looked at it.`;
+    const patch = buildPatch(fresh, picks);
+    if (!patch) continue;
+    const r = await apply(ctx, patch, ['--cached'], 'Staging', { refresh: false });
+    if (!r.ok) return firstLine(r.error.message);
+  }
+  return null;
+}
+
+/**
+ * Shows `text` (a diff) in the viewer and asks `req` under it. Its options get one more, to scroll through the
+ * diff first; esc in the viewer comes back to the question.
+ */
+async function reviewWith(ctx, title, text, req) {
+  for (;;) {
+    let closed;
+    const done = new Promise((resolve) => (closed = resolve));
+    ctx.showText(title, text, { diff: true, onClosed: closed });
+    const choice = await ctx.confirm({ ...req, options: [...req.options.slice(0, -1), { label: 'Scroll through the diff first (esc comes back here)', value: 'read' }, req.options.at(-1)] });
+    if (choice !== 'read') return choice;
+    await done;
+  }
 }
 
 /** Claude drafts a pull request for the current branch: the title goes in the prompt, the description with it. */

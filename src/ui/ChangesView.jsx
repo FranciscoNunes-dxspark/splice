@@ -215,6 +215,7 @@ export function ChangesView({ data, ctx, width, height, active }) {
     if (input === 'c') return a.commit(ctx, '');
     if (input === 'A') return ctx.prefill('/amend ');
     if (input === 'W') return a.describeCommit(ctx);
+    if (input === 'S') return a.claudeSplit(ctx);
     if (input === 'R') return a.claudeLook(ctx, 'review', { kind: 'changes' });
     if (input === 'y' && (f || sub)) return ctx.copy((f ?? sub).path);
     if (pane === 'conflict') return conflictKeys(input, key);

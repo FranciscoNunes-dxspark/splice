@@ -42,6 +42,7 @@ export const COMMANDS = [
   { name: 'body', args: '[--file <path> | text]', desc: "Edit the picked pull request's description: alone, in a file for your editor", run: (ctx, s) => a.prBody(ctx, s) },
   { name: 'approve', desc: 'Approve the pull request picked in PRs', run: (ctx) => a.prApprove(ctx, ctx.selectedPr) },
   { name: 'describe', desc: 'Claude writes the commit message for the staged changes', run: (ctx) => a.describeCommit(ctx) },
+  { name: 'split', desc: 'Claude splits your uncommitted changes into logical commits, each reviewed before it is made', run: (ctx) => a.claudeSplit(ctx) },
   { name: 'draft-pr', args: '[--into <branch>]', desc: 'Claude drafts a pull request (title and description) for the current branch', run: (ctx, s) => a.draftPr(ctx, s) },
   { name: 'explain', args: '[ref]', desc: 'Claude explains a commit (HEAD if none given)', complete: 'refs', run: (ctx, s) => a.claudeRef(ctx, 'explain', s) },
   { name: 'review', args: '[ref]', desc: 'Claude reviews a commit, or your changes if none given', complete: 'refs', run: (ctx, s) => a.claudeRef(ctx, 'review', s) },

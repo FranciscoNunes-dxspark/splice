@@ -43,6 +43,8 @@ Changes
   c  A             Commit · Amend the last commit
   F                Fix up an earlier commit with the staged changes (pick it; then fold it in, or keep it for later)
   W                Claude writes the commit message for the staged changes, into the prompt to edit
+  S                Claude splits all your changes into logical commits: each one shown as a diff,
+                   then commit it, skip it (its changes stay uncommitted) or stop (/split)
   R                Claude reviews the staged changes (or the unstaged ones, if nothing is staged)
   O  T             On a conflict: take ours · take theirs, for the whole file
   C                On a conflict: Claude proposes the resolved file, shown as a diff; asks before writing it
@@ -127,7 +129,7 @@ PRs (GitHub through gh, Azure DevOps through az: your existing sign-in)
   e  R             Claude explains it · Claude reviews it
 
 Claude (through the Claude Code CLI, signed in as you already are; answers take several seconds, esc cancels)
-  /describe   /draft-pr [--into <branch>]   /explain [ref]   /review [ref]
+  /describe   /split   /draft-pr [--into <branch>]   /explain [ref]   /review [ref]
 
 Reflog (/reflog: everywhere HEAD has been, newest first)
   ↵                Full diff of the commit         c           Check it out
