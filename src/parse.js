@@ -426,6 +426,14 @@ export function findArgs(text) {
   return { mode: m[1], query };
 }
 
+/**
+ * The commit a bisect ended on, from what `git bisect good|bad` printed, or null while it goes on.
+ * Newer git quotes the term ("is the first 'bad' commit"); 2.45 doesn't.
+ */
+export function firstBadCommit(out) {
+  return /^([0-9a-f]{7,}) is the first '?bad'? commit/m.exec(out ?? '')?.[1] ?? null;
+}
+
 /** `git log` over the whole history (every branch and tag) for a -S or -G search, in LOG_FORMAT. */
 export function searchArgs(mode, query) {
   return ['log', '--date-order', '--decorate=full', ...DECORATE_REFS, `-${mode}${query}`, `--format=${LOG_FORMAT}`, '--exclude=refs/stash', '--all'];

@@ -9,7 +9,7 @@ import React from 'react';
 import { render } from 'ink-testing-library';
 import { removeTemp } from './temp.js';
 import { App } from '../src/ui/App.jsx';
-import { parseDecorations } from '../src/parse.js';
+import { firstBadCommit, parseDecorations } from '../src/parse.js';
 
 let base;
 let dir;
@@ -57,6 +57,13 @@ test('bisect marks show as pills in the graph', () => {
     { type: 'bisect', name: 'good' },
     { type: 'local', name: 'main', head: false },
   ]);
+});
+
+test("the end of a bisect, in old and new git's words", () => {
+  const hash = 'b819dea34d449b33d1ddccd0ac0957b615b1239c';
+  assert.equal(firstBadCommit(`${hash} is the first bad commit\ncommit ${hash}\n`), hash);
+  assert.equal(firstBadCommit(`${hash} is the first 'bad' commit\ncommit ${hash}\n`), hash);
+  assert.equal(firstBadCommit('Bisecting: 2 revisions left to test after this (roughly 1 step)'), null);
 });
 
 test('B marks commits bad and good, the cursor follows what git checks out, and it finds the first bad commit', async () => {

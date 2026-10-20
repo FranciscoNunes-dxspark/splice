@@ -8,7 +8,7 @@ import { cleanupChoice, cleanupCount, cleanupOptions, cleanupText, planCleanup, 
 import { configFile } from './config.js';
 import { matchLineEndings, parseConflicts, takeSide, unifiedDiff } from './conflict.js';
 import { blamePicker, historyPicker, repoPath } from './history.js';
-import { defaultBranch, findArgs, parseGraph, parseStatus, relTime, searchArgs, splitArgs } from './parse.js';
+import { defaultBranch, findArgs, firstBadCommit, parseGraph, parseStatus, relTime, searchArgs, splitArgs } from './parse.js';
 import { buildPatch, coversAll, parseDiff } from './patch.js';
 import {
   COMMIT_LIST_FORMAT,
@@ -300,8 +300,8 @@ export async function bisect(ctx, how, ref) {
     if (!(await ctx.exec(['bisect', 'start'], { label: 'Starting a bisect', refresh: false })).ok) return;
   }
   const r = await ctx.exec(['bisect', how, ...(ref ? [ref] : [])], { label: 'Bisecting' });
-  const found = r.ok && /^([0-9a-f]{7,}) is the first bad commit/m.exec(r.out);
-  if (found) ctx.note(`Found it: ${short(found[1])} is the first bad commit (↵ on it shows its diff). /abort ends the bisect and goes back to where you were.`);
+  const found = r.ok && firstBadCommit(r.out);
+  if (found) ctx.note(`Found it: ${short(found)} is the first bad commit (↵ on it shows its diff). /abort ends the bisect and goes back to where you were.`);
 }
 
 export function stash(ctx, message) {
