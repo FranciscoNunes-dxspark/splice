@@ -191,6 +191,47 @@ test('discarding asks first, and "No" leaves the file alone', async () => {
   }
 });
 
+test('/discard throws away every change, keeping untracked files if asked', async () => {
+  const other = join(base, 'discard-repo');
+  mkdirSync(other);
+  const g = (...args) => execFileSync('git', args, { cwd: other, encoding: 'utf8' }).trim();
+  g('init', '-q', '-b', 'main');
+  g('config', 'core.autocrlf', 'false');
+  g('config', 'user.name', 'T');
+  g('config', 'user.email', 't@example.com');
+  writeFileSync(join(other, 'kept.txt'), 'one\n');
+  g('add', '.');
+  g('commit', '-q', '-m', 'Only commit');
+  writeFileSync(join(other, 'kept.txt'), 'one\nedited\n');
+  writeFileSync(join(other, 'staged.txt'), 'staged\n');
+  g('add', 'staged.txt');
+  writeFileSync(join(other, 'loose.txt'), 'untracked\n');
+  lastApp = render(React.createElement(App, { initialPath: other, config: { recent: [], roots: [], history: [] } }));
+  const app = lastApp;
+  const frame = () => app.lastFrame() ?? '';
+  const discard = async () => {
+    app.stdin.write('/');
+    await type(app.stdin, 'discard');
+    await until(() => frame().includes('/discard'), 'the typed command');
+    app.stdin.write(KEYS.enter);
+  };
+  try {
+    await until(() => frame().includes('Only commit'), 'the graph');
+    await discard();
+    await until(() => frame().includes('Discard all changes to 3 files?'), 'the confirmation');
+    app.stdin.write('2'); // keep the untracked files
+    await until(() => g('status', '--porcelain') === '?? loose.txt', 'the tracked changes to go');
+    await until(() => frame().includes('1 change'), 'the view to refresh');
+    await discard();
+    await until(() => frame().includes('Discard all changes to 1 file?'), 'the second confirmation');
+    app.stdin.write('1');
+    await until(() => g('status', '--porcelain') === '', 'the untracked file to go');
+    await until(() => frame().includes('git clean -f -d -q'), 'the activity log');
+  } finally {
+    app.unmount();
+  }
+});
+
 test('worktrees: listed, opened, pruned when missing, and removed after asking', async () => {
   const main = join(base, 'wt-repo');
   mkdirSync(main);
