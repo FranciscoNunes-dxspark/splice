@@ -23,6 +23,7 @@ import { WorktreesView } from './WorktreesView.jsx';
 import { PrView } from './PrView.jsx';
 import { hostFor, openUrl } from '../hosting.js';
 import { TextViewer } from './TextViewer.jsx';
+import { Picker } from './Picker.jsx';
 import { RebaseEditor } from './RebaseEditor.jsx';
 import { WELCOME_HEIGHT, Welcome } from './Knot.jsx';
 import { FACES, moodFor } from '../knot.js';
@@ -159,9 +160,14 @@ export function App({ initialPath, config: initialConfig, checkUpdate, askClaude
     setFocusState(f);
   };
   const setOverlay = (next) => {
-    overlayRef.current = typeof next === 'function' ? next(overlayRef.current) : next;
-    setOverlayState(overlayRef.current);
+    const cur = overlayRef.current;
+    let o = typeof next === 'function' ? next(cur) : next;
+    // An overlay opened from a picker (a diff of the picked commit) goes back to the picker when closed.
+    if (o && o !== cur && !o.back && cur?.kind === 'picker' && typeof next !== 'function') o = { ...o, back: cur };
+    overlayRef.current = o;
+    setOverlayState(o);
   };
+  const pickerIds = useRef(0);
 
   const setPrompt = (value, cursor = value.length) => {
     promptRef.current = { value, cursor };
@@ -365,9 +371,11 @@ export function App({ initialPath, config: initialConfig, checkUpdate, askClaude
     },
     showText: (title, text, opts = {}) => setOverlay({ title, text, ...opts }),
     showRebase: (plan) => setOverlay({ kind: 'rebase', plan }),
+    // A list to pick from: { title, hint, items | load, onPick, keys, empty } (see Picker.jsx).
+    showPicker: (picker) => setOverlay({ ...picker, kind: 'picker', id: ++pickerIds.current }),
     closeOverlay: () => {
       ctx.rebaseEditor = null;
-      setOverlay(null);
+      setOverlay(overlayRef.current?.back ?? null);
     },
     overlayHasKeys: () => focusRef.current === 'view' && !confirmRef.current,
     showHelp: () => setOverlay({ title: 'Keyboard shortcuts', text: HELP }),
@@ -541,8 +549,10 @@ export function App({ initialPath, config: initialConfig, checkUpdate, askClaude
   let main;
   if (overlay?.kind === 'rebase') {
     main = <RebaseEditor plan={overlay.plan} ctx={ctx} width={W} height={mainH} active={focus === 'view' && !confirmReq} />;
+  } else if (overlay?.kind === 'picker') {
+    main = <Picker key={overlay.id} picker={overlay} ctx={ctx} width={W} height={mainH} active={focus === 'view' && !confirmReq} />;
   } else if (overlay) {
-    main = <TextViewer {...overlay} width={W} height={mainH} active={focus === 'view' && !confirmReq} onClose={() => setOverlay(null)} />;
+    main = <TextViewer {...overlay} width={W} height={mainH} active={focus === 'view' && !confirmReq} onClose={ctx.closeOverlay} />;
   } else if (view === 'repos') {
     main = <ReposView repos={repos} roots={[...config.roots, ...extraRoots.current]} current={data?.root} ctx={ctx} width={W} height={mainH} active={viewActive} />;
   } else if (!data) {
@@ -561,7 +571,9 @@ export function App({ initialPath, config: initialConfig, checkUpdate, askClaude
       ? 'enter run · tab complete · ↑↓ pick or history · esc back'
       : overlay?.kind === 'rebase'
         ? '↵ start the rebase · esc cancel'
-        : overlay
+        : overlay?.kind === 'picker'
+          ? 'j/k move · esc close'
+          : overlay
           ? 'j/k scroll · space page · n/N hunk · esc close'
           : HINTS[view];
   const right = focus === 'prompt' ? '' : '  f fetch · p pull · P push · / commands · ! git · ? help';
