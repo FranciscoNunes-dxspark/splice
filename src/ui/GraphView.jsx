@@ -3,6 +3,7 @@ import { Box, useInput } from 'ink';
 import * as a from '../actions.js';
 import { relTime } from '../parse.js';
 import { commitDetail } from '../repo.js';
+import { signatureText } from '../signing.js';
 import { codeColor, theme } from '../theme.js';
 import { fit, fitSegments, wrap } from '../text.js';
 import { useAsync, useListNav, useMouse } from './hooks.js';
@@ -49,6 +50,7 @@ export function refPills(refs) {
 }
 
 const META_W = 26;
+const SIG_TONE = { good: theme.add, wait: theme.warn, bad: theme.del, none: theme.dim };
 
 function detailLines(c, d, width) {
   const lines = [
@@ -58,6 +60,10 @@ function detailLines(c, d, width) {
     ],
     [{ text: c.author, bold: true }, { text: d?.email ? ` <${d.email}>` : '', color: theme.dim }],
   ];
+  if (d?.signature && d.signature !== 'N') {
+    const sig = signatureText(d.signature, d.signer);
+    lines.push([{ text: sig.tone === 'bad' ? '✗ ' : '✓ ', color: SIG_TONE[sig.tone], bold: true }, { text: sig.text, color: SIG_TONE[sig.tone] }]);
+  } else if (d) lines.push([{ text: 'Not signed', color: theme.dim }]);
   if (c.parents.length > 1) lines.push([{ text: `Merge of ${c.parents.map((p) => p.slice(0, 7)).join(' + ')}`, color: theme.dim }]);
   if (c.refs.length) lines.push(refPills(c.refs));
   lines.push('');

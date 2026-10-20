@@ -24,6 +24,7 @@ import {
   prepare,
 } from './rebase.js';
 import { settingRows, settingSegments } from './settings.js';
+import { SIGNING_KEYS, checkGpgKey, explainSigning, needsPinentryCheck, signingConfig } from './signing.js';
 import { fit } from './text.js';
 import { DEFAULT_ACCENT, isColour, setAccent, theme } from './theme.js';
 import {
@@ -204,8 +205,27 @@ export async function commit(ctx, message, { amend = false } = {}) {
     if (!ok) return;
     if (!(await ctx.exec(['add', '-A'], { refresh: false, quiet: true })).ok) return;
   }
+  const signing = await readySigning(ctx);
+  if (signing === false) return;
   const args = ['commit', ...(amend ? ['--amend'] : []), ...(message ? ['-m', message] : ['--no-edit'])];
-  return ctx.exec(args, { label: amend ? 'Amending' : 'Committing' });
+  return ctx.exec(args, { label: `${signing ? 'Signing and ' : ''}${amend ? 'amending' : 'committing'}`.replace(/^./, (c) => c.toUpperCase()) });
+}
+
+/**
+ * Before a commit: the signing settings when commit.gpgsign is on (null when it's off), or false when the key
+ * can't be used without typing its passphrase into a terminal, which git doesn't have here (said in a note).
+ */
+async function readySigning(ctx) {
+  const cfg = signingConfig(await ctx.git(['config', '--get-regexp', SIGNING_KEYS]).catch(() => ''));
+  if (!cfg.commits) return null;
+  if (!needsPinentryCheck(cfg)) return cfg;
+  try {
+    await checkGpgKey(cfg, { cwd: ctx.data.root });
+    return cfg;
+  } catch (e) {
+    ctx.note(`${explainSigning('gpg failed to sign the data')}\n${firstLine(e.message)}`, 'error');
+    return false;
+  }
 }
 
 /** Switches to a local branch, a remote branch (creating the tracking branch), or anything else detached. */
@@ -1065,6 +1085,7 @@ async function fixupCandidates(ctx) {
 }
 
 async function fixupInto(ctx, target, { stageAll }) {
+  if ((await readySigning(ctx)) === false) return;
   if (stageAll && !(await ctx.exec(['add', '-A'], { refresh: false, quiet: true })).ok) return;
   const made = await ctx.exec(['commit', `--fixup=${target.hash}`], { label: 'Committing the fixup' });
   if (!made.ok) return made;

@@ -178,10 +178,11 @@ export function parseRemotes(raw) {
 /** Full message, author and changed files of one commit. */
 export async function commitDetail(root, hash) {
   // One git: the header ends at \x1e, and the file list follows it.
-  const out = await git(root, ['show', '--format=%H%x1f%an%x1f%ae%x1f%at%x1f%cn%x1f%P%x1f%B%x1e', '--name-status', '-M', '--diff-merges=first-parent', hash]);
+  // %G? and %GS: whether it's signed, and by whom (checking a signature never asks for a passphrase).
+  const out = await git(root, ['show', '--format=%H%x1f%an%x1f%ae%x1f%at%x1f%cn%x1f%P%x1f%G?%x1f%GS%x1f%B%x1e', '--name-status', '-M', '--diff-merges=first-parent', hash]);
   const end = out.indexOf('\x1e');
   const files = out.slice(end + 1);
-  const [full, author, email, time, committer, parents, body] = out.slice(0, end).split('\x1f');
+  const [full, author, email, time, committer, parents, signature, signer, ...body] = out.slice(0, end).split('\x1f');
   return {
     hash: full,
     author,
@@ -189,7 +190,9 @@ export async function commitDetail(root, hash) {
     time: Number(time),
     committer,
     parents: parents ? parents.split(' ') : [],
-    message: (body ?? '').trimEnd(),
+    signature: signature || 'N',
+    signer: signer ?? '',
+    message: body.join('\x1f').trimEnd(),
     files: parseNameStatus(files),
   };
 }

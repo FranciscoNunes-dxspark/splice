@@ -17,7 +17,7 @@ Lists
   ctrl+d ctrl+u    Page down, up   J K         Scroll the right-hand pane
   y                Copy it: a commit's hash, a branch name, a file's path, a stash's message, a PR's link
 
-Graph
+Graph (the commit pane says whether the commit is signed, and if the signature is good)
   ↵                Full diff of the commit
   c                Check out (its branch if it has one, otherwise detached)
   b  t             New branch here · New tag here
