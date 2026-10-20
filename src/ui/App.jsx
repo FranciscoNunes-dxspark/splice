@@ -31,10 +31,10 @@ const VIEWS = [
   { id: 'graph', label: 'Graph' },
   { id: 'changes', label: 'Changes' },
   { id: 'branches', label: 'Branches' },
+  { id: 'worktrees', label: 'Worktrees' },
   { id: 'stash', label: 'Stash' },
   { id: 'prs', label: 'PRs' },
   { id: 'repos', label: 'Repos' },
-  { id: 'worktrees', label: 'Worktrees' },
 ];
 
 const HINTS = {
@@ -548,7 +548,7 @@ export function App({ initialPath, config: initialConfig, checkUpdate, askClaude
   } else if (!data) {
     main = (
       <Panel title={VIEWS.find((v) => v.id === view).label} width={W} height={mainH}>
-        <Text color={theme.dim}>{loading ? '  Loading…' : '  No repository open. Press 6 to pick one, or /open <path>.'}</Text>
+        <Text color={theme.dim}>{loading ? '  Loading…' : '  No repository open. Press 7 to pick one, or /open <path>.'}</Text>
       </Panel>
     );
   } else {

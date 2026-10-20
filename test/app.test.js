@@ -273,16 +273,16 @@ test('worktrees: listed, opened, pruned when missing, and removed after asking',
   };
   try {
     await until(() => frame().includes('Start'), 'the graph');
-    app.stdin.write('7');
+    app.stdin.write('4');
     await until(() => frame().includes('wt-repo-feat') && frame().includes('missing'), 'the Worktrees view');
     assert.match(frame(), /● wt-repo\s+main/);
-    assert.match(frame(), /7 Worktrees 4/);
+    assert.match(frame(), /4 Worktrees 4/);
 
     await pick('wt-repo-feat');
     app.stdin.write(KEYS.enter);
     await until(() => frame().includes('⎇ feat'), 'the feat worktree to open');
 
-    app.stdin.write('7');
+    app.stdin.write('4');
     await until(() => /● wt-repo-feat/.test(frame()), 'the Worktrees view, from feat');
     await pick('wt-repo-gone');
     app.stdin.write('x');

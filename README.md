@@ -6,7 +6,7 @@ A keyboard-driven git client for the terminal, with an interface modelled on Cla
 
 ```
 (•ω•) Tiller  │  Keel  ⎇ main → origin/main ↑1  ● 2 changes                              C:\Team\Keel
- 1 Graph   2 Changes 2   3 Branches   4 Stash   5 PRs   6 Repos   7 Worktrees
+ 1 Graph   2 Changes 2   3 Branches   4 Worktrees   5 Stash   6 PRs   7 Repos
 ╭─ Commits ────────────────────────────────── 125 ─╮╭─ Commit ──────────────── J/K scroll ─╮
 │❯ ◌  // WIP  2 changed files                      ││4e9f0080cb  19/10/2026, 15:14:35      │
 │  ●    ● main ⇅ origin  Compact view on the Pro…  ││Francisco Nunes                       │
@@ -61,10 +61,10 @@ Press `?` inside for every shortcut. The essentials:
 | Changes | `space` stage/unstage · `↵` step into the diff · `a` stage all · `u` unstage all · `d` discard · `c` commit · `A` amend · `W` Claude writes the message · `R` Claude reviews · on conflicts `O` ours / `T` theirs |
 | Changes, in the diff | `j`/`k` changed lines · `n`/`N` hunks · `space` stage (or unstage) the hunk · `v` select lines, then `space` stages just those · `d` discard them · `esc` back |
 | Branches | `↵` check out (remote branches get a tracking branch) · `n` new from here · `m` merge · `e` rebase onto · `d` delete |
+| Worktrees | `↵` open · `n` new · `x` remove (or prune one whose folder is gone) |
 | Stash | `↵` diff · `s` stash · `a` apply · `o` pop · `x` drop |
 | PRs | `↵` diff · `c` check out · `a` approve · `C` comment · `o` open in the browser · `n` new PR from the current branch · `W` Claude drafts one · `e` / `R` Claude explains / reviews it |
 | Repos | `↵` open · `s` add a folder to scan · `x` forget |
-| Worktrees | `↵` open · `n` new · `x` remove (or prune one whose folder is gone) |
 
 ### Slash commands
 
@@ -80,7 +80,7 @@ Before it starts, Tiller says how many commits it will rewrite and warns if any 
 
 ### Pull requests
 
-The PRs view (`5`) lists the open pull requests of the repository's remote, on **GitHub** or **Azure DevOps** (`dev.azure.com` and `*.visualstudio.com`). Ones asking for your review come first (◆), then yours (●). The right-hand pane shows reviewers and their votes, checks (GitHub checks, Azure DevOps branch policies), the description and comments. The list refreshes every minute while you're on it, and on `r`.
+The PRs view (`6`) lists the open pull requests of the repository's remote, on **GitHub** or **Azure DevOps** (`dev.azure.com` and `*.visualstudio.com`). Ones asking for your review come first (◆), then yours (●). The right-hand pane shows reviewers and their votes, checks (GitHub checks, Azure DevOps branch policies), the description and comments. The list refreshes every minute while you're on it, and on `r`.
 
 Tiller talks to the servers through their own CLIs, using the sign-in you already have, so it never sees or stores a token:
 
@@ -101,7 +101,7 @@ Writing messages gives Claude no tools at all. Explaining and reviewing let it r
 
 ### Worktrees
 
-The Worktrees view (`7`) lists the main working tree and every worktree added to it, each with its branch, how far it is ahead of or behind its upstream, and how many changed files it has. ● marks the one open here. The right-hand pane shows the selected worktree's changes and recent commits, and `↵` switches Tiller to it.
+The Worktrees view (`4`) lists the main working tree and every worktree added to it, each with its branch, how far it is ahead of or behind its upstream, and how many changed files it has. ● marks the one open here. The right-hand pane shows the selected worktree's changes and recent commits, and `↵` switches Tiller to it.
 
 `/worktree <path> [ref]` runs `git worktree add` with git's own defaults: the path is relative to the repository's root, a branch that only exists on one remote gets a local tracking branch, and with no ref git makes a new branch named after the folder. Flags pass through, so `/worktree -b fix ../fix main` works too. `n` in the view starts one next to the repository, as `../<repo>-`. Removing (`x`) asks first and leaves the branch alone; if the worktree has uncommitted changes, it asks again before forcing. A worktree whose folder was deleted shows as missing, and `x` prunes it.
 

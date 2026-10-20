@@ -15,7 +15,7 @@ const YES_NO = (yes) => [
 
 function needRepo(ctx) {
   if (ctx.data) return true;
-  ctx.note('Open a repository first: press 6 for Repos, or /open <path>.', 'error');
+  ctx.note('Open a repository first: press 7 for Repos, or /open <path>.', 'error');
   return false;
 }
 
@@ -493,7 +493,7 @@ export async function prCheckout(ctx, pr) {
 export async function prApprove(ctx, pr) {
   const host = needHost(ctx);
   if (!host) return;
-  if (!pr) return ctx.note('Pick a pull request in PRs (5) first.', 'error');
+  if (!pr) return ctx.note('Pick a pull request in PRs (6) first.', 'error');
   if (pr.mine) return ctx.note("That's your own pull request.", 'error');
   const ok = await ctx.confirm({ title: `Approve ${pr.label} "${pr.title}"?`, detail: `On ${host.name}, as you.`, options: YES_NO('Yes, approve') });
   if (!ok) return;
@@ -506,7 +506,7 @@ export async function prComment(ctx, text) {
   const host = needHost(ctx);
   if (!host) return;
   const pr = ctx.selectedPr;
-  if (!pr) return ctx.note('Pick a pull request in PRs (5) first.', 'error');
+  if (!pr) return ctx.note('Pick a pull request in PRs (6) first.', 'error');
   if (!text) return ctx.prefill('/comment ');
   const r = await hostTask(ctx, `${cliName(host)} comment ${pr.label}`, (signal) => host.comment(pr, text, signal), { label: 'Commenting', refresh: false });
   if (r.ok) ctx.prsChanged();

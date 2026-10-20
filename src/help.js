@@ -1,5 +1,5 @@
 export const HELP = `Anywhere
-  1-7 / tab        Graph, Changes, Branches, Stash, PRs, Repos, Worktrees (shift+tab goes back)
+  1-7 / tab        Graph, Changes, Branches, Worktrees, Stash, PRs, Repos (shift+tab goes back)
   / or :           Command prompt (slash commands, with completion)
   !                Run any git command, e.g.  !log --stat -5
   f  p  P          Fetch all · Pull · Push (sets the upstream the first time)
@@ -51,6 +51,11 @@ Branches
   m  e             Merge it in · Rebase onto it
   d                Delete (asks before force-deleting or deleting on the remote)
 
+Worktrees (● the one open here)
+  ↵                Open it in Tiller
+  n                New worktree (/worktree <path> [ref]; the path is relative to the repository)
+  x                Remove it (asks first; the branch stays), or prune one whose folder is gone
+
 Stash
   ↵                Full diff       s           Stash the current changes
   a  o  x          Apply · Pop · Drop
@@ -70,11 +75,6 @@ Claude (through the Claude Code CLI, signed in as you already are; answers take 
 Repos
   ↵                Open            x           Forget (remove from recent)
   s                Add a folder to scan for repositories
-
-Worktrees (● the one open here)
-  ↵                Open it in Tiller
-  n                New worktree (/worktree <path> [ref]; the path is relative to the repository)
-  x                Remove it (asks first; the branch stays), or prune one whose folder is gone
 
 Prompt
   tab              Complete        ↑ ↓         Pick a suggestion, or walk history
