@@ -1,13 +1,14 @@
 import React from 'react';
 import { Box, useInput } from 'ink';
 import * as a from '../actions.js';
+import { renderMarkdown } from '../markdown.js';
 import { relTime } from '../parse.js';
 import { theme } from '../theme.js';
 import { fit, fitSegments, wrap } from '../text.js';
-import { useAsync, useListNav } from './hooks.js';
+import { useAsync, useListNav, usePrList } from './hooks.js';
 import { Lines, Panel, Row } from './parts.jsx';
 
-const TONE = { good: theme.add, bad: theme.del, wait: theme.warn, none: theme.dim };
+export const TONE = { good: theme.add, bad: theme.del, wait: theme.warn, none: theme.dim };
 const VOTE = {
   approved: ['✓', theme.add],
   suggestions: ['✓', theme.add],
@@ -18,7 +19,7 @@ const VOTE = {
 };
 const CHECK = { pass: ['✓', theme.add], fail: ['✗', theme.del], pending: ['…', theme.warn] };
 
-function checksText(c) {
+export function checksText(c) {
   if (!c) return { text: '' };
   if (c.failed) return { text: `✗ ${c.failed}`, color: theme.del };
   if (c.pending) return { text: `… ${c.pending}`, color: theme.warn };
@@ -53,24 +54,22 @@ function detailLines(pr, d, width) {
   }
   if (pr.description.trim()) {
     lines.push('');
-    for (const l of wrap(pr.description.trim(), width).slice(0, 20)) lines.push(l);
+    lines.push(...renderMarkdown(pr.description, width).slice(0, 20));
   }
   if (!d) lines.push('', [{ text: 'Loading reviews, checks and comments…', color: theme.dim }]);
   else if (d.comments.length) {
     lines.push('', [{ text: `Comments (${d.comments.length})`, bold: true }]);
     for (const c of d.comments.slice(-15)) {
       lines.push([{ text: c.author ?? '', color: theme.hunk, bold: true }, { text: `  ${relTime(c.time)}`, color: theme.dim }]);
-      for (const l of wrap(c.text.trim(), width - 2).slice(0, 6)) lines.push(`  ${l}`);
+      for (const l of renderMarkdown(c.text, width - 2).slice(0, 6)) lines.push([{ text: '  ' }, ...l]);
     }
   }
   return lines;
 }
 
 export function PrView({ data, ctx, width, height, active, prVersion }) {
-  const host = ctx.host();
-  // A new key every minute refetches while you look; the old list stays up until the new one lands.
-  const listKey = host ? `prs:${data.root}:${host.remoteName}:${prVersion}:${Math.floor(Date.now() / 60000)}` : null;
-  const prs = useAsync(listKey, () => host.list(), 0);
+  const prs = usePrList(ctx, data, prVersion);
+  const { host, key: listKey } = prs;
   const list = prs.value ?? [];
 
   const split = width >= 100;

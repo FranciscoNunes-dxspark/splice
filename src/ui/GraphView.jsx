@@ -81,10 +81,20 @@ function detailLines(c, d, width) {
   return lines;
 }
 
+/** The graph's title and empty-list line for a filter: text over the loaded commits, or a -S / -G search of the history. */
+export function filterTitle(filter, count) {
+  const { mode, query } = filter;
+  if (mode === 'S') return { title: `Commits adding or removing "${query}" (${count})`, empty: 'No commit in the history adds or removes it.' };
+  if (mode === 'G') return { title: `Commits changing lines that match /${query}/ (${count})`, empty: 'No commit in the history changes a line that matches.' };
+  return { title: `Commits matching "${query}" (${count})`, empty: 'No loaded commit matches.' };
+}
+
 export function GraphView({ data, ctx, width, height, active, filter }) {
   const rows = useMemo(() => {
+    // A history search (/find -S or -G) brought its own commits.
+    if (filter?.rows) return filter.rows;
     if (filter) {
-      const q = filter.toLowerCase();
+      const q = filter.query.toLowerCase();
       return data.graph.filter(
         ({ commit: c }) =>
           c &&
@@ -105,7 +115,7 @@ export function GraphView({ data, ctx, width, height, active, filter }) {
   const innerW = listW - 2;
   const nav = useListNav(rows.length, innerH, {
     selectable: (i) => Boolean(rows[i]?.commit || rows[i]?.wip),
-    resetKey: `${data.root}|${filter}`,
+    resetKey: `${data.root}|${filter ? `${filter.mode}:${filter.query}` : ''}`,
   });
   const sel = rows[nav.index];
   const c = sel?.commit;
@@ -156,15 +166,13 @@ export function GraphView({ data, ctx, width, height, active, filter }) {
 
   const visible = rows.slice(nav.offset, nav.offset + innerH);
   const commits = rows.filter((r) => r.commit).length;
-  const title = filter ? `Commits matching "${filter}" (${commits})` : 'Commits';
+  const filtered = filter ? filterTitle(filter, commits) : { title: 'Commits', empty: 'No commits yet.' };
   const hint = filter ? 'esc clears' : data.graphComplete ? `${commits}` : `${commits}+`;
 
   return (
     <Box width={width} height={height}>
-      <Panel title={title} hint={hint} width={listW} height={height} focused={active}>
-        {rows.length === 0 ? (
-          <Row pointer={false} width={innerW} segments={[{ text: filter ? '  No loaded commit matches.' : '  No commits yet.', color: theme.dim }]} />
-        ) : null}
+      <Panel title={filtered.title} hint={hint} width={listW} height={height} focused={active}>
+        {rows.length === 0 ? <Row pointer={false} width={innerW} segments={[{ text: `  ${filtered.empty}`, color: theme.dim }]} /> : null}
         {visible.map((row, i) => {
           const selected = nav.offset + i === nav.index;
           if (row.wip) {

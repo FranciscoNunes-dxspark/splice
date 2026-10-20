@@ -1,15 +1,15 @@
 import React, { useMemo, useState } from 'react';
 import { useInput } from 'ink';
+import { renderMarkdown } from '../markdown.js';
 import { theme } from '../theme.js';
-import { wrap as wrapText } from '../text.js';
 import { Panel, Row, diffSegment } from './parts.jsx';
 
-/** Full-height scrollable text: diffs, command output, help, Claude's answers (`wrap`: prose, wrapped to fit). */
-export function TextViewer({ title, text, loading, diff, wrap, width, height, active, onClose }) {
+/** Full-height scrollable text: diffs, command output, help, Claude's answers (`markdown`: formatted and wrapped to fit). */
+export function TextViewer({ title, text, loading, diff, markdown, width, height, active, onClose }) {
   const lines = useMemo(() => {
     const t = (text ?? '').replace(/\n$/, '');
-    return wrap ? wrapText(t, width - 2) : t.split('\n');
-  }, [text, wrap, width]);
+    return markdown ? renderMarkdown(t, width - 2) : t.split('\n');
+  }, [text, markdown, width]);
   const [offset, setOffset] = useState(0);
   const innerH = height - 2;
   const max = Math.max(0, lines.length - innerH);
@@ -26,7 +26,7 @@ export function TextViewer({ title, text, loading, diff, wrap, width, height, ac
       else if (input === 'G') to(max);
       else if (input === 'n' || input === 'N') {
         // Jump to the next (or previous) hunk or file.
-        const isMark = (l) => l.startsWith('@@') || l.startsWith('diff --git');
+        const isMark = (l) => typeof l === 'string' && (l.startsWith('@@') || l.startsWith('diff --git'));
         if (input === 'n') {
           const i = lines.findIndex((l, j) => j > offset && isMark(l));
           if (i >= 0) to(i);
@@ -46,7 +46,7 @@ export function TextViewer({ title, text, loading, diff, wrap, width, height, ac
       ) : (
         lines
           .slice(offset, offset + innerH)
-          .map((l, i) => <Row key={offset + i} pointer={false} width={width - 2} segments={[diff ? diffSegment(l) : { text: l }]} />)
+          .map((l, i) => <Row key={offset + i} pointer={false} width={width - 2} segments={markdown ? l : [diff ? diffSegment(l) : { text: l }]} />)
       )}
     </Panel>
   );

@@ -1,13 +1,46 @@
 // Every git operation the UI offers, written once. Keys and slash commands both call these.
 // `ctx` is the app's handle: data, exec, confirm, note, prefill, and so on (see App.jsx).
-import { rm } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { READ_ONLY, cleanSubject, clip, commitPrompt, lookPrompt, parsePrDraft, prPrompt } from './claude.js';
-import { splitArgs } from './parse.js';
+import { READ_ONLY, cleanSubject, clip, commitPrompt, lookPrompt, parsePrDraft, parseResolution, prPrompt, resolveInput, resolvePrompt } from './claude.js';
+import { cleanupChoice, cleanupCount, cleanupOptions, cleanupText, planCleanup, readCleanup } from './cleanup.js';
+import { matchLineEndings, parseConflicts, takeSide, unifiedDiff } from './conflict.js';
+import { blamePicker, historyPicker, repoPath } from './history.js';
+import { defaultBranch, findArgs, parseGraph, parseStatus, relTime, searchArgs, splitArgs } from './parse.js';
 import { buildPatch, coversAll, parseDiff } from './patch.js';
-import { cleanup, loadPlan, planProblem, planSummary, prepare } from './rebase.js';
+import {
+  COMMIT_LIST_FORMAT,
+  cleanup,
+  fixupExclusions,
+  fixupLogArgs,
+  foldArgs,
+  loadPlan,
+  parseCommitList,
+  planProblem,
+  planSummary,
+  prepare,
+} from './rebase.js';
+import { fit } from './text.js';
+import { theme } from './theme.js';
+import {
+  REFLOG_FORMAT,
+  captureDiscard,
+  describeUndo,
+  dropDiscard,
+  forgetCapture,
+  parseReflog,
+  planUndo,
+  readDiscards,
+  reflogActionFor,
+  reflogLabel,
+  restoreSteps,
+  saveDiscard,
+  untrackedInTheWay,
+} from './undo.js';
 
 const short = (hash) => hash.slice(0, 7);
+const firstLine = (s) => String(s ?? '').split('\n')[0];
 const YES_NO = (yes) => [
   { label: yes, value: true },
   { label: 'No', value: false },
@@ -15,7 +48,7 @@ const YES_NO = (yes) => [
 
 function needRepo(ctx) {
   if (ctx.data) return true;
-  ctx.note('Open a repository first: press 6 for Repos, or /open <path>.', 'error');
+  ctx.note('Open a repository first: press 7 for Repos, or /open <path>.', 'error');
   return false;
 }
 
@@ -157,6 +190,20 @@ function currentName(ctx) {
   return ctx.data.status.branch.head ?? 'HEAD';
 }
 
+/** `D` in Branches and `/compare <ref> [base]`: the full diff of what `ref` adds to `base` (the default branch if none given). */
+export function compare(ctx, text) {
+  if (!needRepo(ctx)) return;
+  const [ref, given] = splitArgs(text ?? '');
+  if (!ref) return ctx.prefill('/compare ');
+  const def = defaultBranch(ctx.data.refs, ctx.data.remotes);
+  const base = given ?? def?.ref;
+  if (!base) return ctx.note(`Couldn't tell which branch is the default one. Say what to compare with: /compare ${ref} <base>`, 'error');
+  if (base === ref || (!given && ref === def.name)) {
+    return ctx.note(`${ref} is the default branch itself. To compare it with another branch: /compare ${ref} <base>`, 'error');
+  }
+  ctx.showCompare(ref, base);
+}
+
 export async function merge(ctx, ref, { ask = false } = {}) {
   if (!needRepo(ctx)) return;
   if (!ref) return ctx.prefill('/merge ');
@@ -216,6 +263,58 @@ export function stash(ctx, message) {
   return ctx.exec(['stash', 'push', '--include-untracked', ...(message ? ['-m', message] : [])], { label: 'Stashing' });
 }
 
+/** Stashes one file from Changes, staged and unstaged changes alike, with its path as the message. */
+export function stashFile(ctx, f) {
+  if (!needRepo(ctx)) return;
+  if (f.area === 'conflict') return ctx.note(`${f.path} has conflicts, which can't be stashed. Resolve it first (space marks it resolved).`, 'error');
+  // With a path, git stash can't find a file that only the last commit has: the old side of a rename, a staged deletion.
+  if (f.kind === 'renamed' || (f.area === 'staged' && f.x === 'D')) {
+    return ctx.note(`git can't stash a staged ${f.kind === 'renamed' ? 'rename' : 'deletion'} on its own. Unstage it first (space), then stash it.`, 'error');
+  }
+  const untracked = f.kind === 'untracked' ? ['--include-untracked'] : [];
+  return ctx.exec(['stash', 'push', ...untracked, '-m', f.path, '--', f.path], { label: 'Stashing' });
+}
+
+/**
+ * Puts one file from a stash (`file` from stashFiles) into the working tree, as `git stash apply` would leave
+ * it: a change unstaged, a file the stash added staged, an untracked file untracked. Asks before overwriting
+ * uncommitted changes, and before deleting a file the stash deleted.
+ */
+export async function restoreStashFile(ctx, s, file) {
+  if (!needRepo(ctx)) return;
+  const { path } = file;
+  const here = parseStatus(await ctx.git(['status', '--porcelain=v2', '-z', '--untracked-files=all', '--', path])).files;
+  const dirty = here.length > 0;
+  if (file.code === 'D') {
+    if (!existsSync(join(ctx.data.root, path))) return ctx.note(`${path} is already gone here.`);
+    const ok = await ctx.confirm({
+      title: `${path} was deleted in ${s.ref}. Delete it here too?`,
+      detail: dirty ? 'It has uncommitted changes, which would be lost.' : 'The last commit still has it.',
+      options: YES_NO('Yes, delete it'),
+      danger: dirty,
+    });
+    if (!ok) return;
+    await rm(join(ctx.data.root, path), { force: true });
+    ctx.note(`Deleted ${path}`);
+    return ctx.reload();
+  }
+  if (dirty) {
+    const ok = await ctx.confirm({
+      title: `Overwrite ${path} with the copy in ${s.ref}?`,
+      detail: `${path} has uncommitted changes, which would be lost.`,
+      options: YES_NO('Yes, overwrite it'),
+      danger: true,
+    });
+    if (!ok) return;
+  }
+  const args = file.untracked
+    ? ['restore', `--source=${s.ref}^3`, '--worktree', '--', path]
+    : file.code === 'A'
+      ? ['checkout', s.ref, '--', path]
+      : ['restore', `--source=${s.ref}`, '--worktree', '--', path];
+  return ctx.exec(args, { label: 'Restoring' });
+}
+
 export async function stashApply(ctx, ref, { pop = false } = {}) {
   if (!needRepo(ctx)) return;
   if (!ctx.data.stashes.length) return ctx.note('There are no stashes.', 'error');
@@ -270,6 +369,102 @@ export async function removeWorktree(ctx, wt) {
     danger: true,
   });
   if (force) return ctx.exec(['worktree', 'remove', '--force', wt.path], { label: 'Removing worktree' });
+}
+
+/**
+ * The repository's default branch and the remote it's on: what the refs say (parse.js's defaultBranch),
+ * else what the PR host says, as /pr asks it. `name` is null if neither knows.
+ */
+async function findDefaultBranch(ctx) {
+  const { remotes, refs } = ctx.data;
+  const def = defaultBranch(refs, remotes);
+  if (def) return { name: def.name, remote: def.ref === def.name ? null : def.ref.slice(0, -def.name.length - 1) };
+  const host = ctx.host();
+  return { name: host ? await host.defaultBranch().catch(() => null) : null, remote: host?.remoteName ?? null };
+}
+
+/**
+ * /cleanup: removes the linked worktrees with no uncommitted changes (pruning those whose folder is gone),
+ * then deletes the local branches with no commits that exist only here: all on a remote, or merged into
+ * the default branch. Lists them first and asks.
+ */
+export async function cleanUp(ctx) {
+  if (!needRepo(ctx)) return;
+  const { root, refs, remotes } = ctx.data;
+  let plan;
+  const read = await ctx.task(
+    'Looking for branches and worktrees to clean up',
+    async () => {
+      const { name, remote } = await findDefaultBranch(ctx);
+      const mergedRefs = name ? [name, remote && `${remote}/${name}`].filter((r) => refs.local.some((b) => b.name === r) || refs.remote.some((b) => b.name === r)) : [];
+      plan = planCleanup(await readCleanup(root, { defaultBranch: name, mergedRefs, hasRemotes: remotes.length > 0 }));
+      return { stdout: '', stderr: '' };
+    },
+    { label: 'Looking for things to clean up', refresh: false, quiet: true },
+  );
+  if (!read.ok) return read;
+  if (!plan.worktrees.length && !plan.branches.length) {
+    return ctx.note('Nothing to clean up: every other branch and worktree has something of yours on it.');
+  }
+  // The full list goes in the viewer, so the question stays short however much there is.
+  ctx.showText('Clean up: what goes and what stays', cleanupText(plan, root));
+  const choice = await ctx.confirm({
+    title: `Delete ${cleanupCount(plan)} with nothing of yours on them?`,
+    detail: 'Listed above, with why. Branches that have commits only here, and worktrees with changes, stay.',
+    options: cleanupOptions(plan),
+    danger: true,
+  });
+  ctx.closeOverlay();
+  if (!choice) return;
+  const { worktrees, branches } = cleanupChoice(plan, choice);
+  const problems = [];
+  const removed = new Set();
+  let stopped = false;
+  const step = async (args, label, opts) => {
+    const r = await ctx.exec(args, { label, refresh: false, ...opts });
+    if (r.error?.cancelled) stopped = true;
+    return r;
+  };
+  if (worktrees.some((w) => w.prune)) {
+    const r = await step(['worktree', 'prune'], 'Pruning worktrees');
+    for (const w of worktrees.filter((x) => x.prune)) {
+      if (r.ok) removed.add(w.path);
+      else problems.push(`${w.path}: ${firstLine(r.error.message)}`);
+    }
+  }
+  // Plain remove: it refuses to lose changes, should any have appeared since the list was made.
+  for (const w of worktrees.filter((x) => !x.prune)) {
+    if (stopped) break;
+    const r = await step(['worktree', 'remove', w.path], 'Removing worktree');
+    if (r.ok) removed.add(w.path);
+    else problems.push(`${w.path}: ${firstLine(r.error.message)}`);
+  }
+  // A branch whose worktree couldn't go is still checked out there, so it stays too.
+  const names = branches.filter((b) => !b.worktree || removed.has(b.worktree)).map((b) => b.name);
+  let message = '';
+  if (names.length && !stopped) {
+    const r = await step(['branch', '-d', ...names], 'Deleting branches', { quietError: true });
+    // -d also wants each branch merged into HEAD (or its upstream). These were checked against the
+    // remotes and the default branch instead, so the ones it refuses for that alone are forced.
+    message = r.ok ? '' : r.error.message;
+    const refused = names.filter((n) => message.includes(`'${n}' is not fully merged`));
+    if (refused.length && !stopped) await step(['branch', '-D', ...refused], 'Deleting branches');
+  }
+  await ctx.reload();
+  const left = new Set(ctx.data.refs.local.map((b) => b.name));
+  const deleted = names.filter((n) => !left.has(n));
+  for (const b of branches) {
+    if (!left.has(b.name)) continue;
+    if (!names.includes(b.name)) problems.push(`${b.name}: kept, as its worktree is still there`);
+    else if (!stopped) {
+      const line = message.split('\n').find((l) => l.includes(`'${b.name}'`) && !/not fully merged|^hint:/.test(l));
+      problems.push(`${b.name}: ${line ? line.replace(/^error:\s*/, '') : 'not deleted'}`);
+    }
+  }
+  const done = cleanupCount({ worktrees: [...removed], branches: deleted });
+  const head = stopped ? `Stopped${done ? ` after ${done}` : ''}` : done ? `Cleaned up ${done}` : 'Nothing was cleaned up';
+  const lines = [...(deleted.length ? [`Deleted ${deleted.join(', ')}`] : []), ...problems];
+  ctx.note([head, ...lines].join('\n'), problems.length || stopped ? 'error' : 'ok');
 }
 
 export function tag(ctx, argText) {
@@ -339,22 +534,59 @@ export function unstageAll(ctx) {
   return ctx.exec(isInitial(ctx) ? ['rm', '--cached', '-r', '-q', '.'] : ['reset', '-q'], { quiet: true });
 }
 
+/**
+ * Keeps a copy of what a discard is about to throw away, for z (see undo.js). Resolves with the copy,
+ * null to discard without one (asked first, when keeping it failed), or false to stop.
+ */
+async function keepForUndo(ctx, opts) {
+  try {
+    return await captureDiscard(ctx.data.root, ctx.data.gitDir, opts);
+  } catch (e) {
+    const ok = await ctx.confirm({
+      title: "Couldn't keep a copy to undo with. Discard anyway?",
+      detail: `Without one this can't be undone. (${e.message.split('\n')[0]})`,
+      options: YES_NO('Yes, discard for good'),
+      danger: true,
+    });
+    return ok ? null : false;
+  }
+}
+
+/**
+ * Records the copy once the discard went through (`r` ok or absent), or throws it away if it didn't.
+ * The discard's own commands run with `refresh: false`: this reloads after recording, so z can't come too soon.
+ */
+async function settleCopy(ctx, copy, r) {
+  if (copy && r && !r.ok) await forgetCapture(ctx.data.gitDir, copy);
+  else if (copy) await saveDiscard(ctx.data.gitDir, copy);
+  await ctx.reload();
+  return r;
+}
+
 export async function discard(ctx, f) {
   const untracked = f.kind === 'untracked';
+  // A folder listed as one untracked entry is a repository of its own, which Tiller doesn't copy.
+  const folder = untracked && f.path.endsWith('/');
   const ok = await ctx.confirm({
     title: `Discard ${f.area === 'staged' ? 'all changes' : 'unstaged changes'} to ${f.path}?`,
-    detail: untracked ? 'The file is untracked, so it will be deleted.' : "This can't be undone.",
+    detail: folder ? "It's untracked, so it will be deleted. This can't be undone." : untracked ? 'The file is untracked, so it will be deleted. z brings it back.' : 'z brings them back.',
     options: YES_NO('Yes, discard'),
     danger: true,
   });
   if (!ok) return;
+  const copy = folder
+    ? null
+    : await keepForUndo(ctx, untracked
+      ? { what: `the deleted file ${f.path}`, untracked: [f.path] }
+      : { what: `the ${f.area === 'staged' ? '' : 'unstaged '}changes to ${f.path}`, paths: paths(f).slice(1), staged: f.area === 'staged' });
+  if (copy === false) return;
   if (untracked) {
     await rm(join(ctx.data.root, f.path), { force: true, recursive: true });
     ctx.note(`Deleted ${f.path}`);
-    return ctx.reload();
+    return settleCopy(ctx, copy);
   }
-  if (f.area === 'staged') return ctx.exec(['restore', '--staged', '--worktree', ...paths(f)], { label: 'Discarding' });
-  return ctx.exec(['restore', ...paths(f)], { label: 'Discarding' });
+  const args = f.area === 'staged' ? ['restore', '--staged', '--worktree', ...paths(f)] : ['restore', ...paths(f)];
+  return settleCopy(ctx, copy, await ctx.exec(args, { label: 'Discarding', refresh: false }));
 }
 
 /** Puts every file back the way the last commit has it, staged or not. Ignored files stay. */
@@ -368,7 +600,7 @@ export async function discardAll(ctx) {
   const tracked = files.length - untracked;
   const choice = await ctx.confirm({
     title: `Discard all changes to ${files.length} ${files.length === 1 ? 'file' : 'files'}?`,
-    detail: `${untracked ? 'Untracked files are deleted. ' : ''}This can't be undone; /stash keeps the changes instead.`,
+    detail: `${untracked ? 'Untracked files are deleted. ' : ''}z brings it all back, untracked files included.`,
     options: [
       { label: 'Yes, discard everything', value: 'all' },
       ...(untracked && tracked ? [{ label: 'Discard, but keep the untracked files', value: 'tracked' }] : []),
@@ -377,14 +609,27 @@ export async function discardAll(ctx) {
     danger: true,
   });
   if (!choice) return;
+  const gone = choice === 'all' ? files.length : tracked;
+  const copy = await keepForUndo(ctx, {
+    what: `the changes to ${gone} ${gone === 1 ? 'file' : 'files'}`,
+    staged: true,
+    untracked: choice === 'all' ? files.filter((f) => f.kind === 'untracked').map((f) => f.path) : [],
+  });
+  if (copy === false) return;
   const steps = [];
   // Before the first commit there is no HEAD to reset to: remove what's staged, files included.
   if (tracked) steps.push(isInitial(ctx) ? ['rm', '-r', '-f', '-q', '.'] : ['reset', '--hard', '-q']);
   if (untracked && choice === 'all') steps.push(['clean', '-f', '-d', '-q']);
+  let r;
   for (const [i, args] of steps.entries()) {
-    const r = await ctx.exec(args, { label: 'Discarding', refresh: i === steps.length - 1 });
-    if (!r.ok) return r;
+    r = await ctx.exec(args, { label: 'Discarding', refresh: false });
+    // A failed first step discarded nothing; after that, what's gone is worth keeping.
+    if (!r.ok) {
+      await settleCopy(ctx, copy, i === 0 ? r : undefined);
+      return r;
+    }
   }
+  return settleCopy(ctx, copy, r);
 }
 
 /** Takes one side of a conflicted file and marks it resolved. */
@@ -393,8 +638,40 @@ export async function resolveWith(ctx, f, side) {
   if (r.ok) return ctx.exec(['add', '--', f.path], { quiet: true });
 }
 
-const apply = (ctx, patch, flags, label) =>
-  ctx.exec(['apply', ...flags, '--recount', '--whitespace=nowarn', '-'], { input: patch, quiet: true, label });
+const SIDE_NAMES = { ours: 'ours', theirs: 'theirs', both: 'both sides' };
+
+/**
+ * Takes one side ("ours", "theirs" or "both") of conflict block `index` in a conflicted file, rewriting
+ * the working file and leaving it unstaged. `seen` is the file's content as shown (a Buffer): if the
+ * file has changed since, it's left alone. Resolves with { buf, left } (the new content, the blocks
+ * still in it), or null.
+ */
+export async function resolveBlock(ctx, f, seen, index, side) {
+  const full = join(ctx.data.root, f.path);
+  try {
+    const buf = await readFile(full);
+    if (!buf.equals(seen)) {
+      ctx.note(`${f.path} changed on disk, so nothing was taken. Here it is again.`, 'error');
+      ctx.reload();
+      return null;
+    }
+    // Bytes one to one, so a file in any encoding comes back as it was outside the block.
+    const next = takeSide(buf.toString('latin1'), index, side);
+    if (next == null) return null;
+    const out = Buffer.from(next, 'latin1');
+    await writeFile(full, out);
+    const left = parseConflicts(next).blocks.length;
+    if (!left) ctx.note(`No conflicts left in ${f.path}: space marks it resolved`);
+    ctx.reload();
+    return { buf: out, left };
+  } catch (e) {
+    ctx.note(`Couldn't take ${SIDE_NAMES[side]} in ${f.path}: ${e.message.split('\n')[0]}`, 'error');
+    return null;
+  }
+}
+
+const apply = (ctx, patch, flags, label, opts) =>
+  ctx.exec(['apply', ...flags, '--recount', '--whitespace=nowarn', '-'], { input: patch, quiet: true, label, ...opts });
 
 /**
  * Stages (or, for a staged file, unstages) just the picked lines of `diffText`.
@@ -408,12 +685,16 @@ export async function applyLines(ctx, f, diffText, picks, { discard = false } = 
     if (f.kind === 'untracked') return ctx.note('This is a new file: discard the whole file from the list instead (d).', 'error');
     const ok = await ctx.confirm({
       title: `Discard the selected ${all ? 'changes' : 'lines'} in ${f.path}?`,
-      detail: "This can't be undone.",
+      detail: 'z brings them back.',
       options: [{ label: 'Yes, discard', value: true }, { label: 'No', value: false }],
       danger: true,
     });
-    if (ok) return apply(ctx, buildPatch(diff, picks, { reverse: true }), ['--reverse'], 'Discarding');
-    return;
+    if (!ok) return;
+    const patch = buildPatch(diff, picks, { reverse: true });
+    // Applied forwards, the same patch puts back what applying it in reverse takes out.
+    const copy = await keepForUndo(ctx, { what: `the discarded ${all ? 'changes' : 'lines'} in ${f.path}`, patch });
+    if (copy === false) return;
+    return settleCopy(ctx, copy, await apply(ctx, patch, ['--reverse'], 'Discarding', { refresh: false }));
   }
   // When every line is picked, the plain file commands also cover what a patch can't (modes, binaries).
   if (f.area === 'staged') return all ? unstage(ctx, f) : apply(ctx, buildPatch(diff, picks, { reverse: true }), ['--cached', '--reverse'], 'Unstaging');
@@ -471,6 +752,134 @@ export async function runRebase(ctx, base, rows) {
   return true;
 }
 
+/**
+ * F in Changes, /fixup [ref]: the staged changes become a fixup! commit for an earlier commit,
+ * then (if you say so) an autosquash rebase folds it in. Without a ref, a picker offers the branch's commits.
+ */
+export async function fixup(ctx, ref) {
+  if (!needRepo(ctx)) return;
+  const { state } = ctx.data;
+  if (state) return ctx.note(`A ${OP[state]} is in progress. Finish it first (/continue or /abort), then make the fixup.`, 'error');
+  const { branch } = ctx.data.status;
+  if (isInitial(ctx)) return ctx.note('There are no commits yet to fix up.', 'error');
+  if (!branch.head) return ctx.note('HEAD is detached. Folding a fixup in rewrites a branch, so check one out first.', 'error');
+  const { staged, unstaged, conflicts } = ctx.data.changes;
+  if (conflicts.length) return ctx.note('Resolve the conflicts first (space marks a file resolved).', 'error');
+  let stageAll = false;
+  if (!staged.length) {
+    if (!unstaged.length) return ctx.note('Nothing to fix up with: the working tree is clean.', 'error');
+    const ok = await ctx.confirm({
+      title: 'Nothing is staged. Stage all changes for the fixup?',
+      options: YES_NO('Yes, stage everything'),
+    });
+    if (!ok) return;
+    stageAll = true;
+  }
+  if (ref) {
+    let target;
+    try {
+      [target] = parseCommitList(await ctx.git(['log', '-1', `--format=${COMMIT_LIST_FORMAT}`, ref, '--']));
+    } catch {
+      // Not a commit; said below.
+    }
+    if (!target) return ctx.note(`No commit called ${ref}.`, 'error');
+    const ours = await ctx.git(['merge-base', '--is-ancestor', target.hash, 'HEAD']).then(() => true, () => false);
+    if (!ours) return ctx.note(`${ref} isn't part of ${branch.head}'s history, so a fixup couldn't be folded into it.`, 'error');
+    return fixupInto(ctx, target, { stageAll });
+  }
+  ctx.showPicker({
+    title: `Fix up which commit on ${branch.head}?`,
+    hint: '↵ fix it up with the staged changes',
+    empty: 'No commits to fix up.',
+    load: () => fixupCandidates(ctx),
+    onPick: (c) => {
+      ctx.closeOverlay();
+      return fixupInto(ctx, c, { stageAll });
+    },
+  });
+}
+
+/** The branch's commits that aren't on its upstream or the default branch yet; failing that, the latest 30. */
+async function fixupCandidates(ctx) {
+  const { status, refs, remotes } = ctx.data;
+  const { branch } = status;
+  const exclude = fixupExclusions({
+    head: branch.head,
+    upstream: branch.upstream,
+    def: defaultBranch(refs, remotes),
+    local: refs.local.map((b) => b.name),
+  });
+  let list = exclude.length ? parseCommitList(await ctx.git(fixupLogArgs(exclude))) : [];
+  if (!list.length) list = parseCommitList(await ctx.git(fixupLogArgs([])));
+  return list.map((c) => ({
+    ...c,
+    segments: [
+      { text: c.hash.slice(0, 7), color: theme.warn },
+      { text: ` ${fit(relTime(c.time), 4, 'right')}  `, color: theme.dim },
+      { text: c.subject, strong: true },
+    ],
+  }));
+}
+
+async function fixupInto(ctx, target, { stageAll }) {
+  if (stageAll && !(await ctx.exec(['add', '-A'], { refresh: false, quiet: true })).ok) return;
+  const made = await ctx.exec(['commit', `--fixup=${target.hash}`], { label: 'Committing the fixup' });
+  if (!made.ok) return made;
+  const later = `Kept "fixup! ${target.subject}" as its own commit for now.\nTo fold it in later: i on ${short(target.hash)} in the graph, J to move the fixup! commit just above it, f to fix up, ↵.`;
+  // Without --rebase-merges a rebase flattens merges, and with it a merge can conflict all over again.
+  const merges = Number((await ctx.git(['rev-list', '--count', '--min-parents=2', `${target.hash}..HEAD`]).catch(() => '0')).trim());
+  if (merges) return ctx.note(`There are merge commits after "${target.subject}", which folding the fixup in would flatten.\n${later}`);
+  // Already on a remote branch means folding rewrites history others may have.
+  const onRemotes = (await ctx.git(['for-each-ref', '--contains', target.hash, '--format=%(refname:short)', 'refs/remotes']).catch(() => ''))
+    .split('\n')
+    .filter((r) => r && !r.endsWith('/HEAD'));
+  const { upstream } = ctx.data.status.branch;
+  const pushedTo = onRemotes.includes(upstream) ? upstream : onRemotes[0];
+  // Other changes to tracked files would stop the rebase; set aside, they come back when it's done.
+  const autostash = ctx.data.status.files.some((f) => f.kind !== 'untracked');
+  const fold = await ctx.confirm({
+    title: `Fold it into "${target.subject}" now?`,
+    detail: pushedTo
+      ? `${short(target.hash)} is already on ${pushedTo}: folding rewrites pushed history, so you'd need /push --force afterwards.`
+      : `Rewrites the commits since ${short(target.hash)} (an autosquash rebase)${autostash ? '; other changes are stashed meanwhile' : ''}.`,
+    options: [
+      { label: 'Yes, fold it in', value: true },
+      { label: 'No, keep the fixup! commit for later', value: false },
+    ],
+    danger: Boolean(pushedTo),
+  });
+  if (!fold) return ctx.note(later);
+  // GIT_EDITOR is already `true`; this also beats a sequence.editor in the user's config. The todo is taken as autosquash ordered it.
+  const r = await ctx.exec(foldArgs(target, { autostash }), { label: 'Folding the fixup in', env: { GIT_SEQUENCE_EDITOR: 'true' } });
+  if (ctx.data.state) {
+    if (ctx.data.changes.conflicts.length) afterConflicts(ctx);
+    else ctx.note('The rebase stopped. /continue carries on, /abort puts everything back.', 'error');
+  }
+  return r;
+}
+
+/**
+ * /find: plain text filters the loaded commits; -S <text> and -G <regex> search the whole history
+ * for commits whose changes add or remove the text, or have lines matching the regex.
+ */
+export async function find(ctx, text) {
+  const { mode, query } = findArgs(text);
+  if (mode === 'text') return ctx.find(query);
+  if (!needRepo(ctx)) return;
+  if (!query) return ctx.prefill(`/find -${mode} `);
+  let rows = [];
+  const r = await ctx.task(
+    `git log -${mode} ${JSON.stringify(query)} --all`,
+    async (signal) => {
+      rows = parseGraph(await ctx.git(searchArgs(mode, query), { signal })).filter((row) => row.commit);
+      return { stdout: rows.length ? `${rows.length} commit${rows.length === 1 ? '' : 's'}` : 'No commits', stderr: '' };
+    },
+    { label: 'Searching the history', refresh: false },
+  );
+  if (r.ok) ctx.find({ mode, query, rows });
+  return r;
+}
+
 function needHost(ctx) {
   if (!needRepo(ctx)) return null;
   const host = ctx.host();
@@ -493,7 +902,7 @@ export async function prCheckout(ctx, pr) {
 export async function prApprove(ctx, pr) {
   const host = needHost(ctx);
   if (!host) return;
-  if (!pr) return ctx.note('Pick a pull request in PRs (5) first.', 'error');
+  if (!pr) return ctx.note('Pick a pull request in PRs (6) first.', 'error');
   if (pr.mine) return ctx.note("That's your own pull request.", 'error');
   const ok = await ctx.confirm({ title: `Approve ${pr.label} "${pr.title}"?`, detail: `On ${host.name}, as you.`, options: YES_NO('Yes, approve') });
   if (!ok) return;
@@ -506,7 +915,7 @@ export async function prComment(ctx, text) {
   const host = needHost(ctx);
   if (!host) return;
   const pr = ctx.selectedPr;
-  if (!pr) return ctx.note('Pick a pull request in PRs (5) first.', 'error');
+  if (!pr) return ctx.note('Pick a pull request in PRs (6) first.', 'error');
   if (!text) return ctx.prefill('/comment ');
   const r = await hostTask(ctx, `${cliName(host)} comment ${pr.label}`, (signal) => host.comment(pr, text, signal), { label: 'Commenting', refresh: false });
   if (r.ok) ctx.prsChanged();
@@ -626,7 +1035,7 @@ export async function draftPr(ctx, text) {
   const { title, body } = parsePrDraft(r.out);
   if (!title) return ctx.note("Claude didn't draft a title. Try again, or open it yourself: /pr <title>", 'error');
   ctx.prDraft = { branch: branch.head, body };
-  ctx.showText(`Pull request draft: ${branch.head} → ${target}`, `${title}\n\n${body}`, { wrap: true });
+  ctx.showText(`Pull request draft: ${branch.head} → ${target}`, `${title}\n\n${body}`, { markdown: true });
   ctx.prefill(`/pr ${title}${asked ? ` --into ${asked}` : ''}`);
   return r;
 }
@@ -657,7 +1066,7 @@ export async function claudeLook(ctx, mode, target) {
   }
   const subject = target.kind === 'commit' ? 'this commit' : target.kind === 'pr' ? 'this pull request' : 'these changes';
   const r = await askClaude(ctx, `${mode} ${what}`, lookPrompt(mode, subject), input, READ_ONLY);
-  if (r.ok) ctx.showText(`${mode === 'explain' ? 'Claude explains' : 'Claude reviews'} ${what}`, r.out, { wrap: true });
+  if (r.ok) ctx.showText(`${mode === 'explain' ? 'Claude explains' : 'Claude reviews'} ${what}`, r.out, { markdown: true });
   return r;
 }
 
@@ -673,6 +1082,87 @@ export async function claudeRef(ctx, mode, ref) {
   }
   const [hash, subject] = out.trim().split('\x1f');
   return claudeLook(ctx, mode, { kind: 'commit', hash, subject });
+}
+
+// The commit on the other side of a conflict, by operation; a stash leaves none of these.
+const THEIRS = { merging: 'MERGE_HEAD', rebasing: 'REBASE_HEAD', 'cherry-picking': 'CHERRY_PICK_HEAD', reverting: 'REVERT_HEAD' };
+
+/** Both sides of the conflicts in progress, as { ref, message } (null when there's no such commit). */
+async function conflictSides(ctx) {
+  const message = (ref) => ctx.git(['log', '-1', '--format=%h %s%n%n%b', ref, '--']).then((s) => s.trim() || null, () => null);
+  const ours = await message('HEAD');
+  let theirs = null;
+  for (const ref of new Set([THEIRS[ctx.data.state], ...Object.values(THEIRS)].filter(Boolean))) {
+    const m = await message(ref);
+    if (m) {
+      theirs = { ref, message: m };
+      break;
+    }
+  }
+  return { ours: ours && { ref: 'HEAD', message: ours }, theirs };
+}
+
+/**
+ * Claude proposes the whole resolved file for a conflicted file. The proposal opens as a diff against
+ * the file as it is, then asks before writing it (with the file's line endings, unstaged).
+ */
+export async function claudeResolve(ctx, f) {
+  if (!needClaude(ctx)) return;
+  const full = join(ctx.data.root, f.path);
+  let current;
+  try {
+    current = await readFile(full, 'utf8');
+  } catch {
+    return ctx.note(`${f.path} isn't in the working tree (one side deleted it), so there's nothing to merge. O or T takes a side.`, 'error');
+  }
+  if (!parseConflicts(current).blocks.length) return ctx.note(`No conflict markers in ${f.path}: space marks it resolved, or O/T takes a side.`, 'error');
+  const { ours, theirs } = await conflictSides(ctx);
+  const input = resolveInput({ path: f.path, state: ctx.data.state, ours, theirs, text: current });
+  // A cut-off file can't come back whole.
+  if (clip(input) !== input) return ctx.note(`${f.path} is too big to send to Claude whole.`, 'error');
+  const r = await askClaude(ctx, `resolve ${f.path}`, resolvePrompt(f.path), input, READ_ONLY);
+  if (!r.ok) return r;
+  const answer = parseResolution(r.out);
+  if (answer.error) {
+    ctx.note(answer.error, 'error');
+    return r;
+  }
+  const proposed = matchLineEndings(answer.text, current);
+  const title = `Claude's resolution of ${f.path}`;
+  const diff = unifiedDiff(current, proposed, f.path);
+  let choice;
+  for (;;) {
+    let closed;
+    const done = new Promise((resolve) => (closed = resolve));
+    ctx.showText(title, diff, { diff: true, onClosed: closed });
+    choice = await ctx.confirm({
+      title: `Use Claude's resolution for ${f.path}?`,
+      detail: "Writes it to the file, not staged: look it over, then space marks it resolved.",
+      options: [
+        { label: 'Yes, write it', value: true },
+        { label: 'No', value: false },
+        { label: 'Scroll through the diff first (esc comes back here)', value: 'read' },
+      ],
+    });
+    if (choice !== 'read') break;
+    await done;
+  }
+  ctx.closeOverlay();
+  if (!choice) return r;
+  try {
+    // Claude took a while: don't overwrite edits made meanwhile.
+    if ((await readFile(full, 'utf8')) !== current) {
+      ctx.note(`${f.path} changed while Claude was working on it, so it was left alone. C asks again.`, 'error');
+      return r;
+    }
+    await writeFile(full, proposed);
+  } catch (e) {
+    ctx.note(`Couldn't write ${f.path}: ${e.message.split('\n')[0]}`, 'error');
+    return r;
+  }
+  ctx.note(`Wrote Claude's resolution to ${f.path}: look it over, then space marks it resolved`);
+  ctx.reload();
+  return r;
 }
 
 /**
@@ -696,6 +1186,22 @@ export function prArgs(text) {
   return { target, draft, title };
 }
 
+/** H on a file, or /history <path>: the commits that touched it, following renames. Works for deleted files too. */
+export function fileHistory(ctx, typed) {
+  if (!needRepo(ctx)) return;
+  const path = repoPath(ctx.data.root, typed);
+  if (!path) return ctx.prefill('/history ');
+  ctx.showPicker(historyPicker(ctx, path));
+}
+
+/** B on a file, or /blame <path>: who last changed each line of the working-tree version. */
+export function blame(ctx, typed) {
+  if (!needRepo(ctx)) return;
+  const path = repoPath(ctx.data.root, typed);
+  if (!path) return ctx.prefill('/blame ');
+  ctx.showPicker(blamePicker(ctx, path));
+}
+
 /** `!<args>`: any git command. Output longer than a few lines opens in the viewer. */
 export async function raw(ctx, text) {
   const args = splitArgs(text);
@@ -703,4 +1209,95 @@ export async function raw(ctx, text) {
   if (!args.length) return ctx.note('Type a git command after !, for example: !log --stat -3', 'error');
   const r = await ctx.exec(args, { label: `git ${args[0]}`, anywhere: true });
   if (r.ok && r.out.split('\n').length > 3) ctx.showText(`git ${text.replace(/^git\s+/, '')}`, r.out, { diff: /^(@@|diff --git)/m.test(r.out) });
+}
+
+const readReflog = async (ctx, ref, n) =>
+  parseReflog(await ctx.git(['log', '-g', `-n${n}`, '--date=unix', `--format=${REFLOG_FORMAT}`, ref, '--']).catch(() => ''));
+
+const isAncestor = (ctx, a, b) => ctx.git(['merge-base', '--is-ancestor', a, b]).then(() => true, () => false);
+
+/**
+ * z and /undo: takes back the last thing that moved HEAD or the current branch (from the reflog),
+ * or the last discard, whichever came later. Always asks first, saying what will happen.
+ */
+export async function undo(ctx) {
+  if (!needRepo(ctx)) return;
+  const { state, gitDir, root } = ctx.data;
+  const { branch } = ctx.data.status;
+  if (state) return ctx.note(`A ${OP[state]} is in progress: /abort puts things back the way they were before it.`, 'error');
+  const [head, own, discards] = await Promise.all([
+    readReflog(ctx, 'HEAD', 100),
+    branch.head ? readReflog(ctx, `refs/heads/${branch.head}`, 2) : null,
+    readDiscards(gitDir),
+  ]);
+  const plan = planUndo({ head, branch: own, branchName: branch.head, oid: branch.oid, discard: discards.at(-1) });
+  if (plan.kind === 'none') return ctx.note(`Nothing to undo: ${plan.why}`, 'error');
+  // Something that leaves the branch is already pushed when the branch and its upstream meet past the target.
+  let pushed = null;
+  if (plan.kind === 'reset' && plan.branch && branch.upstream) {
+    const base = (await ctx.git(['merge-base', 'HEAD', '@{upstream}']).catch(() => '')).trim();
+    if (base && !(await isAncestor(ctx, base, plan.target))) pushed = branch.upstream;
+  }
+  const { title, detail, yes } = describeUndo(plan, { pushed });
+  if (!(await ctx.confirm({ title, detail, options: YES_NO(yes), danger: !!pushed }))) return;
+  if (plan.kind === 'switch') return checkout(ctx, plan.from);
+  // Deleting the branch's ref leaves the index alone, so the first commit's files stay staged.
+  if (plan.kind === 'unborn') return ctx.exec(['update-ref', '-d', `refs/heads/${plan.branch}`, plan.entry.hash], { label: 'Undoing' });
+  if (plan.kind === 'reset') {
+    // --keep refuses rather than overwrite uncommitted changes; the reflog notes it as an undo, so z can redo it.
+    return ctx.exec(['reset', `--${plan.mode}`, plan.target], { label: 'Undoing', env: { GIT_REFLOG_ACTION: reflogActionFor(plan) } });
+  }
+  return restoreDiscard(ctx, root, gitDir, plan.discard);
+}
+
+async function restoreDiscard(ctx, root, gitDir, d) {
+  const back = await untrackedInTheWay(root, d).catch(() => []);
+  if (back.length) {
+    const names = `${back.slice(0, 3).join(', ')}${back.length > 3 ? ` and ${back.length - 3} more` : ''}`;
+    return ctx.note(`Can't bring the files back: ${names} exist${back.length === 1 ? 's' : ''} again. Move them aside first.`, 'error');
+  }
+  const steps = restoreSteps(gitDir, d);
+  let r;
+  for (const s of steps) {
+    r = await ctx.exec(s.args, { label: 'Bringing back', env: s.env, refresh: false });
+    if (!r.ok) break;
+  }
+  for (const s of steps) if (s.env) await rm(s.env.GIT_INDEX_FILE, { force: true });
+  // On failure the copy stays, so z can try again once whatever was in the way is gone.
+  if (r.ok) await dropDiscard(gitDir, d.id);
+  await ctx.reload();
+  return r;
+}
+
+/** /reflog: everywhere HEAD has been, in a picker. ↵ shows the commit, X resets the branch to it, c checks it out. */
+export function showReflog(ctx) {
+  if (!needRepo(ctx)) return;
+  const done = (r) => r?.ok && ctx.closeOverlay();
+  ctx.showPicker({
+    title: 'Reflog: where HEAD has been',
+    hint: '↵ diff · X reset to it · c check out',
+    empty: "HEAD's reflog is empty.",
+    load: async () => {
+      const now = Date.now() / 1000;
+      return (await readReflog(ctx, 'HEAD', 500)).map((e, i) => ({
+        ...e,
+        selector: `HEAD@{${i}}`,
+        segments: [
+          { text: e.hash.slice(0, 7), color: theme.warn },
+          { text: ` ${fit(relTime(e.time, now), 4, 'right')}`, color: theme.dim },
+          { text: `  ${fit(reflogLabel(e), 14)}`, color: theme.hunk },
+          { text: e.ref ? `${e.ref}: ${e.message}` : e.message, strong: true },
+        ],
+      }));
+    },
+    onPick: (e) => ctx.showPatch({ hash: e.hash, subject: e.subject }),
+    keys: {
+      X: async (e) => done(await reset(ctx, e.hash, `${e.selector} (${short(e.hash)})`)),
+      c: async (e) => {
+        // Like c in the graph: a branch pointing at it rather than a detached HEAD, when there is one.
+        const row = ctx.data.graph.find((g) => g.commit?.hash === e.hash);
+        done(await (row ? checkoutCommit(ctx, row.commit) : checkout(ctx, e.hash)));
+      },
+    },
+  });
 }
