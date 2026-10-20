@@ -13,7 +13,7 @@ let dir;
 const git = (...args) => execFileSync('git', args, { cwd: dir, encoding: 'utf8' }).trim();
 
 before(() => {
-  base = mkdtempSync(join(tmpdir(), 'tiller-repo-'));
+  base = mkdtempSync(join(tmpdir(), 'splice-repo-'));
   dir = join(base, 'repo');
   mkdirSync(dir);
   git('init', '-q', '-b', 'main');

@@ -91,6 +91,11 @@ jobs:
           pattern: dist-*
           path: dist
           merge-multiple: true
+      # Splice used to be Tiller, and a Tiller that updates itself looks for tiller-<platform> files.
+      # Copies under those names let it update straight to Splice. Drop this step once nobody runs Tiller.
+      - name: Copies for Tiller's updater
+        working-directory: dist
+        run: for f in splice-*; do cp "$f" "tiller-${f#splice-}"; done
       - name: Checksums
         working-directory: dist
         run: sha256sum * > SHA256SUMS.txt
@@ -99,4 +104,4 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: v${{ needs.version.outputs.version }}
-        run: gh release create "$TAG" dist/* --target "$GITHUB_SHA" --title "Tiller $TAG" --generate-notes
+        run: gh release create "$TAG" dist/* --target "$GITHUB_SHA" --title "Splice $TAG" --generate-notes

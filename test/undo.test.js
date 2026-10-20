@@ -14,16 +14,16 @@ const KEYS = { enter: '\r', esc: '\x1b' };
 
 let base;
 let dir;
-// Without optional locks, the status checks polled below can't take the index lock from under Tiller's own git.
+// Without optional locks, the status checks polled below can't take the index lock from under Splice's own git.
 const env = { ...process.env, GIT_OPTIONAL_LOCKS: '0' };
 const git = (...args) => execFileSync('git', args, { cwd: dir, encoding: 'utf8', env }).trim();
 const read = (name) => readFileSync(join(dir, name), 'utf8');
 
 before(() => {
-  base = mkdtempSync(join(tmpdir(), 'tiller-undo-'));
+  base = mkdtempSync(join(tmpdir(), 'splice-undo-'));
   dir = join(base, 'repo');
   mkdirSync(dir);
-  process.env.TILLER_HOME = join(base, 'home');
+  process.env.SPLICE_HOME = join(base, 'home');
   git('init', '-q', '-b', 'main');
   git('config', 'core.autocrlf', 'false');
   git('config', 'user.name', 'Test');
@@ -49,7 +49,7 @@ async function until(check, what, ms = 8000) {
     try {
       ok = check();
     } catch {
-      // On Windows, git reading the repository while Tiller's git rewrites HEAD can fail: that's "not yet".
+      // On Windows, git reading the repository while Splice's git rewrites HEAD can fail: that's "not yet".
     }
     // Once it shows, give the new view's key handlers a moment to subscribe, as a person would.
     if (ok) return new Promise((r) => setTimeout(r, 100));

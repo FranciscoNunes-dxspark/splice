@@ -15,8 +15,8 @@ const KEYS = { enter: '\r', esc: '\x1b' };
 let base;
 
 before(() => {
-  base = mkdtempSync(join(tmpdir(), 'tiller-fixup-'));
-  process.env.TILLER_HOME = join(base, 'home');
+  base = mkdtempSync(join(tmpdir(), 'splice-fixup-'));
+  process.env.SPLICE_HOME = join(base, 'home');
 });
 
 after(() => removeTemp(base));
@@ -27,7 +27,7 @@ async function until(check, what, ms = 8000) {
   const end = Date.now() + ms;
   let failed = null;
   while (Date.now() < end) {
-    // A check that runs git can catch Tiller mid-rebase, while a ref is being replaced ("your current
+    // A check that runs git can catch Splice mid-rebase, while a ref is being replaced ("your current
     // branch appears to be broken" on Windows): that's "not yet", not a failure.
     try {
       // Once it shows, give the new view's key handlers a moment to subscribe, as a person would.

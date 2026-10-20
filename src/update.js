@@ -1,4 +1,4 @@
-// Whether a newer Tiller has been released, and installing it. Asked at most once a day, in the
+// Whether a newer Splice has been released, and installing it. Asked at most once a day, in the
 // background, and silent when it can't tell (offline, no gh). "checkForUpdates": false in the config
 // turns it all off; "autoUpdate": false keeps the check but only says a release is out.
 import { execFile } from 'node:child_process';
@@ -11,7 +11,7 @@ import { pipeline } from 'node:stream/promises';
 import { cli } from './hosting.js';
 import { VERSION } from './version.js';
 
-export const REPO = 'FranciscoNunes-dxspark/tiller';
+export const REPO = 'FranciscoNunes-dxspark/splice';
 export const RELEASES_URL = `https://github.com/${REPO}/releases/latest`;
 const DAY = 24 * 60 * 60 * 1000;
 
@@ -31,7 +31,7 @@ export async function fetchLatestRelease() {
   // Without a sign-in first: that works for anyone once the repository is public, with nothing installed.
   try {
     const res = await fetch(`https://api.github.com/repos/${REPO}/releases/latest`, {
-      headers: { Accept: 'application/vnd.github+json', 'User-Agent': `tiller/${VERSION}` },
+      headers: { Accept: 'application/vnd.github+json', 'User-Agent': `splice/${VERSION}` },
       signal: AbortSignal.timeout(5000),
     });
     if (res.ok) return release(await res.json());
@@ -64,15 +64,15 @@ export async function checkForUpdate(last, { current = VERSION, now = Date.now()
 
 // The release file for each platform; these names come from TARGETS in scripts/build.js.
 const ASSETS = {
-  'win32-x64': 'tiller-windows-x64.exe',
-  'linux-x64': 'tiller-linux-x64',
-  'linux-arm64': 'tiller-linux-arm64',
-  'darwin-x64': 'tiller-macos-x64',
-  'darwin-arm64': 'tiller-macos-arm64',
+  'win32-x64': 'splice-windows-x64.exe',
+  'linux-x64': 'splice-linux-x64',
+  'linux-arm64': 'splice-linux-arm64',
+  'darwin-x64': 'splice-macos-x64',
+  'darwin-arm64': 'splice-macos-arm64',
 };
 const CHECKSUMS = 'SHA256SUMS.txt';
 const DOWNLOAD_MS = 10 * 60 * 1000;
-const WORK_PREFIX = '.tiller-update-';
+const WORK_PREFIX = '.splice-update-';
 
 /** The release file that runs on `platform` and `arch`, or null if there's none. */
 export function assetName(platform = process.platform, arch = process.arch) {
@@ -94,7 +94,7 @@ async function downloadAssets(version, names, dir) {
   try {
     for (const name of names) {
       const res = await fetch(`https://github.com/${REPO}/releases/download/v${version}/${name}`, {
-        headers: { 'User-Agent': `tiller/${VERSION}` },
+        headers: { 'User-Agent': `splice/${VERSION}` },
         signal: AbortSignal.timeout(DOWNLOAD_MS),
       });
       if (!res.ok) throw new Error(`GitHub answered ${res.status}`);
@@ -109,11 +109,11 @@ async function downloadAssets(version, names, dir) {
   });
 }
 
-/** The version an executable says it is (`tiller --version`), or null if it doesn't answer. */
+/** The version an executable says it is (`splice --version`), or null if it doesn't answer. */
 function versionOf(exe) {
   return new Promise((resolve) => {
     execFile(exe, ['--version'], { timeout: 10000, windowsHide: true, encoding: 'utf8' }, (err, stdout) =>
-      resolve(err ? null : (/tiller (\S+)/.exec(stdout)?.[1] ?? null)),
+      resolve(err ? null : (/splice (\S+)/.exec(stdout)?.[1] ?? null)),
     );
   });
 }
@@ -123,8 +123,8 @@ function versionOf(exe) {
  * download goes into a folder next to `exe` (the same disk, so the swap is a rename) and must match the
  * release's SHA256SUMS.txt. Windows won't overwrite a running program but will rename it, so there the
  * old one moves aside to `<exe>.old.<time>`, for removeOldExecutables to delete on a later start.
- * Resolves with "installed", or "already" if `exe` is that version already (another Tiller window got
- * there first). Throws, with `exe` as it was, if anything goes wrong: a folder Tiller can't write to,
+ * Resolves with "installed", or "already" if `exe` is that version already (another Splice window got
+ * there first). Throws, with `exe` as it was, if anything goes wrong: a folder Splice can't write to,
  * no download, a checksum that doesn't match.
  */
 export async function installUpdate(
@@ -146,7 +146,7 @@ export async function installUpdate(
     if (got !== want) throw new Error(`the download of ${name} doesn't match its checksum`);
     if (platform !== 'win32') {
       await chmod(file, 0o755);
-      // Replaces it in one step; a Tiller still running keeps the copy it started from.
+      // Replaces it in one step; a Splice still running keeps the copy it started from.
       await rename(file, exe);
     } else {
       const aside = `${exe}.old.${Date.now()}`;
@@ -167,7 +167,7 @@ export async function installUpdate(
 /**
  * Deletes what earlier updates left next to `exe`: old executables moved aside (one still running stays
  * until a later start) and download folders of updates that were interrupted (an hour old, so a
- * download in another Tiller window right now isn't touched).
+ * download in another Splice window right now isn't touched).
  */
 export async function removeOldExecutables(exe = process.execPath, { now = Date.now() } = {}) {
   const dir = dirname(exe);

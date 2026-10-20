@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-Tiller is a keyboard-driven git client for the terminal, built with Ink (React for the terminal) on Node 22+. Plain JavaScript ES modules with `.jsx` for components; no TypeScript, no linter config.
+Splice is a keyboard-driven git client for the terminal, built with Ink (React for the terminal) on Node 22+. Plain JavaScript ES modules with `.jsx` for components; no TypeScript, no linter config.
 
 ## Commands
 
@@ -11,17 +11,17 @@ npm test                                                       # whole suite (no
 node --import ./src/register.js --test test/parse.test.js      # one file
 node --import ./src/register.js --test --test-name-pattern="rebase" test/*.test.js   # tests matching a name
 npm start                                                      # run from the checkout (needs a real TTY)
-node bin/tiller.js C:\some\repo                                # open a specific repo
+node bin/splice.js C:\some\repo                                # open a specific repo
 npm run build                                                  # Bun-compiled executable for this machine → dist/
 npm run build:all                                              # every release target
 node scripts/logo.js                                           # regenerate assets/ from src/knot.js
 ```
 
-`bin/tiller.js` sets `NODE_ENV=production` only while it imports React and Ink, which picks React's production build (several times faster to render), then removes it so git hooks don't inherit it. The compiled builds define it in the bundle instead. Tests run React's development build.
+`bin/splice.js` sets `NODE_ENV=production` only while it imports React and Ink, which picks React's production build (several times faster to render), then removes it so git hooks don't inherit it. The compiled builds define it in the bundle instead. Tests run React's development build.
 
 `--import ./src/register.js` is required whenever Node loads `.jsx`: it installs a module hook (`src/jsx-hooks.js`) that compiles `.jsx` with esbuild on import. There is no dev build step. CI runs `npm test` on Linux and Windows, so path handling and line endings must work on both (`.gitattributes` forces LF).
 
-Releases are automatic: every push to main (except Markdown-only ones) runs the Release workflow, which publishes the latest release's version with the patch raised, or `package.json`'s version when that's higher (bump it there for minor or major). It sets the version in the runner before building and commits nothing back, so `package.json` on main lags behind the releases. Compiled builds get the version via `process.env.TILLER_VERSION` (defined by `scripts/build.js`), which also sets `COMPILED`; from a checkout `src/version.js` reads `package.json`, and the update check is skipped.
+Releases are automatic: every push to main (except Markdown-only ones) runs the Release workflow, which publishes the latest release's version with the patch raised, or `package.json`'s version when that's higher (bump it there for minor or major). It sets the version in the runner before building and commits nothing back, so `package.json` on main lags behind the releases. Compiled builds get the version via `process.env.SPLICE_VERSION` (defined by `scripts/build.js`), which also sets `COMPILED`; from a checkout `src/version.js` reads `package.json`, and the update check is skipped.
 
 ## Architecture
 
@@ -37,18 +37,18 @@ The layering, bottom to top:
 
 Cross-cutting pieces:
 
-- **Pull requests** (`src/hosting.js`): `hostFor(data)` picks GitHub (via `gh`) or Azure DevOps (via `az` + `azure-devops` extension) from the remote URL. Tiller never handles tokens; it shells out to those CLIs. Server JSON is normalised into one PR shape (`githubPr`, `azurePr`). Azure PR diffs are computed locally after fetching both branches. The PR list is fetched once for the PRs and Branches views (`usePrList` in `src/ui/hooks.js`). `App` takes a `makeHost` prop (default `hostFor`) so tests can stub the host.
-- **Interactive rebase** (`src/rebase.js`): no editor. Tiller writes the todo itself under `.git/tiller-rebase/` and passes it through `GIT_SEQUENCE_EDITOR`; reword becomes `pick` + `exec git commit --amend -F <file>`.
-- **Undo** (`src/undo.js`, `z` / `/undo`): reflog-based for anything that moves HEAD or the branch. Discards can't be read back from the reflog, so every action that throws work away keeps a copy first (`captureDiscard` / `saveDiscard`, under `.git/tiller-undo/`); a new destructive action must do the same.
+- **Pull requests** (`src/hosting.js`): `hostFor(data)` picks GitHub (via `gh`) or Azure DevOps (via `az` + `azure-devops` extension) from the remote URL. Splice never handles tokens; it shells out to those CLIs. Server JSON is normalised into one PR shape (`githubPr`, `azurePr`). Azure PR diffs are computed locally after fetching both branches. The PR list is fetched once for the PRs and Branches views (`usePrList` in `src/ui/hooks.js`). `App` takes a `makeHost` prop (default `hostFor`) so tests can stub the host.
+- **Interactive rebase** (`src/rebase.js`): no editor. Splice writes the todo itself under `.git/splice-rebase/` and passes it through `GIT_SEQUENCE_EDITOR`; reword becomes `pick` + `exec git commit --amend -F <file>`.
+- **Undo** (`src/undo.js`, `z` / `/undo`): reflog-based for anything that moves HEAD or the branch. Discards can't be read back from the reflog, so every action that throws work away keeps a copy first (`captureDiscard` / `saveDiscard`, under `.git/splice-undo/`); a new destructive action must do the same.
 - **Claude** (`src/claude.js`, actions `describeCommit`, `draftPr`, `claudeLook`, `claudeRef`, `claudeResolve`): runs `claude -p` with the user's sign-in, the input (a diff) on stdin. The flags skip MCP servers, settings files and skills, which cuts a call from ~15 s to ~7 s. Writing messages gets no tools; explaining, reviewing and resolving conflicts get read-only `Read`, `Grep`, `Glob`. `cli.jsx` passes `ask` to `App` as `askClaude`, exposed as `ctx.askClaude`; tests pass a stub, so they never call the real CLI. Prompts and answer parsing are pure functions in `claude.js`.
 - **Updates** (`src/update.js`): once a day, GitHub's public releases API, then `gh api` as a fallback (the repo is private). A newer release is then installed in the background (`installUpdate`: download next to the executable, check `SHA256SUMS.txt`, swap by renaming; on Windows the running exe is renamed aside and `removeOldExecutables` deletes it on a later start). Release file names must match `TARGETS` in `scripts/build.js`. `cli.jsx` passes both to `App` as the `checkUpdate` and `installUpdate` props, only in compiled builds; tests leave them out or pass stubs, so they never go online or replace anything. The last answer is saved in the config through `App`'s `setConfig`. Don't write the config file from anywhere else: `App` saves its whole copy and would overwrite it.
-- **Config** (`src/config.js`): `~/.tiller/config.json`, overridable with `TILLER_HOME` (tests use this). Compare paths with `samePath` (case-insensitive on Windows).
+- **Config** (`src/config.js`): `~/.splice/config.json`, overridable with `SPLICE_HOME` (tests use this). Compare paths with `samePath` (case-insensitive on Windows).
 - **Theme** (`src/theme.js`): single palette; `accent` is user-configurable. Use `BULLET` instead of `⏺` directly (Windows renders it as a wide emoji). Use `src/text.js` (`fit`, `wrap`, `stringWidth`) for width-aware truncation, never `.length`.
 - **Knot** (`src/knot.js`, `src/ui/Knot.jsx`): the otter mascot's pixel art and mood-from-repo-state logic. `assets/` is generated from it by `scripts/logo.js`; don't hand-edit those files.
 
 ## Tests
 
-`test/app.test.js` is end-to-end: it builds a throwaway repo in a temp dir, renders `<App>` with `ink-testing-library`, types keys into stdin and asserts on both `lastFrame()` and the real git state. Use its `until(check, what)` helper to wait for frames rather than fixed sleeps. Each feature with UI has its own end-to-end file built the same way (`undo`, `history`, `fixup`, `branches`, `conflicts`, `stash`, `cleanup`); copy the helpers rather than importing them. Other test files are plain unit tests of the pure modules. Tests that make repositories import `test/temp.js` before anything from `src/`: it turns off git's background gc and maintenance (through the environment), which otherwise keep temp folders busy on Windows, and its `removeTemp` is the teardown. Give a test's own polling `git status` `GIT_OPTIONAL_LOCKS=0` so it never takes `index.lock` from under Tiller, and let an `until` check that runs git treat an error as "not yet": a ref being replaced mid-rebase can briefly read as broken on Windows.
+`test/app.test.js` is end-to-end: it builds a throwaway repo in a temp dir, renders `<App>` with `ink-testing-library`, types keys into stdin and asserts on both `lastFrame()` and the real git state. Use its `until(check, what)` helper to wait for frames rather than fixed sleeps. Each feature with UI has its own end-to-end file built the same way (`undo`, `history`, `fixup`, `branches`, `conflicts`, `stash`, `cleanup`); copy the helpers rather than importing them. Other test files are plain unit tests of the pure modules. Tests that make repositories import `test/temp.js` before anything from `src/`: it turns off git's background gc and maintenance (through the environment), which otherwise keep temp folders busy on Windows, and its `removeTemp` is the teardown. Give a test's own polling `git status` `GIT_OPTIONAL_LOCKS=0` so it never takes `index.lock` from under Splice, and let an `until` check that runs git treat an error as "not yet": a ref being replaced mid-rebase can briefly read as broken on Windows.
 
 ## Keeping things in sync
 

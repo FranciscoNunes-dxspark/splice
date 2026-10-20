@@ -1,4 +1,4 @@
-// Claude through the Claude Code CLI (`claude -p`), signed in as you already are, so Tiller never
+// Claude through the Claude Code CLI (`claude -p`), signed in as you already are, so Splice never
 // sees a key. The prompts and the parsing of answers are pure, for tests; `ask` runs the CLI.
 import { hasMarkers } from './conflict.js';
 import { cli } from './hosting.js';
@@ -30,8 +30,8 @@ export function clip(text, max = MAX_INPUT) {
   return `${text.slice(0, max)}\n\n[Cut here: the rest (${(text.length - max).toLocaleString('en')} more characters) was left out.]`;
 }
 
-// Tiller formats Markdown (src/markdown.js), but in a pane often 60 to 100 columns wide.
-const FORMAT = 'Tiller shows your answer in a terminal and formats Markdown: headings, bold, "-" lists, `code` and code blocks are fine. Keep it compact and avoid wide tables.';
+// Splice formats Markdown (src/markdown.js), but in a pane often 60 to 100 columns wide.
+const FORMAT = 'Splice shows your answer in a terminal and formats Markdown: headings, bold, "-" lists, `code` and code blocks are fine. Keep it compact and avoid wide tables.';
 
 export function commitPrompt(recentSubjects) {
   return [

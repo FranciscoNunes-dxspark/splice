@@ -4,7 +4,7 @@ import { rm } from 'node:fs/promises';
 
 // Git's automatic housekeeping (gc, maintenance) can start in the background after a commit and keep a
 // throwaway repository's folder busy on Windows long after its test is done. These repositories don't need it.
-// Set through the environment, so it reaches both the tests' own git and the git Tiller runs, and never
+// Set through the environment, so it reaches both the tests' own git and the git Splice runs, and never
 // touches anyone's real git config.
 const settings = { 'gc.auto': '0', 'maintenance.auto': 'false' };
 let n = Number(process.env.GIT_CONFIG_COUNT) || 0;

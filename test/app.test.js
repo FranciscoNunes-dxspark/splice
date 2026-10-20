@@ -17,10 +17,10 @@ let dir;
 const git = (...args) => execFileSync('git', args, { cwd: dir, encoding: 'utf8' }).trim();
 
 before(() => {
-  base = mkdtempSync(join(tmpdir(), 'tiller-'));
+  base = mkdtempSync(join(tmpdir(), 'splice-'));
   dir = join(base, 'repo');
   mkdirSync(dir);
-  process.env.TILLER_HOME = join(base, 'home');
+  process.env.SPLICE_HOME = join(base, 'home');
   git('init', '-q', '-b', 'main');
   git('config', 'core.autocrlf', 'false');
   git('config', 'user.name', 'Test');
@@ -175,7 +175,7 @@ test('interactive rebase from the graph: fix up the last commit into the one bef
   }
 });
 
-test('the window title names the repo and branch, and follows a switch made outside Tiller', async () => {
+test('the window title names the repo and branch, and follows a switch made outside Splice', async () => {
   const other = join(base, 'titled');
   mkdirSync(other);
   const g = (...args) => execFileSync('git', args, { cwd: other, encoding: 'utf8' }).trim();
@@ -187,9 +187,9 @@ test('the window title names the repo and branch, and follows a switch made outs
   lastApp = render(React.createElement(App, { initialPath: other, config: { recent: [], roots: [], history: [] }, setTitle: (t) => titles.push(t) }));
   const app = lastApp;
   try {
-    await until(() => titles.at(-1) === 'titled (main) — Tiller', 'the title for main');
+    await until(() => titles.at(-1) === 'titled (main) — Splice', 'the title for main');
     g('switch', '-q', '-c', 'topic');
-    await until(() => titles.at(-1) === 'titled (topic) — Tiller', 'the title for topic');
+    await until(() => titles.at(-1) === 'titled (topic) — Splice', 'the title for topic');
   } finally {
     app.unmount();
   }
@@ -216,7 +216,7 @@ test('discarding asks first, and "No" leaves the file alone', async () => {
 test('/discard throws away every change, keeping untracked files if asked', async () => {
   const other = join(base, 'discard-repo');
   mkdirSync(other);
-  // The status checks polled below mustn't take the index lock from under Tiller's own git.
+  // The status checks polled below mustn't take the index lock from under Splice's own git.
   const env = { ...process.env, GIT_OPTIONAL_LOCKS: '0' };
   const g = (...args) => execFileSync('git', args, { cwd: other, encoding: 'utf8', env }).trim();
   g('init', '-q', '-b', 'main');
@@ -271,7 +271,7 @@ test('worktrees: listed, opened, pruned when missing, and removed after asking',
   g(main, 'worktree', 'add', '-q', '--detach', '../wt-repo-temp');
   rmSync(join(base, 'wt-repo-gone'), { recursive: true, force: true });
   const listed = () => g(main, 'worktree', 'list');
-  // On Windows, reading the list while Tiller is deleting a worktree's files can fail; that's "not yet".
+  // On Windows, reading the list while Splice is deleting a worktree's files can fail; that's "not yet".
   const gone = (name) => {
     try {
       return !listed().includes(name);

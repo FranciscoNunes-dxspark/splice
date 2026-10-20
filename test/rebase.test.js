@@ -66,7 +66,7 @@ let dir;
 const git = (...args) => execFileSync('git', args, { cwd: dir, encoding: 'utf8' }).trim();
 
 before(() => {
-  dir = mkdtempSync(join(tmpdir(), 'tiller rebase '));
+  dir = mkdtempSync(join(tmpdir(), 'splice rebase '));
   git('init', '-q', '-b', 'main');
   git('config', 'core.autocrlf', 'false');
   git('config', 'user.name', 'T');
@@ -98,5 +98,5 @@ test('a real rebase: drop, squash, reword and reorder in one go, in a path with 
   assert.doesNotMatch(squashed, /^#/m);
   assert.equal(existsSync(join(dir, 'four.txt')), false);
   assert.equal(existsSync(join(dir, 'three.txt')), true);
-  assert.equal(existsSync(join(gitDir, 'tiller-rebase')), false);
+  assert.equal(existsSync(join(gitDir, 'splice-rebase')), false);
 });

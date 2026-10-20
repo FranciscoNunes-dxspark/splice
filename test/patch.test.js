@@ -64,7 +64,7 @@ const git = (...args) => execFileSync('git', args, { cwd: dir, encoding: 'utf8' 
 const lines = (n, edit = {}) => Array.from({ length: n }, (_, i) => edit[i + 1] ?? `line ${i + 1}`).join('\n') + '\n';
 
 before(() => {
-  dir = mkdtempSync(join(tmpdir(), 'tiller-patch-'));
+  dir = mkdtempSync(join(tmpdir(), 'splice-patch-'));
   git('init', '-q', '-b', 'main');
   git('config', 'core.autocrlf', 'false');
   git('config', 'user.name', 'T');

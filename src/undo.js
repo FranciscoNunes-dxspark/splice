@@ -1,6 +1,6 @@
 // Undo (z): what the last change to HEAD or the current branch was, worked out from the reflog, and
-// how to take it back. Discards never reach the reflog, so before Tiller throws changes away it
-// keeps them under .git/tiller-undo/: patches of the tracked changes and a tree of untracked files.
+// how to take it back. Discards never reach the reflog, so before Splice throws changes away it
+// keeps them under .git/splice-undo/: patches of the tracked changes and a tree of untracked files.
 // The parsing and planning are pure; the rest reads and writes those files.
 import { existsSync } from 'node:fs';
 import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
@@ -96,7 +96,7 @@ function lastChange({ head, branch, branchName, oid }) {
 /**
  * What `z` would do. `head` is HEAD's reflog (newest first, enough of it to reach back past a detached
  * rebase), `branch` the current branch's last two entries, `oid` where HEAD is now, and `discard` the
- * newest discard Tiller kept. The newer of that discard and the last reflog change wins.
+ * newest discard Splice kept. The newer of that discard and the last reflog change wins.
  */
 export function planUndo({ head = [], branch = null, branchName = null, oid = null, discard = null }) {
   const change = lastChange({ head, branch, branchName, oid });
@@ -160,9 +160,9 @@ export function describeUndo(plan, { pushed = null, now = Date.now() / 1000 } = 
 /** What a reset made by undo writes in the reflog, so the next z can say it's a redo (and the one after, an undo). */
 export const reflogActionFor = (plan) => (plan.entry?.kind === 'undo' ? 'redo' : 'undo');
 
-// The kept discards: .git/tiller-undo/discards.json (newest last) and the patch files it names.
+// The kept discards: .git/splice-undo/discards.json (newest last) and the patch files it names.
 const KEEP = 10;
-const dirOf = (gitDir) => join(gitDir, 'tiller-undo');
+const dirOf = (gitDir) => join(gitDir, 'splice-undo');
 const listFile = (gitDir) => join(dirOf(gitDir), 'discards.json');
 
 export async function readDiscards(gitDir) {

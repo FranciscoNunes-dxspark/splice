@@ -1,4 +1,4 @@
-// Knot, Tiller's otter. One pixel drawing feeds the terminal pet, the SVG logo and the app icon.
+// Knot, Splice's otter. One pixel drawing feeds the terminal pet, the SVG logo and the app icon.
 // Otters hold hands while they sleep so they don't drift apart, which is roughly what a merge does.
 
 export const PALETTE = {

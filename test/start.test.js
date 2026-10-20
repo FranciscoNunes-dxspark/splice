@@ -1,4 +1,4 @@
-// Where Tiller opens when started outside a repository.
+// Where Splice opens when started outside a repository.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
@@ -16,8 +16,8 @@ let elsewhere;
 let lastApp = null;
 
 before(() => {
-  base = mkdtempSync(join(tmpdir(), 'tiller-start-'));
-  process.env.TILLER_HOME = join(base, 'home');
+  base = mkdtempSync(join(tmpdir(), 'splice-start-'));
+  process.env.SPLICE_HOME = join(base, 'home');
   repo = join(base, 'last-one');
   elsewhere = join(base, 'not-a-repo');
   mkdirSync(repo);

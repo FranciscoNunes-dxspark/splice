@@ -55,7 +55,7 @@ const showArg = (s) => (/[\s"]/.test(s) || s === '' ? JSON.stringify(s) : s);
 function Header({ data, width, loading, mood }) {
   const segs = [
     { text: `${FACES[mood]} `, color: theme.accent, bold: true },
-    { text: 'Tiller', bold: true },
+    { text: 'Splice', bold: true },
   ];
   if (data) {
     const b = data.status.branch;
@@ -77,11 +77,11 @@ function Header({ data, width, loading, mood }) {
   return <Row pointer={false} width={width} segments={[...fitSegments(segs, width - pathW - 1), { text: ' ' }, { text: path, color: theme.dim }]} />;
 }
 
-/** The terminal window's title: the repo and branch, which is what tells one Tiller tab from another. */
+/** The terminal window's title: the repo and branch, which is what tells one Splice tab from another. */
 export function windowTitle(data) {
-  if (!data) return 'Tiller';
+  if (!data) return 'Splice';
   const b = data.status.branch;
-  return `${data.name} (${b.head ?? `detached at ${(b.oid ?? '').slice(0, 7)}`}) — Tiller`;
+  return `${data.name} (${b.head ?? `detached at ${(b.oid ?? '').slice(0, 7)}`}) — Splice`;
 }
 
 function Tabs({ view, data, width }) {
@@ -440,7 +440,7 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
     }
   };
 
-  // First load: the given folder if it's a repo. Otherwise, when Tiller was started without a path, the
+  // First load: the given folder if it's a repo. Otherwise, when Splice was started without a path, the
   // repository open last time (the most recent one still there); failing that, the repo picker scanning that folder.
   useEffect(() => {
     (async () => {
@@ -470,7 +470,7 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
           ({ checked, newer }) => {
             setConfig((c) => ({ ...c, lastUpdateCheck: checked }));
             if (!newer) return;
-            const outNote = (why = '') => note(`Tiller ${checked.latest} is out (you have ${VERSION})${why}.\nDownload it from ${checked.url}`);
+            const outNote = (why = '') => note(`Splice ${checked.latest} is out (you have ${VERSION})${why}.\nDownload it from ${checked.url}`);
             if (!installUpdate || configRef.current.autoUpdate === false) {
               setUpdate({ ...checked, state: 'out' });
               return outNote();
@@ -480,7 +480,7 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
             installUpdate(checked.latest).then(
               () => {
                 setUpdate({ ...checked, state: 'installed' });
-                note(`Tiller ${checked.latest} is installed. It starts the next time you open Tiller.`);
+                note(`Splice ${checked.latest} is installed. It starts the next time you open Splice.`);
               },
               (e) => {
                 setUpdate({ ...checked, state: 'out' });
@@ -523,7 +523,7 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
     setTitle?.(title);
   }, [title]);
 
-  // Notice changes made outside Tiller (an editor saving, a commit from another terminal).
+  // Notice changes made outside Splice (an editor saving, a commit from another terminal).
   useEffect(() => {
     const t = setInterval(async () => {
       const repo = repoRef.current;

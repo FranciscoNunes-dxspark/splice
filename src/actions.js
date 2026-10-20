@@ -565,7 +565,7 @@ async function settleCopy(ctx, copy, r) {
 
 export async function discard(ctx, f) {
   const untracked = f.kind === 'untracked';
-  // A folder listed as one untracked entry is a repository of its own, which Tiller doesn't copy.
+  // A folder listed as one untracked entry is a repository of its own, which Splice doesn't copy.
   const folder = untracked && f.path.endsWith('/');
   const ok = await ctx.confirm({
     title: `Discard ${f.area === 'staged' ? 'all changes' : 'unstaged changes'} to ${f.path}?`,
