@@ -4,6 +4,7 @@ export const HELP = `Anywhere
   !                Run any git command, e.g.  !log --stat -5
   f  p  P          Fetch all · Pull · Push (sets the upstream the first time)
   r                Refresh
+  z                Undo the last commit, amend, merge, rebase, reset, switch or discard (asks first)
   esc              Cancel the running command, or clear the activity lines
   ?                This help
   q / ctrl+c       Quit
@@ -72,6 +73,10 @@ PRs (GitHub through gh, Azure DevOps through az: your existing sign-in)
 Claude (through the Claude Code CLI, signed in as you already are; answers take several seconds, esc cancels)
   /describe   /draft-pr [--into <branch>]   /explain [ref]   /review [ref]
 
+Reflog (/reflog: everywhere HEAD has been, newest first)
+  ↵                Full diff of the commit         c           Check it out
+  X                Reset the current branch to it (soft, mixed or hard)
+
 Repos
   ↵                Open            x           Forget (remove from recent)
   s                Add a folder to scan for repositories
@@ -85,6 +90,7 @@ Slash commands
   /commit <msg>   /amend [msg]   /checkout <ref>   /branch <name> [start]
   /delete <ref>   /merge <ref>   /rebase <ref>     /reset <ref>   /tag <name> [ref]
   /fetch   /pull [--rebase]   /push [--force]   /stash [msg]   /pop   /discard
+  /undo   /reflog
   /continue   /abort   /find <text>   /open <path>   /scan <folder>   /last   /quit
   /pr <title> [--into <branch>] [--draft]   /comment <text>   /approve
   /rebase -i <ref>   /reword <message>   /worktree <path> [ref]

@@ -3,6 +3,7 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import React from 'react';
@@ -37,7 +38,8 @@ before(() => {
   writeFileSync(join(dir, 'new.txt'), 'brand new\n');
 });
 
-after(() => rmSync(base, { recursive: true, force: true }));
+// On Windows a git still finishing for an unmounted app keeps the folder busy for a moment.
+after(() => rm(base, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 }));
 
 let lastApp = null;
 
@@ -194,7 +196,9 @@ test('discarding asks first, and "No" leaves the file alone', async () => {
 test('/discard throws away every change, keeping untracked files if asked', async () => {
   const other = join(base, 'discard-repo');
   mkdirSync(other);
-  const g = (...args) => execFileSync('git', args, { cwd: other, encoding: 'utf8' }).trim();
+  // The status checks polled below mustn't take the index lock from under Tiller's own git.
+  const env = { ...process.env, GIT_OPTIONAL_LOCKS: '0' };
+  const g = (...args) => execFileSync('git', args, { cwd: other, encoding: 'utf8', env }).trim();
   g('init', '-q', '-b', 'main');
   g('config', 'core.autocrlf', 'false');
   g('config', 'user.name', 'T');

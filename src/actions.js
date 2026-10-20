@@ -3,9 +3,26 @@
 import { rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { READ_ONLY, cleanSubject, clip, commitPrompt, lookPrompt, parsePrDraft, prPrompt } from './claude.js';
-import { splitArgs } from './parse.js';
+import { relTime, splitArgs } from './parse.js';
 import { buildPatch, coversAll, parseDiff } from './patch.js';
 import { cleanup, loadPlan, planProblem, planSummary, prepare } from './rebase.js';
+import { theme } from './theme.js';
+import { fit } from './text.js';
+import {
+  REFLOG_FORMAT,
+  captureDiscard,
+  describeUndo,
+  dropDiscard,
+  forgetCapture,
+  parseReflog,
+  planUndo,
+  readDiscards,
+  reflogActionFor,
+  reflogLabel,
+  restoreSteps,
+  saveDiscard,
+  untrackedInTheWay,
+} from './undo.js';
 
 const short = (hash) => hash.slice(0, 7);
 const YES_NO = (yes) => [
@@ -339,22 +356,59 @@ export function unstageAll(ctx) {
   return ctx.exec(isInitial(ctx) ? ['rm', '--cached', '-r', '-q', '.'] : ['reset', '-q'], { quiet: true });
 }
 
+/**
+ * Keeps a copy of what a discard is about to throw away, for z (see undo.js). Resolves with the copy,
+ * null to discard without one (asked first, when keeping it failed), or false to stop.
+ */
+async function keepForUndo(ctx, opts) {
+  try {
+    return await captureDiscard(ctx.data.root, ctx.data.gitDir, opts);
+  } catch (e) {
+    const ok = await ctx.confirm({
+      title: "Couldn't keep a copy to undo with. Discard anyway?",
+      detail: `Without one this can't be undone. (${e.message.split('\n')[0]})`,
+      options: YES_NO('Yes, discard for good'),
+      danger: true,
+    });
+    return ok ? null : false;
+  }
+}
+
+/**
+ * Records the copy once the discard went through (`r` ok or absent), or throws it away if it didn't.
+ * The discard's own commands run with `refresh: false`: this reloads after recording, so z can't come too soon.
+ */
+async function settleCopy(ctx, copy, r) {
+  if (copy && r && !r.ok) await forgetCapture(ctx.data.gitDir, copy);
+  else if (copy) await saveDiscard(ctx.data.gitDir, copy);
+  await ctx.reload();
+  return r;
+}
+
 export async function discard(ctx, f) {
   const untracked = f.kind === 'untracked';
+  // A folder listed as one untracked entry is a repository of its own, which Tiller doesn't copy.
+  const folder = untracked && f.path.endsWith('/');
   const ok = await ctx.confirm({
     title: `Discard ${f.area === 'staged' ? 'all changes' : 'unstaged changes'} to ${f.path}?`,
-    detail: untracked ? 'The file is untracked, so it will be deleted.' : "This can't be undone.",
+    detail: folder ? "It's untracked, so it will be deleted. This can't be undone." : untracked ? 'The file is untracked, so it will be deleted. z brings it back.' : 'z brings them back.',
     options: YES_NO('Yes, discard'),
     danger: true,
   });
   if (!ok) return;
+  const copy = folder
+    ? null
+    : await keepForUndo(ctx, untracked
+      ? { what: `the deleted file ${f.path}`, untracked: [f.path] }
+      : { what: `the ${f.area === 'staged' ? '' : 'unstaged '}changes to ${f.path}`, paths: paths(f).slice(1), staged: f.area === 'staged' });
+  if (copy === false) return;
   if (untracked) {
     await rm(join(ctx.data.root, f.path), { force: true, recursive: true });
     ctx.note(`Deleted ${f.path}`);
-    return ctx.reload();
+    return settleCopy(ctx, copy);
   }
-  if (f.area === 'staged') return ctx.exec(['restore', '--staged', '--worktree', ...paths(f)], { label: 'Discarding' });
-  return ctx.exec(['restore', ...paths(f)], { label: 'Discarding' });
+  const args = f.area === 'staged' ? ['restore', '--staged', '--worktree', ...paths(f)] : ['restore', ...paths(f)];
+  return settleCopy(ctx, copy, await ctx.exec(args, { label: 'Discarding', refresh: false }));
 }
 
 /** Puts every file back the way the last commit has it, staged or not. Ignored files stay. */
@@ -368,7 +422,7 @@ export async function discardAll(ctx) {
   const tracked = files.length - untracked;
   const choice = await ctx.confirm({
     title: `Discard all changes to ${files.length} ${files.length === 1 ? 'file' : 'files'}?`,
-    detail: `${untracked ? 'Untracked files are deleted. ' : ''}This can't be undone; /stash keeps the changes instead.`,
+    detail: `${untracked ? 'Untracked files are deleted. ' : ''}z brings it all back, untracked files included.`,
     options: [
       { label: 'Yes, discard everything', value: 'all' },
       ...(untracked && tracked ? [{ label: 'Discard, but keep the untracked files', value: 'tracked' }] : []),
@@ -377,14 +431,27 @@ export async function discardAll(ctx) {
     danger: true,
   });
   if (!choice) return;
+  const gone = choice === 'all' ? files.length : tracked;
+  const copy = await keepForUndo(ctx, {
+    what: `the changes to ${gone} ${gone === 1 ? 'file' : 'files'}`,
+    staged: true,
+    untracked: choice === 'all' ? files.filter((f) => f.kind === 'untracked').map((f) => f.path) : [],
+  });
+  if (copy === false) return;
   const steps = [];
   // Before the first commit there is no HEAD to reset to: remove what's staged, files included.
   if (tracked) steps.push(isInitial(ctx) ? ['rm', '-r', '-f', '-q', '.'] : ['reset', '--hard', '-q']);
   if (untracked && choice === 'all') steps.push(['clean', '-f', '-d', '-q']);
+  let r;
   for (const [i, args] of steps.entries()) {
-    const r = await ctx.exec(args, { label: 'Discarding', refresh: i === steps.length - 1 });
-    if (!r.ok) return r;
+    r = await ctx.exec(args, { label: 'Discarding', refresh: false });
+    // A failed first step discarded nothing; after that, what's gone is worth keeping.
+    if (!r.ok) {
+      await settleCopy(ctx, copy, i === 0 ? r : undefined);
+      return r;
+    }
   }
+  return settleCopy(ctx, copy, r);
 }
 
 /** Takes one side of a conflicted file and marks it resolved. */
@@ -393,8 +460,8 @@ export async function resolveWith(ctx, f, side) {
   if (r.ok) return ctx.exec(['add', '--', f.path], { quiet: true });
 }
 
-const apply = (ctx, patch, flags, label) =>
-  ctx.exec(['apply', ...flags, '--recount', '--whitespace=nowarn', '-'], { input: patch, quiet: true, label });
+const apply = (ctx, patch, flags, label, opts) =>
+  ctx.exec(['apply', ...flags, '--recount', '--whitespace=nowarn', '-'], { input: patch, quiet: true, label, ...opts });
 
 /**
  * Stages (or, for a staged file, unstages) just the picked lines of `diffText`.
@@ -408,12 +475,16 @@ export async function applyLines(ctx, f, diffText, picks, { discard = false } = 
     if (f.kind === 'untracked') return ctx.note('This is a new file: discard the whole file from the list instead (d).', 'error');
     const ok = await ctx.confirm({
       title: `Discard the selected ${all ? 'changes' : 'lines'} in ${f.path}?`,
-      detail: "This can't be undone.",
+      detail: 'z brings them back.',
       options: [{ label: 'Yes, discard', value: true }, { label: 'No', value: false }],
       danger: true,
     });
-    if (ok) return apply(ctx, buildPatch(diff, picks, { reverse: true }), ['--reverse'], 'Discarding');
-    return;
+    if (!ok) return;
+    const patch = buildPatch(diff, picks, { reverse: true });
+    // Applied forwards, the same patch puts back what applying it in reverse takes out.
+    const copy = await keepForUndo(ctx, { what: `the discarded ${all ? 'changes' : 'lines'} in ${f.path}`, patch });
+    if (copy === false) return;
+    return settleCopy(ctx, copy, await apply(ctx, patch, ['--reverse'], 'Discarding', { refresh: false }));
   }
   // When every line is picked, the plain file commands also cover what a patch can't (modes, binaries).
   if (f.area === 'staged') return all ? unstage(ctx, f) : apply(ctx, buildPatch(diff, picks, { reverse: true }), ['--cached', '--reverse'], 'Unstaging');
@@ -703,4 +774,95 @@ export async function raw(ctx, text) {
   if (!args.length) return ctx.note('Type a git command after !, for example: !log --stat -3', 'error');
   const r = await ctx.exec(args, { label: `git ${args[0]}`, anywhere: true });
   if (r.ok && r.out.split('\n').length > 3) ctx.showText(`git ${text.replace(/^git\s+/, '')}`, r.out, { diff: /^(@@|diff --git)/m.test(r.out) });
+}
+
+const readReflog = async (ctx, ref, n) =>
+  parseReflog(await ctx.git(['log', '-g', `-n${n}`, '--date=unix', `--format=${REFLOG_FORMAT}`, ref, '--']).catch(() => ''));
+
+const isAncestor = (ctx, a, b) => ctx.git(['merge-base', '--is-ancestor', a, b]).then(() => true, () => false);
+
+/**
+ * z and /undo: takes back the last thing that moved HEAD or the current branch (from the reflog),
+ * or the last discard, whichever came later. Always asks first, saying what will happen.
+ */
+export async function undo(ctx) {
+  if (!needRepo(ctx)) return;
+  const { state, gitDir, root } = ctx.data;
+  const { branch } = ctx.data.status;
+  if (state) return ctx.note(`A ${OP[state]} is in progress: /abort puts things back the way they were before it.`, 'error');
+  const [head, own, discards] = await Promise.all([
+    readReflog(ctx, 'HEAD', 100),
+    branch.head ? readReflog(ctx, `refs/heads/${branch.head}`, 2) : null,
+    readDiscards(gitDir),
+  ]);
+  const plan = planUndo({ head, branch: own, branchName: branch.head, oid: branch.oid, discard: discards.at(-1) });
+  if (plan.kind === 'none') return ctx.note(`Nothing to undo: ${plan.why}`, 'error');
+  // Something that leaves the branch is already pushed when the branch and its upstream meet past the target.
+  let pushed = null;
+  if (plan.kind === 'reset' && plan.branch && branch.upstream) {
+    const base = (await ctx.git(['merge-base', 'HEAD', '@{upstream}']).catch(() => '')).trim();
+    if (base && !(await isAncestor(ctx, base, plan.target))) pushed = branch.upstream;
+  }
+  const { title, detail, yes } = describeUndo(plan, { pushed });
+  if (!(await ctx.confirm({ title, detail, options: YES_NO(yes), danger: !!pushed }))) return;
+  if (plan.kind === 'switch') return checkout(ctx, plan.from);
+  // Deleting the branch's ref leaves the index alone, so the first commit's files stay staged.
+  if (plan.kind === 'unborn') return ctx.exec(['update-ref', '-d', `refs/heads/${plan.branch}`, plan.entry.hash], { label: 'Undoing' });
+  if (plan.kind === 'reset') {
+    // --keep refuses rather than overwrite uncommitted changes; the reflog notes it as an undo, so z can redo it.
+    return ctx.exec(['reset', `--${plan.mode}`, plan.target], { label: 'Undoing', env: { GIT_REFLOG_ACTION: reflogActionFor(plan) } });
+  }
+  return restoreDiscard(ctx, root, gitDir, plan.discard);
+}
+
+async function restoreDiscard(ctx, root, gitDir, d) {
+  const back = await untrackedInTheWay(root, d).catch(() => []);
+  if (back.length) {
+    const names = `${back.slice(0, 3).join(', ')}${back.length > 3 ? ` and ${back.length - 3} more` : ''}`;
+    return ctx.note(`Can't bring the files back: ${names} exist${back.length === 1 ? 's' : ''} again. Move them aside first.`, 'error');
+  }
+  const steps = restoreSteps(gitDir, d);
+  let r;
+  for (const s of steps) {
+    r = await ctx.exec(s.args, { label: 'Bringing back', env: s.env, refresh: false });
+    if (!r.ok) break;
+  }
+  for (const s of steps) if (s.env) await rm(s.env.GIT_INDEX_FILE, { force: true });
+  // On failure the copy stays, so z can try again once whatever was in the way is gone.
+  if (r.ok) await dropDiscard(gitDir, d.id);
+  await ctx.reload();
+  return r;
+}
+
+/** /reflog: everywhere HEAD has been, in a picker. ↵ shows the commit, X resets the branch to it, c checks it out. */
+export function showReflog(ctx) {
+  if (!needRepo(ctx)) return;
+  const done = (r) => r?.ok && ctx.closeOverlay();
+  ctx.showPicker({
+    title: 'Reflog: where HEAD has been',
+    hint: '↵ diff · X reset to it · c check out',
+    empty: "HEAD's reflog is empty.",
+    load: async () => {
+      const now = Date.now() / 1000;
+      return (await readReflog(ctx, 'HEAD', 500)).map((e, i) => ({
+        ...e,
+        selector: `HEAD@{${i}}`,
+        segments: [
+          { text: e.hash.slice(0, 7), color: theme.warn },
+          { text: ` ${fit(relTime(e.time, now), 4, 'right')}`, color: theme.dim },
+          { text: `  ${fit(reflogLabel(e), 14)}`, color: theme.hunk },
+          { text: e.ref ? `${e.ref}: ${e.message}` : e.message, strong: true },
+        ],
+      }));
+    },
+    onPick: (e) => ctx.showPatch({ hash: e.hash, subject: e.subject }),
+    keys: {
+      X: async (e) => done(await reset(ctx, e.hash, `${e.selector} (${short(e.hash)})`)),
+      c: async (e) => {
+        // Like c in the graph: a branch pointing at it rather than a detached HEAD, when there is one.
+        const row = ctx.data.graph.find((g) => g.commit?.hash === e.hash);
+        done(await (row ? checkoutCommit(ctx, row.commit) : checkout(ctx, e.hash)));
+      },
+    },
+  });
 }
