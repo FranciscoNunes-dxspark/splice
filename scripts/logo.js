@@ -183,6 +183,30 @@ function ico(sizes, draw = canvas) {
   return Buffer.concat([header, ...entries, ...images]);
 }
 
+/**
+ * Every size in the .ico files side by side, for the README: each drawn exactly as the .ico holds it,
+ * then scaled up to `cell` px with whole pixels kept, so the small ones show what they really look like.
+ * One row per .ico, on transparency.
+ */
+function iconSheet(rowsOfIcons, cell = 128, gap = 16) {
+  const cols = Math.max(...rowsOfIcons.map((r) => r.length));
+  const width = gap + cols * (cell + gap);
+  const out = Array.from({ length: gap + rowsOfIcons.length * (cell + gap) }, () => new Array(width * 4).fill(0));
+  rowsOfIcons.forEach((icons, r) =>
+    icons.forEach((img, c) => {
+      const n = img.length;
+      for (let y = 0; y < cell; y++) {
+        for (let x = 0; x < cell; x++) {
+          const sx = Math.floor((x * n) / cell);
+          const px = img[Math.floor((y * n) / cell)].slice(sx * 4, sx * 4 + 4);
+          out[gap + r * (cell + gap) + y].splice((gap + c * (cell + gap) + x) * 4, 4, ...px);
+        }
+      }
+    }),
+  );
+  return out;
+}
+
 /** The logo as SVG: on its dark rounded square, or with `background: false` just the pet, cropped. */
 function svg({ background = true } = {}) {
   const cells = background ? SQUARE : CROPPED;
@@ -202,10 +226,13 @@ ${background ? `<rect width="40" height="40" rx="7.2" fill="${BG}"/>\n` : ''}${r
 mkdirSync('assets', { recursive: true });
 writeFileSync('assets/logo.svg', svg());
 writeFileSync('assets/logo.png', png(512));
-writeFileSync('assets/logo.ico', ico([16, 24, 32, 48, 64, 128, 256]));
+const ICON_SIZES = [16, 24, 32, 48, 64, 128, 256];
+writeFileSync('assets/logo.ico', ico(ICON_SIZES));
 // Just the pet on transparency, for light pages, slides and stickers.
+const BARE_SIZES = [16, 32, 48, 64, 128, 256];
 writeFileSync('assets/logo-transparent.svg', svg({ background: false }));
 writeFileSync('assets/logo-transparent.png', png(bare(32)));
 writeFileSync('assets/logo-transparent@4x.png', png(bare(128)));
-writeFileSync('assets/logo-transparent.ico', ico([16, 32, 48, 64, 128, 256], bareSquare));
-console.log('assets/logo.svg, logo.png, logo.ico, logo-transparent.svg, logo-transparent.png, logo-transparent@4x.png, logo-transparent.ico');
+writeFileSync('assets/logo-transparent.ico', ico(BARE_SIZES, bareSquare));
+writeFileSync('assets/logo-icons.png', png(iconSheet([ICON_SIZES.map(canvas), BARE_SIZES.map(bareSquare)])));
+console.log('assets/logo.svg, logo.png, logo.ico, logo-transparent.svg, logo-transparent.png, logo-transparent@4x.png, logo-transparent.ico, logo-icons.png');

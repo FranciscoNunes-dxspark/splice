@@ -158,6 +158,10 @@ Twig is Splice's beaver: the logo, the app icon, and the face in the top-left co
 
 Twig keeps an eye on the repository. They're asleep `(–Π–)` when everything is committed, awake `(•Π•)` when there are changes, waving `(•Π•)/` when you have commits to push, glancing around while git works, pleased `(^Π^)` for a few seconds after something succeeds, and alarmed `(◉Π◉)` on conflicts or an error. When Splice starts (in a terminal at least 28 rows tall), Twig greets you in a welcome box like Claude Code's; esc or your first command puts it away.
 
+The app icon at every size it ships in, drawn by `scripts/logo.js` like the rest: `logo.ico` on top (the executable's icon), `logo-transparent.ico` below.
+
+<p align="center"><img src="assets/logo-icons.png" alt="Twig as an icon at 16, 24, 32, 48, 64, 128 and 256 pixels, on the dark square and on transparency"></p>
+
 ## Settings
 
 `~/.splice/config.json` holds the recent repositories, the folders to scan, and the prompt history. You can also set the accent colour:
@@ -208,4 +212,4 @@ Releases are automatic: every push to main (a merged pull request, say) publishe
 - `src/actions.js`: every git operation, written once; keys and slash commands both call these.
 - `src/commands.js`: the slash command list and the completion logic.
 - `src/ui/`: Ink (React for the terminal) components. `App.jsx` owns the layout, focus, the prompt and the `ctx` handle the actions use.
-- `src/pet.js`: Twig's pixels and moods (and `PET`, the name and species the text uses). `node scripts/logo.js` redraws everything in `assets/` from them; rerun it after changing the drawing. `logo.svg`, `logo.png` and `logo.ico` sit on the dark rounded square; `logo-transparent.svg`, `logo-transparent.png` (512 × 384) and `logo-transparent@4x.png` (2048 × 1536) are just the beaver, cropped (with room for the badge), on transparency, and `logo-transparent.ico` is the beaver centred on a transparent square (16 to 256 px). Each one carries the Git logo as a pixel-art badge in the bottom-right corner, so the icon reads as a git tool at a glance.
+- `src/pet.js`: Twig's pixels and moods (and `PET`, the name and species the text uses). `node scripts/logo.js` redraws everything in `assets/` from them; rerun it after changing the drawing. `logo.svg`, `logo.png` and `logo.ico` sit on the dark rounded square; `logo-transparent.svg`, `logo-transparent.png` (512 × 384) and `logo-transparent@4x.png` (2048 × 1536) are just the beaver, cropped (with room for the badge), on transparency, and `logo-transparent.ico` is the beaver centred on a transparent square (16 to 256 px). `logo-icons.png` shows every size in both `.ico` files, scaled up with whole pixels, for this README. Each one carries the Git logo as a pixel-art badge in the bottom-right corner, so the icon reads as a git tool at a glance.
