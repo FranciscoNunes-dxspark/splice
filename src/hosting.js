@@ -162,6 +162,41 @@ export function azureThreads(value) {
   return out;
 }
 
+// How a pull request can be merged, in the order offered. Azure DevOps' CLI only chooses between squashing or not.
+export const MERGE_METHODS = { github: ['squash', 'merge', 'rebase'], azure: ['squash', 'merge'] };
+export const MERGE_LABELS = { squash: 'Squash and merge', merge: 'Create a merge commit', rebase: 'Rebase and merge' };
+
+/**
+ * Reads "/merge-pr" arguments: a method (squash, merge or rebase), --delete-branch (-d) and --auto.
+ * Leaves out what isn't given (null), so the rest can be asked.
+ */
+export function mergePrArgs(text) {
+  const out = { method: null, deleteBranch: null, auto: null };
+  for (const w of (text ?? '').split(/\s+/).filter(Boolean)) {
+    if (MERGE_LABELS[w.replace(/^--/, '')]) out.method = w.replace(/^--/, '');
+    else if (w === '--delete-branch' || w === '-d') out.deleteBranch = true;
+    else if (w === '--keep-branch') out.deleteBranch = false;
+    else if (w === '--auto') out.auto = true;
+    else return { ...out, error: `Unknown option: ${w}. Use squash, merge or rebase, --delete-branch, --keep-branch, --auto.` };
+  }
+  return out;
+}
+
+/** `gh pr merge` arguments. --auto merges once the required checks and reviews pass. */
+export function githubMergeArgs(pr, repo, { method, deleteBranch, auto }) {
+  return ['pr', 'merge', String(pr.id), '-R', repo, `--${method}`, ...(deleteBranch ? ['--delete-branch'] : []), ...(auto ? ['--auto'] : [])];
+}
+
+/** `az repos pr update` arguments: completed now, or set to complete itself (auto-complete) once its policies pass. */
+export function azureMergeArgs(pr, { method, deleteBranch, auto }) {
+  return [
+    'repos', 'pr', 'update', '--id', String(pr.id),
+    ...(auto ? ['--auto-complete', 'true'] : ['--status', 'completed']),
+    '--squash', method === 'squash' ? 'true' : 'false',
+    '--delete-source-branch', deleteBranch ? 'true' : 'false',
+  ];
+}
+
 /** Your review requests first, then your own PRs, then the rest; newest first within each. */
 export function sortPrs(prs) {
   const rank = (p) => (p.reviewMe ? 0 : p.mine ? 1 : 2);
@@ -267,6 +302,8 @@ function github(root, remote) {
       gh(['api', '-X', 'POST', `repos/${remote.owner}/${remote.repo}/pulls/${pr.id}/comments/${thread.id}/replies`, '-f', `body=${text}`], { signal }),
     checkout: (pr, signal) => gh(['pr', 'checkout', String(pr.id), ...repoArg], { signal }),
     approve: (pr, signal) => gh(['pr', 'review', String(pr.id), ...repoArg, '--approve'], { signal }),
+    mergeMethods: MERGE_METHODS.github,
+    merge: (pr, opts, signal) => gh(githubMergeArgs(pr, `${remote.owner}/${remote.repo}`, opts), { signal }),
     comment: (pr, text, signal) => gh(['pr', 'comment', String(pr.id), ...repoArg, '--body', text], { signal }),
     async create({ title, body = '', source, target, draft }, signal) {
       const url = await gh(['pr', 'create', ...repoArg, '--title', title, '--body', body, '--base', target, '--head', source, ...(draft ? ['--draft'] : [])], { signal });
@@ -335,6 +372,8 @@ function azure(root, remote, remoteName) {
     },
     checkout: null, // done with plain git: fetch, then switch to a tracking branch
     approve: (pr, signal) => az(['repos', 'pr', 'set-vote', '--id', String(pr.id), '--vote', 'approve'], { signal }),
+    mergeMethods: MERGE_METHODS.azure,
+    merge: (pr, opts, signal) => az(azureMergeArgs(pr, opts), { signal }).then(() => (opts.auto ? `${pr.label} will complete once its policies pass` : `Completed ${pr.label}`)),
     comment: (pr, text, signal) => post(threadsRoute(pr), { comments: [{ parentCommentId: 0, content: text, commentType: 1 }], status: 1 }, signal),
     async threads(pr) {
       return azureThreads((await json(az(threadsRoute(pr)))).value);

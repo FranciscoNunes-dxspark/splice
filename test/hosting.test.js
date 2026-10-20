@@ -70,3 +70,20 @@ test('GitHub: review decision, checks, and sorting', () => {
 test('wrap keeps paragraphs apart', () => {
   assert.deepEqual(wrap('one two three\r\n\r\nfour', 8), ['one two', 'three', '', 'four']);
 });
+
+test('merging a pull request: the arguments for /merge-pr, gh and az', async () => {
+  const { mergePrArgs, githubMergeArgs, azureMergeArgs } = await import('../src/hosting.js');
+  assert.deepEqual(mergePrArgs(''), { method: null, deleteBranch: null, auto: null });
+  assert.deepEqual(mergePrArgs('squash -d --auto'), { method: 'squash', deleteBranch: true, auto: true });
+  assert.deepEqual(mergePrArgs('--rebase --keep-branch'), { method: 'rebase', deleteBranch: false, auto: null });
+  assert.match(mergePrArgs('octopus').error, /Unknown option: octopus/);
+  const pr = { id: 12 };
+  assert.deepEqual(githubMergeArgs(pr, 'o/r', { method: 'squash', deleteBranch: true, auto: false }), ['pr', 'merge', '12', '-R', 'o/r', '--squash', '--delete-branch']);
+  assert.deepEqual(githubMergeArgs(pr, 'o/r', { method: 'merge', deleteBranch: false, auto: true }), ['pr', 'merge', '12', '-R', 'o/r', '--merge', '--auto']);
+  assert.deepEqual(azureMergeArgs(pr, { method: 'squash', deleteBranch: true, auto: false }), [
+    'repos', 'pr', 'update', '--id', '12', '--status', 'completed', '--squash', 'true', '--delete-source-branch', 'true',
+  ]);
+  assert.deepEqual(azureMergeArgs(pr, { method: 'merge', deleteBranch: false, auto: true }), [
+    'repos', 'pr', 'update', '--id', '12', '--auto-complete', 'true', '--squash', 'false', '--delete-source-branch', 'false',
+  ]);
+});

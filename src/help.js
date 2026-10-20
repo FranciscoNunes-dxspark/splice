@@ -100,6 +100,8 @@ PRs (GitHub through gh, Azure DevOps through az: your existing sign-in)
   ↵                Full diff, with review comments under their lines     c           Check out its branch
                    In it: t T next, previous comment · r reply to it (/reply <text>)
   a                Approve         C           Comment (/comment <text>)
+  m                Merge it: squash, merge commit or rebase; now or once checks pass (auto-merge),
+                   deleting the branch or not (/merge-pr [squash|merge|rebase] [--delete-branch] [--auto])
   o                Open in the browser
   n                New pull request from the current branch (/pr <title> [--into <branch>] [--draft])
   W                Claude drafts one: title into the prompt, description offered when you open it
@@ -132,6 +134,7 @@ Slash commands
   /find -S <text>   /find -G <regex>   Search all history for commits adding or removing the text,
                                      or changing lines that match the regex
   /pr <title> [--into <branch>] [--draft]   /comment <text>   /approve   /reply <text>
+  /merge-pr [squash|merge|rebase] [--delete-branch] [--auto]
   /rebase -i <ref>   /reword <message>   /fixup [ref]   /worktree <path> [ref]   /compare <ref> [base]
   /history <path>   /blame <path>   /cleanup
 

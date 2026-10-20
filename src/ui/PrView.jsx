@@ -92,6 +92,7 @@ export function PrView({ data, ctx, width, height, active, prVersion }) {
     else if (input === 'y') ctx.copy(pr.url, `the link to ${pr.label}`);
     else if (input === 'c') a.prCheckout(ctx, pr);
     else if (input === 'a') a.prApprove(ctx, pr);
+    else if (input === 'm') a.prMerge(ctx, pr);
     else if (input === 'C') ctx.prefill('/comment ');
     else if (input === 'o') ctx.openUrl(pr.url);
     else if (input === 'e' || input === 'R') a.claudeLook(ctx, input === 'e' ? 'explain' : 'review', { kind: 'pr', pr });

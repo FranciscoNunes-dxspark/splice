@@ -68,7 +68,7 @@ Press `?` inside for every shortcut. The essentials:
 | Branches | `↵` check out (remote branches get a tracking branch) · `n` new from here · `m` merge · `e` rebase onto · `d` delete · `D` diff with the default branch · `o` open its pull request · `C` clean up |
 | Worktrees | `↵` open · `n` new · `x` remove (or prune one whose folder is gone) · `C` clean up |
 | Stash | `↵` diff · `s` stash · `S` stash with a message · `a` apply · `o` pop · `x` drop · `F` its files, to restore one (`↵`) or see its diff (`d`) |
-| PRs | `↵` diff, with its review comments (`t`/`T` from one to the next, `r` reply) · `c` check out · `a` approve · `C` comment · `o` open in the browser · `n` new PR from the current branch · `W` Claude drafts one · `e` / `R` Claude explains / reviews it |
+| PRs | `↵` diff, with its review comments (`t`/`T` from one to the next, `r` reply) · `c` check out · `a` approve · `m` merge · `C` comment · `o` open in the browser · `n` new PR from the current branch · `W` Claude drafts one · `e` / `R` Claude explains / reviews it |
 | Reflog (`/reflog`) | `↵` the commit's diff · `X` reset the current branch to it · `c` check it out |
 | Repos | `↵` open · `s` add a folder to scan · `x` forget |
 | Viewer (diffs, output, help, Claude's answers) | `j`/`k` scroll · `space` page · `n`/`N` next or previous hunk · `/` search: matches show as you type, `↵` keeps the search, then `n`/`N` go from match to match · `esc` clears the search, then closes |
@@ -79,7 +79,7 @@ The mouse works too: click a tab, a row or the prompt, double-click a row to do 
 
 Type `/` and the menu narrows as you type; `tab` completes, `↑`/`↓` picks, `↵` runs. Commands that take a branch complete branch, tag and remote names; `/history` and `/blame` complete the repository's tracked files.
 
-`/commit <msg>` `/amend [msg]` `/checkout <ref>` `/branch <name> [start]` `/delete <ref>` `/merge <ref>` `/rebase <ref>` `/reset <ref>` `/tag <name> [ref]` `/fetch` `/pull [--rebase]` `/push [--force]` `/stash [msg]` `/pop` `/discard` `/undo` `/reflog` `/continue` `/abort` `/find <text>` `/find -S <text>` `/find -G <regex>` `/fixup [ref]` `/open <path>` `/scan <folder>` `/last` `/settings` `/accent <#rrggbb|default>` `/refresh` `/help` `/quit` `/pr <title> [--into <branch>] [--draft]` `/comment <text>` `/approve` `/worktree <path> [ref]` `/compare <ref> [base]` `/history <path>` `/blame <path>` `/cleanup` `/describe` `/draft-pr [--into <branch>]` `/explain [ref]` `/review [ref]`
+`/commit <msg>` `/amend [msg]` `/checkout <ref>` `/branch <name> [start]` `/delete <ref>` `/merge <ref>` `/rebase <ref>` `/reset <ref>` `/tag <name> [ref]` `/fetch` `/pull [--rebase]` `/push [--force]` `/stash [msg]` `/pop` `/discard` `/undo` `/reflog` `/continue` `/abort` `/find <text>` `/find -S <text>` `/find -G <regex>` `/fixup [ref]` `/open <path>` `/scan <folder>` `/last` `/settings` `/accent <#rrggbb|default>` `/refresh` `/help` `/quit` `/pr <title> [--into <branch>] [--draft]` `/comment <text>` `/approve` `/merge-pr [squash|merge|rebase] [--delete-branch] [--auto]` `/worktree <path> [ref]` `/compare <ref> [base]` `/history <path>` `/blame <path>` `/cleanup` `/describe` `/draft-pr [--into <branch>]` `/explain [ref]` `/review [ref]`
 
 ### Branches
 
@@ -116,7 +116,9 @@ Splice talks to the servers through their own CLIs, using the sign-in you alread
 
 **Review comments in the diff.** `↵` on a pull request shows its diff with the reviewers' comments drawn under the lines they're about, each thread in a box with its replies, Markdown formatted. `t` and `T` go from one thread to the next, and `r` replies to the one picked (or the first on screen): the prompt fills with `/reply `, and the reply shows in the thread once it's posted. Comments on lines the diff no longer shows (the code changed since) are listed at the top. Azure DevOps marks fixed and closed threads as resolved; GitHub's API doesn't say, so its threads show without that.
 
-`/pr <title>` opens a pull request from the current branch into the repository's default branch (or `--into <branch>`), pushing the branch first if the server doesn't have your latest commits. Approving and opening a PR ask first; `/comment` posts as soon as you press enter. Azure DevOps PR diffs are made locally: Splice fetches both branches and shows what the source branch adds. Listing Azure DevOps PRs takes a few seconds, most of it the az CLI starting up.
+`/pr <title>` opens a pull request from the current branch into the repository's default branch (or `--into <branch>`), pushing the branch first if the server doesn't have your latest commits. Approving and opening a PR ask first; `/comment` posts as soon as you press enter.
+
+**Merging.** `m` (or `/merge-pr`) merges the pull request on the server. Splice asks how (squash, a merge commit, or rebase; Azure DevOps offers squash or a merge commit), then when: now, or once its required checks and reviews pass (GitHub's auto-merge, Azure DevOps' auto-complete), and whether to delete the source branch on the server afterwards. `/merge-pr squash --delete-branch --auto` says it all at once and only asks to confirm. Your local copy of the branch is left alone; `f` fetches the merge. Azure DevOps PR diffs are made locally: Splice fetches both branches and shows what the source branch adds. Listing Azure DevOps PRs takes a few seconds, most of it the az CLI starting up.
 
 ### Claude
 

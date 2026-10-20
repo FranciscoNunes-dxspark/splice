@@ -8,6 +8,7 @@ import { cleanupChoice, cleanupCount, cleanupOptions, cleanupText, planCleanup, 
 import { configFile } from './config.js';
 import { matchLineEndings, parseConflicts, takeSide, unifiedDiff } from './conflict.js';
 import { blamePicker, historyPicker, repoPath } from './history.js';
+import { MERGE_LABELS, mergePrArgs } from './hosting.js';
 import { defaultBranch, findArgs, firstBadCommit, parseGraph, parseStatus, relTime, searchArgs, splitArgs } from './parse.js';
 import { buildPatch, coversAll, parseDiff } from './patch.js';
 import {
@@ -935,7 +936,15 @@ function needHost(ctx) {
 }
 
 // gh and az calls go through the same queue, spinner and activity lines as git.
-const hostTask = (ctx, title, fn, opts) => ctx.task(title, async (signal) => ({ stdout: (await fn(signal)) ?? '', stderr: '' }), opts);
+const hostTask = (ctx, title, fn, opts) =>
+  ctx.task(
+    title,
+    async (signal) => {
+      const out = await fn(signal);
+      return { stdout: typeof out === 'string' ? out : '', stderr: '' };
+    },
+    opts,
+  );
 const cliName = (host) => (host.kind === 'github' ? 'gh pr' : 'az repos pr');
 
 export async function prCheckout(ctx, pr) {
@@ -966,6 +975,64 @@ export async function prComment(ctx, text) {
   if (!text) return ctx.prefill('/comment ');
   const r = await hostTask(ctx, `${cliName(host)} comment ${pr.label}`, (signal) => host.comment(pr, text, signal), { label: 'Commenting', refresh: false });
   if (r.ok) ctx.prsChanged();
+  return r;
+}
+
+/**
+ * m in PRs, /merge-pr [squash|merge|rebase] [--delete-branch] [--auto]: merges the pull request on the server,
+ * asking how (what isn't given), and whether now or once its checks and reviews pass (auto-merge).
+ */
+export async function prMerge(ctx, pr, text = '') {
+  const host = needHost(ctx);
+  if (!host) return;
+  if (!pr) return ctx.note('Pick a pull request in PRs (6) first.', 'error');
+  const given = mergePrArgs(text);
+  if (given.error) return ctx.note(given.error, 'error');
+  const methods = host.mergeMethods ?? ['merge'];
+  if (given.method && !methods.includes(given.method)) {
+    return ctx.note(`${host.name} can't ${given.method}-merge from here. Use ${methods.join(' or ')}.`, 'error');
+  }
+  const method =
+    given.method ??
+    (await ctx.confirm({
+      title: `Merge ${pr.label} "${pr.title}" into ${pr.target} how?`,
+      options: [...methods.map((m) => ({ label: MERGE_LABELS[m], value: m })), { label: 'Cancel', value: null }],
+    }));
+  if (!method) return;
+  const warn = [pr.draft ? "It's still a draft." : '', pr.conflicts ? 'It has merge conflicts.' : ''].filter(Boolean).join(' ');
+  const how = MERGE_LABELS[method].replace(/ and merge$/, '').toLowerCase();
+  let when;
+  if (given.auto != null || given.deleteBranch != null) {
+    const ok = await ctx.confirm({
+      title: `${given.auto ? 'Auto-merge' : 'Merge'} ${pr.label} into ${pr.target} (${how})?`,
+      detail: `${given.deleteBranch ? `Deletes ${pr.source} on the server afterwards. ` : ''}${warn || `On ${host.name}, for everyone.`}`,
+      options: YES_NO(given.auto ? 'Yes, merge it once it can' : 'Yes, merge it'),
+      danger: true,
+    });
+    if (!ok) return;
+    when = { auto: Boolean(given.auto), deleteBranch: Boolean(given.deleteBranch) };
+  } else {
+    when = await ctx.confirm({
+      title: `Merge ${pr.label} into ${pr.target} (${how})?`,
+      detail: warn || `On ${host.name}, for everyone. Auto-merge waits for the required checks and reviews.`,
+      options: [
+        { label: `Merge now, and delete ${pr.source}`, value: { auto: false, deleteBranch: true } },
+        { label: `Merge now, keep ${pr.source}`, value: { auto: false, deleteBranch: false } },
+        { label: `Auto-merge once it can, and delete ${pr.source}`, value: { auto: true, deleteBranch: true } },
+        { label: `Auto-merge once it can, keep ${pr.source}`, value: { auto: true, deleteBranch: false } },
+        { label: 'No', value: null },
+      ],
+      danger: true,
+    });
+    if (!when) return;
+  }
+  const opts = { method, ...when };
+  const title = host.kind === 'github' ? `gh pr merge ${pr.id} --${method}${opts.deleteBranch ? ' --delete-branch' : ''}${opts.auto ? ' --auto' : ''}` : `az repos pr update --id ${pr.id} ${opts.auto ? '--auto-complete' : '--status completed'}`;
+  const r = await hostTask(ctx, title, (signal) => host.merge(pr, opts, signal), { label: opts.auto ? 'Setting auto-merge' : 'Merging', refresh: false });
+  if (r.ok) {
+    ctx.prsChanged();
+    if (!opts.auto) ctx.note(`Merged ${pr.label} into ${pr.target}. f fetches it.`, 'ok');
+  }
   return r;
 }
 
