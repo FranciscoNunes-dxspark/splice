@@ -62,7 +62,7 @@ Press `?` inside for every shortcut. The essentials:
 | Rebase editor | `p` pick · `r` reword · `e` edit · `s` squash · `f` fix up · `d` drop · `J`/`K` move · `↵` start · `esc` cancel |
 | Changes | `space` stage/unstage · `↵` step into the diff · `a` stage all · `u` unstage all · `d` discard · `s` stash just this file · `c` commit · `A` amend · `F` fix up an earlier commit · `H` the file's history · `B` blame · `W` Claude writes the message · `R` Claude reviews · on conflicts `↵` resolve block by block, `O` ours / `T` theirs for the whole file, `C` Claude proposes a resolution |
 | File history | `↵` the commit's diff of the file · `B` blame as of that commit · `esc` close |
-| Blame | `↵` diff of the commit behind the line · `H` the file's history · `esc` close |
+| Blame | `↵` diff of the commit behind the line · `H` the file's history · `v` select lines, then `L` every commit that changed them · `esc` close |
 | Changes, in the diff | `j`/`k` changed lines · `n`/`N` hunks · `space` stage (or unstage) the hunk · `v` select lines, then `space` stages just those · `d` discard them · `esc` back |
 | Changes, in a conflict | `j`/`k` or `n`/`N` conflict blocks · `o` take ours · `t` take theirs · `b` keep both · `esc` back |
 | Branches | `↵` check out (remote branches get a tracking branch) · `n` new from here · `m` merge · `e` rebase onto · `d` delete · `D` diff with the default branch · `o` open its pull request · `C` clean up |
@@ -102,6 +102,8 @@ Before it starts, Splice says how many commits it will rewrite and warns if any 
 On a file in Changes, `H` lists the commits that touched it, newest first, following it through renames: each with its hash, age, author and subject, plus the name the file had then if it was different. `↵` shows that commit's changes to the file, and `esc` brings the list back. `/history <path>` does the same for any file, including one that has since been deleted. Paths are relative to the repository's root, and the prompt completes them.
 
 `B` (or `/blame <path>`) shows the file line by line, with who last changed each line, in which commit and when, written once at the top of each run of lines from the same commit. It blames the file as it is on disk, so lines you haven't committed yet say so. `↵` on a line shows the commit that last changed it, and `H` switches to the file's history. From the history, `B` blames the file as it was in the selected commit.
+
+To see how a few lines came to be, put the cursor on the first in blame, press `v`, move to the last, and press `L` (or just `L` for the line under the cursor). Every commit that changed them is listed with what it did to those lines, newest first (`git log -L`), following them as other lines move around them. Lines you've changed but not committed are matched to where they were in the last commit; ones you've only just written have no history yet.
 
 ### Pull requests
 

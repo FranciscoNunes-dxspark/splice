@@ -455,6 +455,8 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
       refreshRepos();
     },
     showText: (title, text, opts = {}) => setOverlay({ title, text, ...opts }),
+    // The viewer, saying Loading… until `load()` resolves with its text.
+    showAsync,
     showRebase: (plan) => setOverlay({ kind: 'rebase', plan }),
     // A list to pick from: { title, hint, items | load, onPick, keys, empty } (see Picker.jsx).
     // `replace`: swaps the picker on screen for this one (the same list, redrawn after a change), keeping

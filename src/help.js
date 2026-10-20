@@ -67,6 +67,7 @@ File history (H, /history <path>: the commits that touched it, following renames
 Blame (B, /blame <path>: the working-tree file, so new lines show as not committed yet)
   ↵                Diff of the commit that last changed the line (esc comes back here)
   H                The file's history
+  v  L             Select lines (v, move, v) · Every commit that changed them, and how (git log -L)
 
 Branches
   ↵                Check out (a remote branch gets a local tracking branch)

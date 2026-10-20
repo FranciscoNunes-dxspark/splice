@@ -2,6 +2,7 @@
 import { existsSync } from 'node:fs';
 import { isAbsolute, join, relative } from 'node:path';
 import { HISTORY_FORMAT, isoDate, parseBlame, parseFileHistory, relTime } from './parse.js';
+import { parseDiff } from './patch.js';
 import { theme } from './theme.js';
 import { fit, stringWidth } from './text.js';
 
@@ -78,13 +79,74 @@ export function historyPicker(ctx, path) {
 }
 
 /**
+ * Where lines `from` to `to` of a changed working-tree file were in the committed one, given
+ * `git diff HEAD -- <file>`: { from, to } over the lines that are committed, or null if none are.
+ */
+export function committedRange(diffText, from, to) {
+  const hunks = parseDiff(diffText).hunks.map((h) => {
+    const count = (c) => h.lines.filter((l) => l[0] === c || l[0] === ' ').length;
+    // A side with no lines in the hunk names the line before it.
+    return { ...h, oldStart: h.oldStart + (count('-') ? 0 : 1), newStart: h.newStart + (count('+') ? 0 : 1) };
+  });
+  const committed = (n) => {
+    let delta = 0;
+    for (const h of hunks) {
+      if (n < h.newStart) break;
+      let o = h.oldStart;
+      let w = h.newStart;
+      for (const l of h.lines) {
+        if (l[0] === ' ') {
+          if (w === n) return o;
+          o++;
+          w++;
+        } else if (l[0] === '-') o++;
+        else if (l[0] === '+') {
+          if (w === n) return null;
+          w++;
+        }
+      }
+      delta = o - w;
+    }
+    return n + delta;
+  };
+  const lines = [];
+  for (let n = from; n <= to; n++) {
+    const c = committed(n);
+    if (c != null) lines.push(c);
+  }
+  return lines.length ? { from: Math.min(...lines), to: Math.max(...lines) } : null;
+}
+
+/**
+ * L in blame: every commit that changed lines `from` to `to` of `path` (of `rev`, or else the working
+ * tree), with what each did to them (`git log -L`), in the viewer.
+ */
+export async function lineHistory(ctx, path, from, to, rev) {
+  let range = { from, to };
+  // A file gone from the working tree was blamed as of HEAD (see blamePicker).
+  if (!rev && !existsSync(join(ctx.data.root, path))) rev = 'HEAD';
+  if (!rev && (await ctx.git(['diff', '--quiet', 'HEAD', '--', path]).then(() => false, () => true))) {
+    // Changed since the last commit: git log -L counts lines in the committed file.
+    range = committedRange(await ctx.git(['diff', '--no-color', '-U0', 'HEAD', '--', path]), from, to);
+    if (!range) return ctx.note(from === to ? `Line ${from} isn't committed yet.` : `Lines ${from}–${to} aren't committed yet.`);
+  }
+  const what = range.from === range.to ? `Line ${range.from}` : `Lines ${range.from}–${range.to}`;
+  ctx.showAsync(
+    `${what} of ${path}${rev ? ` at ${rev.replace(/^[0-9a-f]{40,64}/, short)}` : ''}`,
+    async () => (await ctx.git(['log', '--no-color', '--date=short', `-L${range.from},${range.to}:${path}`, ...(rev ? [rev] : [])])) || `No commits changed ${what.toLowerCase()}.`,
+    { diff: true },
+  );
+}
+
+/**
  * Who last changed each line of `path`: the working-tree version (uncommitted lines show as such),
  * or as of `rev`. ↵ shows the diff of the line's commit to that file; H opens the file's history.
  */
 export function blamePicker(ctx, path, { rev = null } = {}) {
   return {
     title: `Blame ${path}${rev ? ` at ${rev.replace(/^[0-9a-f]{40,64}/, short)}` : ''}`,
-    hint: '↵ commit diff · H history',
+    hint: '↵ diff · H history · v select · L lines’ history',
+    range: true,
     empty: `${path} is empty.`,
     load: async () => {
       // A file deleted from the working tree still has a blame in HEAD.
@@ -100,6 +162,7 @@ export function blamePicker(ctx, path, { rev = null } = {}) {
     },
     keys: {
       H: () => ctx.showPicker(historyPicker(ctx, path)),
+      L: (l, lines) => lineHistory(ctx, path, lines[0].line, lines.at(-1).line, rev),
       y: (l) => (l.commit.uncommitted ? ctx.note(`Line ${l.line} isn't committed yet.`) : ctx.copy(l.commit.hash, `the hash of ${short(l.commit.hash)}`)),
     },
   };
