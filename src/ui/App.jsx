@@ -770,7 +770,7 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
         : overlay?.kind === 'picker'
           ? 'j/k move · esc close'
           : overlay
-          ? 'j/k scroll · space page · n/N hunk · esc close'
+          ? 'j/k scroll · space page · n/N hunk · / search · esc close'
           : HINTS[view];
   const right = focus === 'prompt' ? '' : '  f fetch · p pull · P push · z undo · / commands · ! git · ? help';
 

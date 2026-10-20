@@ -133,4 +133,7 @@ Slash commands
 
 Viewer (diffs, output, this help)
   j k  space  g G  Scroll         n N         Next, previous hunk
-  esc / q          Close`;
+  /                Search: matches show as you type, ↵ keeps it (a capital letter makes it match case)
+  n N              With a search: next, previous match
+  esc / q          Clear the search, then close
+  Diffs pick out the words that changed within a line.`;

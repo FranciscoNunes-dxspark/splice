@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Box, Text, useInput } from 'ink';
 import { theme } from '../theme.js';
+import { markRanges } from '../search.js';
 import { clean, fit, fitSegments, stringWidth } from '../text.js';
 
 /** One line of styled segments, cut to `width`. Draws the ❯ cursor and the selection background. */
@@ -78,6 +79,13 @@ export function diffSegment(line) {
   if (line.startsWith('-')) return { text, color: theme.del };
   if (/^commit [0-9a-f]{7,}/.test(line)) return { text, color: theme.warn, bold: true };
   return { text };
+}
+
+/** A diff line as segments, with the words it changed (`ranges`, from search.js's wordChanges) picked out. */
+export function diffSegments(line, ranges) {
+  const seg = diffSegment(line);
+  if (!ranges) return [seg];
+  return markRanges([seg], ranges, { bg: line[0] === '+' ? theme.addWord : theme.delWord, bold: true });
 }
 
 const FRAMES = ['·', '✢', '✳', '✶', '✻', '✽', '✻', '✶', '✳', '✢'];
