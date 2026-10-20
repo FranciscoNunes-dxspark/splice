@@ -7,6 +7,7 @@ import { changeDiff } from '../repo.js';
 import { codeColor, theme } from '../theme.js';
 import { useAsync, useListNav } from './hooks.js';
 import { Panel, Row, diffSegment } from './parts.jsx';
+import { ConflictPane, useConflicts } from './ConflictPane.jsx';
 
 function fileSegments(f) {
   const dir = dirname(f.path);
@@ -51,10 +52,11 @@ export function ChangesView({ data, ctx, width, height, active }) {
   const nav = useListNav(rows.length, innerH, { selectable: (i) => Boolean(rows[i]?.file), resetKey: data.root });
   const f = rows[nav.index]?.file;
 
-  // "files" moves through the list; "diff" puts a cursor in the diff to stage hunks and lines.
+  // "files" moves through the list; "diff" puts a cursor in the diff to stage hunks and lines;
+  // "conflict" (for a conflicted file) moves between its conflict blocks to take a side of each.
   const [paneState, setPane] = useState('files');
-  const canPick = Boolean(f) && f.area !== 'conflict';
-  const pane = canPick ? paneState : 'files';
+  const target = !f ? null : f.area === 'conflict' ? 'conflict' : 'diff';
+  const pane = paneState === target ? paneState : 'files';
   const fileKey = f ? `${f.area}:${f.path}` : null;
   const [anchor, setAnchor] = useState(null);
   const [anchorFor, setAnchorFor] = useState(null);
@@ -63,7 +65,7 @@ export function ChangesView({ data, ctx, width, height, active }) {
     setAnchor(null);
   }
 
-  const diffKey = f && (split || pane === 'diff') ? `change:${data.root}:${fileKey}:${data.loadedAt}` : null;
+  const diffKey = target === 'diff' && (split || pane === 'diff') ? `change:${data.root}:${fileKey}:${data.loadedAt}` : null;
   const diff = useAsync(diffKey, () => changeDiff(data.root, f));
   const raw = diff.error ? diff.error.message : (diff.value ?? '');
   const parsed = useMemo(() => parseDiff(raw), [raw]);
@@ -92,17 +94,41 @@ export function ChangesView({ data, ctx, width, height, active }) {
     if (target >= 0) dnav.setIndex(target);
   };
 
+  const cf = useConflicts(data.root, f, data.loadedAt, split || pane === 'conflict', height);
+
   const fileKeys = (input, key) => {
     if (nav.handle(input, key)) return;
-    if (input === 'J') return dnav.handle('', { pageDown: true });
-    if (input === 'K') return dnav.handle('', { pageUp: true });
+    if (input === 'J') return target === 'conflict' ? cf.page(1) : dnav.handle('', { pageDown: true });
+    if (input === 'K') return target === 'conflict' ? cf.page(-1) : dnav.handle('', { pageUp: true });
+    if (input === 'F') return a.fixup(ctx);
     if (!f) return;
     if (input === ' ') return f.area === 'staged' ? a.unstage(ctx, f) : a.stage(ctx, f);
-    if ((key.return || key.rightArrow || input === 'l') && canPick) return setPane('diff');
-    if (key.return) return ctx.showChange(f);
+    if (key.return || key.rightArrow || input === 'l') return setPane(target);
     if (input === 'd' && f.area !== 'conflict') return a.discard(ctx, f);
+    // A rename not committed yet has its history under the old name.
+    if (input === 'H') return a.fileHistory(ctx, f.orig ?? f.path);
+    if (input === 'B') return a.blame(ctx, f.path);
+    if (input === 's') return a.stashFile(ctx, f);
     if (input === 'O' && f.area === 'conflict') return a.resolveWith(ctx, f, 'ours');
     if (input === 'T' && f.area === 'conflict') return a.resolveWith(ctx, f, 'theirs');
+    if (input === 'C' && f.area === 'conflict') return a.claudeResolve(ctx, f);
+  };
+
+  const conflictKeys = async (input, key) => {
+    if (key.escape || key.leftArrow || input === 'h') return setPane('files');
+    if (key.downArrow || input === 'j' || input === 'n' || input === ']') return cf.move(1);
+    if (key.upArrow || input === 'k' || input === 'N' || input === '[') return cf.move(-1);
+    if (input === 'J' || key.pageDown || (key.ctrl && input === 'd')) return cf.page(1);
+    if (input === 'K' || key.pageUp || (key.ctrl && input === 'u')) return cf.page(-1);
+    if (input === 'C') return a.claudeResolve(ctx, f);
+    const side = { o: 'ours', t: 'theirs', b: 'both' }[input];
+    if (!side || !cf.file?.buf || !cf.count || cf.busy.current) return;
+    cf.busy.current = true;
+    const r = await a.resolveBlock(ctx, f, cf.file.buf, cf.block, side).finally(() => (cf.busy.current = false));
+    if (!r) return;
+    cf.written(r.buf);
+    // Nothing more to pick here: back to the list, where space marks the file resolved.
+    if (!r.left) setPane('files');
   };
 
   const diffKeys = async (input, key) => {
@@ -129,25 +155,28 @@ export function ChangesView({ data, ctx, width, height, active }) {
       if (input === 'A') return ctx.prefill('/amend ');
       if (input === 'W') return a.describeCommit(ctx);
       if (input === 'R') return a.claudeLook(ctx, 'review', { kind: 'changes' });
+      if (pane === 'conflict') return conflictKeys(input, key);
       return pane === 'diff' ? diffKeys(input, key) : fileKeys(input, key);
     },
     { isActive: active },
   );
 
   const showList = split || pane === 'files';
-  const showDiff = split || pane === 'diff';
+  const showDiff = split || pane !== 'files';
   const diffW = split ? width - listW : width;
   const verb = f?.area === 'staged' ? 'unstage' : 'stage';
   const diffHint = !f
     ? ''
     : pane === 'files'
-      ? canPick
-        ? `↵ pick hunks · J/K scroll`
-        : 'J/K scroll'
-      : range
+      ? target === 'conflict'
+        ? '↵ resolve block by block · J/K scroll'
+        : `↵ pick hunks · J/K scroll`
+      : pane === 'conflict'
+        ? 'o ours · t theirs · b both · n/N · esc'
+        : range
         ? `space ${verb} lines${f.area === 'unstaged' ? ' · d discard' : ''} · esc`
         : `space ${verb} hunk · v lines · n/N · esc`;
-  const listHint = f?.area === 'conflict' ? 'space resolved · O ours · T theirs' : 'space stage/unstage';
+  const listHint = f?.area === 'conflict' ? 'space resolved · O ours · T theirs · C Claude' : 'space stage/unstage';
 
   return (
     <Box width={width} height={height}>
@@ -181,7 +210,9 @@ export function ChangesView({ data, ctx, width, height, active }) {
           })}
         </Panel>
       ) : null}
-      {showDiff ? (
+      {showDiff && target === 'conflict' ? (
+        <ConflictPane cf={cf} f={f} hint={diffHint} width={diffW} height={height} focused={active && pane === 'conflict'} />
+      ) : showDiff ? (
         <Panel title={f ? f.path : 'Diff'} hint={diffHint} width={diffW} height={height} focused={active && pane === 'diff'}>
           {!f ? <Row pointer={false} width={diffW - 2} segments={[{ text: 'Working tree clean.', color: theme.dim }]} /> : null}
           {f

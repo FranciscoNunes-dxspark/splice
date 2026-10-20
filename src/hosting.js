@@ -121,6 +121,28 @@ export function sortPrs(prs) {
   return [...prs].sort((a, b) => rank(a) - rank(b) || b.time - a.time);
 }
 
+/**
+ * The open PR of each branch, for the Branches view, keyed `local:<name>` and `remote:<name>`.
+ * A PR's source is a branch name on the host's remote (`remoteName`): it matches that remote's
+ * branch (origin/feature), and a local branch that tracks it, or has the same name and no upstream
+ * elsewhere. Where a branch has several PRs (into different targets), the first in `prs` wins.
+ */
+export function prsByBranch(prs, refs, remoteName) {
+  const bySource = new Map();
+  for (const p of prs ?? []) if (p.source && !bySource.has(p.source)) bySource.set(p.source, p);
+  const out = new Map();
+  if (!bySource.size) return out;
+  const prefix = `${remoteName}/`;
+  for (const b of refs.remote) {
+    if (b.name.startsWith(prefix) && bySource.has(b.name.slice(prefix.length))) out.set(`remote:${b.name}`, bySource.get(b.name.slice(prefix.length)));
+  }
+  for (const b of refs.local) {
+    const source = !b.upstream ? b.name : b.upstream.startsWith(prefix) ? b.upstream.slice(prefix.length) : null;
+    if (source && bySource.has(source)) out.set(`local:${b.name}`, bySource.get(source));
+  }
+  return out;
+}
+
 // Runs a CLI and resolves with stdout. On Windows az is a .cmd wrapper that Node won't start
 // without a shell, so call the Python it wraps directly: no shell, so no quoting surprises.
 export function cli(program, args, { cwd, signal, input } = {}) {

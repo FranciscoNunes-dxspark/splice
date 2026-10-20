@@ -72,7 +72,7 @@ before(() => {
   git('add', '.');
   git('commit', '-q', '-m', 'base');
 });
-after(() => rmSync(dir, { recursive: true, force: true }));
+after(() => rmSync(dir, { recursive: true, force: true, maxRetries: 10 }));
 
 const applyCached = (patch, ...flags) => run(dir, ['apply', '--cached', ...flags, '--recount', '-'], { input: patch });
 

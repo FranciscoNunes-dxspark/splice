@@ -51,6 +51,7 @@ export function WorktreesView({ data, ctx, width, height, active }) {
       if (!ctx.viewHasKeys()) return;
       if (nav.handle(input, key)) return;
       if (input === 'n') return ctx.prefill(`/worktree ../${data.name}-`);
+      if (input === 'C') return a.cleanUp(ctx);
       if (!wt) return;
       if (key.return) {
         if (wt.prunable) return ctx.note('Its folder is gone. Press x to prune it.', 'error');
