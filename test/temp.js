@@ -6,7 +6,8 @@ import { rm } from 'node:fs/promises';
 // throwaway repository's folder busy on Windows long after its test is done. These repositories don't need it.
 // Set through the environment, so it reaches both the tests' own git and the git Splice runs, and never
 // touches anyone's real git config.
-const settings = { 'gc.auto': '0', 'maintenance.auto': 'false' };
+// Submodule tests clone from local folders, which git only allows when told to (protocol.file.allow).
+const settings = { 'gc.auto': '0', 'maintenance.auto': 'false', 'protocol.file.allow': 'always' };
 let n = Number(process.env.GIT_CONFIG_COUNT) || 0;
 for (const [key, value] of Object.entries(settings)) {
   process.env[`GIT_CONFIG_KEY_${n}`] = key;

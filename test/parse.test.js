@@ -225,3 +225,23 @@ test('/remote and /upstream arguments', async () => {
   assert.match(upstreamArgs('origin/main', null).error, /detached/);
   assert.match(upstreamArgs('', 'main').error, /Use:/);
 });
+
+test('submodules: their state from git submodule status, and changes inside from the status', async () => {
+  const { parseStatus, parseSubmodules } = await import('../src/parse.js');
+  const h = (c) => c.repeat(40);
+  const status = parseStatus(['# branch.oid ' + h('a'), '# branch.head main', `1 .M SC.U 160000 160000 160000 ${h('1')} ${h('1')} lib`, `1 .M N... 100644 100644 100644 ${h('2')} ${h('2')} a.txt`, ''].join('\0'));
+  assert.deepEqual(status.files[0].submodule, { commit: true, modified: false, untracked: true });
+  assert.equal(status.files[1].submodule, undefined);
+  const subs = parseSubmodules(`-${h('3')} vendor/x\n+${h('4')} lib (v1-2-gabc)\n ${h('5')} docs (heads/main)\nU${h('0')} both\n`, status.files);
+  assert.deepEqual(
+    subs.map((s) => [s.path, s.state, s.describe]),
+    [
+      ['vendor/x', 'uninitialised', ''],
+      ['lib', 'out of date', 'v1-2-gabc'],
+      ['docs', 'ok', 'heads/main'],
+      ['both', 'conflict', ''],
+    ],
+  );
+  assert.equal(subs[1].dirty, true, 'untracked files inside lib');
+  assert.equal(parseSubmodules(` ${h('6')} lib (x)`, status.files)[0].state, 'modified');
+});

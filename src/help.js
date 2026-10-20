@@ -47,6 +47,9 @@ Changes
   C                On a conflict: Claude proposes the resolved file, shown as a diff; asks before writing it
   H  B             The file's history · Blame it (who last changed each line)
   ↵  →  l          Step into the diff to stage hunks or single lines (on a conflict: into its conflict blocks)
+  Submodules, listed last with their state (not initialised, out of date, changes inside, up to date):
+  I                Initialise it and check out the commit recorded here (/submodule-update [path])
+  o  ↵             Open it in Splice as its own repository
 
 Changes, in the diff
   j k              Move between changed lines      n N  ] [    Next, previous hunk
@@ -140,7 +143,7 @@ Slash commands
   /commit <msg>   /amend [msg]   /checkout <ref>   /branch <name> [start]
   /delete <ref>   /merge <ref>   /rebase <ref>     /reset <ref>   /tag <name> [ref]
   /fetch   /pull [--rebase]   /push [--force] [remote]   /stash [msg]   /pop   /discard
-  /undo   /reflog
+  /undo   /reflog   /submodule-update [path]
   /bisect <good|bad|skip|reset> [ref]
   /continue   /abort   /find <text>   /open <path>   /scan <folder>   /last   /quit
   /settings   /accent <#rrggbb|default>   /update (look for a new version now and install it)

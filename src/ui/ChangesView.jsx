@@ -8,7 +8,7 @@ import { wordChanges } from '../search.js';
 import { codeColor, theme } from '../theme.js';
 import { clean } from '../text.js';
 import { useAsync, useListNav, useMouse } from './hooks.js';
-import { Panel, Row, diffSegments } from './parts.jsx';
+import { Lines, Panel, Row, diffSegments } from './parts.jsx';
 import { ConflictPane, useConflicts } from './ConflictPane.jsx';
 
 function fileSegments(f) {
@@ -20,6 +20,43 @@ function fileSegments(f) {
   ];
   if (f.orig && f.area === 'staged') segs.push({ text: `  ← ${f.orig}`, color: theme.dim });
   return segs;
+}
+
+const SUB_STATE = {
+  uninitialised: ['○', 'not initialised', 'warn'],
+  'out of date': ['↻', 'out of date', 'warn'],
+  conflict: ['!', 'conflict', 'del'],
+  modified: ['●', 'changes inside', 'warn'],
+  ok: ['✓', 'up to date', 'dim'],
+};
+
+function subSegments(s) {
+  const [icon, text, tone] = SUB_STATE[s.state] ?? SUB_STATE.ok;
+  return [
+    { text: `${icon} `, color: theme[tone], bold: true },
+    { text: s.path, strong: true },
+    { text: `  ${text}`, color: theme[tone] },
+    { text: s.describe ? `  ${s.describe}` : '', color: theme.dim },
+  ];
+}
+
+function subLines(s) {
+  const [, text, tone] = SUB_STATE[s.state] ?? SUB_STATE.ok;
+  const what = {
+    uninitialised: 'Not cloned or checked out yet. I initialises it.',
+    'out of date': 'It has another commit checked out than the one this repository records. I checks out the recorded one; committing here records the one it has.',
+    conflict: 'Both sides of the merge moved it. Stage the commit it should have.',
+    modified: 'It has uncommitted changes of its own: o opens it to commit or discard them.',
+    ok: 'At the commit this repository records.',
+  }[s.state];
+  return [
+    [{ text: s.path, bold: true }, { text: `  ${text}`, color: theme[tone] }],
+    [{ text: s.sha.slice(0, 10), color: theme.warn }, { text: s.describe ? `  ${s.describe}` : '', color: theme.dim }],
+    '',
+    [{ text: what ?? '' }],
+    '',
+    [{ text: 'I init/update · o open it as a repository', color: theme.dim }],
+  ];
 }
 
 // The diff as rows: each hunk's header, then its lines. Only + and - lines take the cursor.
@@ -45,14 +82,19 @@ export function ChangesView({ data, ctx, width, height, active }) {
     if (conflicts.length) section('Conflicts', conflicts);
     section('Unstaged', unstaged, 'Nothing to stage');
     section('Staged', staged, 'Nothing staged yet');
+    if (data.submodules?.length) {
+      out.push({ header: 'Submodules', count: data.submodules.length });
+      for (const s of data.submodules) out.push({ sub: s });
+    }
     return out;
-  }, [data.changes]);
+  }, [data.changes, data.submodules]);
 
   const split = width >= 90;
   const listW = split ? Math.max(36, Math.floor(width * 0.4)) : width;
   const innerH = height - 2;
-  const nav = useListNav(rows.length, innerH, { selectable: (i) => Boolean(rows[i]?.file), resetKey: data.root });
+  const nav = useListNav(rows.length, innerH, { selectable: (i) => Boolean(rows[i]?.file || rows[i]?.sub), resetKey: data.root });
   const f = rows[nav.index]?.file;
+  const sub = rows[nav.index]?.sub;
 
   // "files" moves through the list; "diff" puts a cursor in the diff to stage hunks and lines;
   // "conflict" (for a conflicted file) moves between its conflict blocks to take a side of each.
@@ -104,6 +146,11 @@ export function ChangesView({ data, ctx, width, height, active }) {
     if (input === 'J') return target === 'conflict' ? cf.page(1) : dnav.handle('', { pageDown: true });
     if (input === 'K') return target === 'conflict' ? cf.page(-1) : dnav.handle('', { pageUp: true });
     if (input === 'F') return a.fixup(ctx);
+    if (sub) {
+      if (input === 'I') return a.updateSubmodules(ctx, sub.path);
+      if (input === 'o' || key.return) return a.openSubmodule(ctx, sub);
+      return;
+    }
     if (!f) return;
     if (input === ' ') return f.area === 'staged' ? a.unstage(ctx, f) : a.stage(ctx, f);
     if (key.return || key.rightArrow || input === 'l') return setPane(target);
@@ -157,7 +204,7 @@ export function ChangesView({ data, ctx, width, height, active }) {
     if (input === 'A') return ctx.prefill('/amend ');
     if (input === 'W') return a.describeCommit(ctx);
     if (input === 'R') return a.claudeLook(ctx, 'review', { kind: 'changes' });
-    if (input === 'y' && f) return ctx.copy(f.path);
+    if (input === 'y' && (f || sub)) return ctx.copy((f ?? sub).path);
     if (pane === 'conflict') return conflictKeys(input, key);
     return pane === 'diff' ? diffKeys(input, key) : fileKeys(input, key);
   };
@@ -214,6 +261,9 @@ export function ChangesView({ data, ctx, width, height, active }) {
                 />
               );
             }
+            if (row.sub) {
+              return <Row key={`s:${row.sub.path}`} width={listW - 2} selected={idx === nav.index} focused={active && pane === 'files'} segments={subSegments(row.sub)} />;
+            }
             if (row.note) return <Row key={`n${idx}`} width={listW - 2} segments={[{ text: row.note, color: theme.dim, italic: true }]} />;
             return (
               <Row
@@ -227,7 +277,11 @@ export function ChangesView({ data, ctx, width, height, active }) {
           })}
         </Panel>
       ) : null}
-      {showDiff && target === 'conflict' ? (
+      {showDiff && sub ? (
+        <Panel title={sub.path} hint="I init/update · o open" width={diffW} height={height}>
+          <Lines lines={subLines(sub)} width={diffW - 2} height={innerH} />
+        </Panel>
+      ) : showDiff && target === 'conflict' ? (
         <ConflictPane cf={cf} f={f} hint={diffHint} width={diffW} height={height} focused={active && pane === 'conflict'} />
       ) : showDiff ? (
         <Panel title={f ? f.path : 'Diff'} hint={diffHint} width={diffW} height={height} focused={active && pane === 'diff'}>

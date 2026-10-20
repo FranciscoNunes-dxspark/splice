@@ -21,6 +21,13 @@ function splitFields(s, n) {
   return out;
 }
 
+// The <sub> field of a porcelain v2 entry: "N..." for a file; for a submodule "S" then C (its commit changed),
+// M (tracked changes inside it) and U (untracked files inside it), or "." for each that isn't so.
+function subState(sub) {
+  if (sub?.[0] !== 'S') return {};
+  return { submodule: { commit: sub[1] === 'C', modified: sub[2] === 'M', untracked: sub[3] === 'U' } };
+}
+
 /** Parses `git status --porcelain=v2 --branch -z`. */
 export function parseStatus(raw) {
   const branch = { oid: null, head: null, upstream: null, ahead: 0, behind: 0 };
@@ -44,10 +51,10 @@ export function parseStatus(raw) {
     const type = p[0];
     if (type === '1') {
       const f = splitFields(p, 8);
-      files.push({ kind: 'changed', x: f[1][0], y: f[1][1], path: f[8] });
+      files.push({ kind: 'changed', x: f[1][0], y: f[1][1], path: f[8], ...subState(f[2]) });
     } else if (type === '2') {
       const f = splitFields(p, 9);
-      files.push({ kind: 'renamed', x: f[1][0], y: f[1][1], path: f[9], orig: parts[++i] });
+      files.push({ kind: 'renamed', x: f[1][0], y: f[1][1], path: f[9], orig: parts[++i], ...subState(f[2]) });
     } else if (type === 'u') {
       const f = splitFields(p, 10);
       files.push({ kind: 'unmerged', x: f[1][0], y: f[1][1], path: f[10] });
@@ -482,4 +489,25 @@ export function upstreamArgs(text, current) {
   const [branch, up] = rest.length === 2 ? rest : [current, rest[0]];
   if (!branch) return { error: 'HEAD is detached: name the branch, /upstream <branch> <remote/branch>' };
   return { args: ['branch', `--set-upstream-to=${up}`, branch], branch, upstream: up };
+}
+
+const SUBMODULE_STATES = { '-': 'uninitialised', '+': 'out of date', U: 'conflict', ' ': 'ok' };
+
+/**
+ * Parses `git submodule status`: { path, sha, state, describe } per submodule, where state is 'uninitialised'
+ * (not cloned or checked out), 'out of date' (it has another commit checked out than the one recorded here),
+ * 'conflict', or 'ok'. `files` (parseStatus's) adds 'modified' for one with changes of its own inside it.
+ */
+export function parseSubmodules(raw, files = []) {
+  const out = [];
+  for (const line of raw.split('\n')) {
+    const m = /^([ +\-U])([0-9a-f]{40,64}) (.+?)(?: \((.*)\))?$/.exec(line);
+    if (!m) continue;
+    let state = SUBMODULE_STATES[m[1]];
+    const inside = files.find((f) => f.submodule && f.path === m[3])?.submodule;
+    const dirty = Boolean(inside && (inside.modified || inside.untracked));
+    if (state === 'ok' && dirty) state = 'modified';
+    out.push({ path: m[3], sha: m[2], state, describe: m[4] ?? '', dirty });
+  }
+  return out;
 }

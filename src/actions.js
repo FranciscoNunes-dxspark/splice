@@ -845,6 +845,36 @@ export async function discardAll(ctx) {
   return settleCopy(ctx, copy, r);
 }
 
+/**
+ * I on a submodule in Changes, /submodule-update [path]: clones what isn't yet and checks out the commit this
+ * repository records, in one submodule or all of them (and theirs, recursively). Asks first when that moves
+ * one off another commit it has checked out.
+ */
+export async function updateSubmodules(ctx, text) {
+  if (!needRepo(ctx)) return;
+  const subs = ctx.data.submodules ?? [];
+  if (!subs.length) return ctx.note('This repository has no submodules.', 'error');
+  const path = (text ?? '').trim().replace(/[\\/]+$/, '');
+  const target = path ? subs.find((s) => s.path === path) : null;
+  if (path && !target) return ctx.note(`No submodule at ${path}.`, 'error');
+  const moving = (target ? [target] : subs).filter((s) => s.state === 'out of date');
+  if (moving.length) {
+    const ok = await ctx.confirm({
+      title: `Check out the recorded commit in ${moving.map((s) => s.path).join(', ')}?`,
+      detail: 'It has another commit checked out now. That commit stays in its history, but its HEAD moves (detached).',
+      options: YES_NO('Yes, update'),
+    });
+    if (!ok) return;
+  }
+  return ctx.exec(['submodule', 'update', '--init', '--recursive', ...(target ? ['--', target.path] : [])], { label: 'Updating submodules' });
+}
+
+/** o or ↵ on a submodule in Changes: opens it in Splice as the repository it is. */
+export function openSubmodule(ctx, sub) {
+  if (sub.state === 'uninitialised') return ctx.note(`${sub.path} isn't initialised yet: I clones and checks it out.`, 'error');
+  return ctx.openRepo(join(ctx.data.root, sub.path));
+}
+
 /** Takes one side of a conflicted file and marks it resolved. */
 export async function resolveWith(ctx, f, side) {
   const r = await ctx.exec(['checkout', `--${side}`, '--', f.path], { refresh: false, quiet: true });

@@ -18,6 +18,7 @@ import {
   parseStash,
   parseStashFiles,
   parseStatus,
+  parseSubmodules,
   parseWorktrees,
 } from './parse.js';
 
@@ -129,7 +130,7 @@ async function readStashes(repo, refs) {
 
 /** Loads everything the views show. */
 export async function loadRepo(repo, { graphLimit = 400 } = {}) {
-  const [snap, log, remotes] = await Promise.all([
+  const [snap, log, remotes, subs] = await Promise.all([
     readState(repo, REF_FORMAT, refsSignature),
     // An empty repository has nothing to log, which git reports as an error.
     git(repo.root, [
@@ -137,6 +138,9 @@ export async function loadRepo(repo, { graphLimit = 400 } = {}) {
       `--format=${LOG_FORMAT}`, '--exclude=refs/stash', '--all',
     ]).catch(() => ''),
     readRemotes(repo),
+    // Only a repository with submodules pays for asking about them. Not part of the signature: what
+    // polling needs to notice (a submodule's commit or changes) is in the status already.
+    existsSync(join(repo.root, '.gitmodules')) ? git(repo.root, ['submodule', 'status']).catch(() => '') : '',
   ]);
   const status = parseStatus(snap.status);
   const graph = parseGraph(log);
@@ -156,6 +160,7 @@ export async function loadRepo(repo, { graphLimit = 400 } = {}) {
     refs: parseRefs(snap.refs),
     stashes: await readStashes(repo, snap.refs),
     worktrees,
+    submodules: parseSubmodules(subs, status.files),
     ...remotes,
   };
 }
