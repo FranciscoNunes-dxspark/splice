@@ -22,6 +22,13 @@ export function Knot({ mood }) {
 }
 
 /** The box shown when Tiller starts, like Claude Code's welcome. Esc or the first command clears it. */
+// The welcome box's line about a newer release, by how far installing it has got.
+const UPDATE_LINES = {
+  out: (v) => `Tiller ${v} is out (you have ${VERSION}). The link is below.`,
+  installing: (v) => `Tiller ${v} is out; downloading it in the background.`,
+  installed: (v) => `Tiller ${v} is installed and starts the next time you open Tiller.`,
+};
+
 export function Welcome({ mood, data, width, update }) {
   const textW = Math.max(10, width - KNOT_WIDTH - 7);
   return (
@@ -39,7 +46,7 @@ export function Welcome({ mood, data, width, update }) {
         </Text>
         {update ? (
           <Text color={theme.warn} wrap="truncate">
-            {fit(`Tiller ${update.latest} is out (you have ${VERSION}). The link is below.`, textW).trimEnd()}
+            {fit(UPDATE_LINES[update.state ?? 'out'](update.latest), textW).trimEnd()}
           </Text>
         ) : (
           <Text> </Text>
