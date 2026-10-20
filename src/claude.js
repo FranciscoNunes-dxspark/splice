@@ -29,7 +29,8 @@ export function clip(text, max = MAX_INPUT) {
   return `${text.slice(0, max)}\n\n[Cut here: the rest (${(text.length - max).toLocaleString('en')} more characters) was left out.]`;
 }
 
-const PLAIN = 'Write plain text for a terminal: short paragraphs and "-" lists are fine, but no Markdown headings, tables or bold.';
+// Tiller formats Markdown (src/markdown.js), but in a pane often 60 to 100 columns wide.
+const FORMAT = 'Tiller shows your answer in a terminal and formats Markdown: headings, bold, "-" lists, `code` and code blocks are fine. Keep it compact and avoid wide tables.';
 
 export function commitPrompt(recentSubjects) {
   return [
@@ -60,7 +61,7 @@ export function lookPrompt(mode, subject) {
     task,
     'Standard input has the change.',
     "You may read other files in the repository for context; the working tree may have moved on since the change was made.",
-    PLAIN,
+    FORMAT,
   ].join('\n');
 }
 

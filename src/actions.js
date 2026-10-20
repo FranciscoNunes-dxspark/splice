@@ -626,7 +626,7 @@ export async function draftPr(ctx, text) {
   const { title, body } = parsePrDraft(r.out);
   if (!title) return ctx.note("Claude didn't draft a title. Try again, or open it yourself: /pr <title>", 'error');
   ctx.prDraft = { branch: branch.head, body };
-  ctx.showText(`Pull request draft: ${branch.head} → ${target}`, `${title}\n\n${body}`, { wrap: true });
+  ctx.showText(`Pull request draft: ${branch.head} → ${target}`, `${title}\n\n${body}`, { markdown: true });
   ctx.prefill(`/pr ${title}${asked ? ` --into ${asked}` : ''}`);
   return r;
 }
@@ -657,7 +657,7 @@ export async function claudeLook(ctx, mode, target) {
   }
   const subject = target.kind === 'commit' ? 'this commit' : target.kind === 'pr' ? 'this pull request' : 'these changes';
   const r = await askClaude(ctx, `${mode} ${what}`, lookPrompt(mode, subject), input, READ_ONLY);
-  if (r.ok) ctx.showText(`${mode === 'explain' ? 'Claude explains' : 'Claude reviews'} ${what}`, r.out, { wrap: true });
+  if (r.ok) ctx.showText(`${mode === 'explain' ? 'Claude explains' : 'Claude reviews'} ${what}`, r.out, { markdown: true });
   return r;
 }
 

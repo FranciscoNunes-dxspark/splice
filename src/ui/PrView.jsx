@@ -1,6 +1,7 @@
 import React from 'react';
 import { Box, useInput } from 'ink';
 import * as a from '../actions.js';
+import { renderMarkdown } from '../markdown.js';
 import { relTime } from '../parse.js';
 import { theme } from '../theme.js';
 import { fit, fitSegments, wrap } from '../text.js';
@@ -53,14 +54,14 @@ function detailLines(pr, d, width) {
   }
   if (pr.description.trim()) {
     lines.push('');
-    for (const l of wrap(pr.description.trim(), width).slice(0, 20)) lines.push(l);
+    lines.push(...renderMarkdown(pr.description, width).slice(0, 20));
   }
   if (!d) lines.push('', [{ text: 'Loading reviews, checks and comments…', color: theme.dim }]);
   else if (d.comments.length) {
     lines.push('', [{ text: `Comments (${d.comments.length})`, bold: true }]);
     for (const c of d.comments.slice(-15)) {
       lines.push([{ text: c.author ?? '', color: theme.hunk, bold: true }, { text: `  ${relTime(c.time)}`, color: theme.dim }]);
-      for (const l of wrap(c.text.trim(), width - 2).slice(0, 6)) lines.push(`  ${l}`);
+      for (const l of renderMarkdown(c.text, width - 2).slice(0, 6)) lines.push([{ text: '  ' }, ...l]);
     }
   }
   return lines;
