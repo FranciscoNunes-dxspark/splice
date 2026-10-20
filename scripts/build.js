@@ -29,8 +29,8 @@ const noDevtools = {
 for (const target of targets) {
   if (!TARGETS[target]) throw new Error(`Unknown target ${target}. Known: ${Object.keys(TARGETS).join(', ')}`);
   const outfile = `dist/${TARGETS[target]}`;
-  // Knot as the .exe icon. Bun can only write it when building on Windows, so CI builds that target there.
-  const windows = target.includes('windows') && process.platform === 'win32' ? { icon: 'assets/knot.ico', title: 'Splice' } : undefined;
+  // The pet as the .exe icon. Bun can only write it when building on Windows, so CI builds that target there.
+  const windows = target.includes('windows') && process.platform === 'win32' ? { icon: 'assets/logo.ico', title: 'Splice' } : undefined;
   const result = await Bun.build({
     entrypoints: ['src/cli.jsx'],
     compile: { target, outfile, windows },

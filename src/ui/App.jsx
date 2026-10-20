@@ -25,8 +25,8 @@ import { hostFor, openUrl } from '../hosting.js';
 import { TextViewer } from './TextViewer.jsx';
 import { Picker } from './Picker.jsx';
 import { RebaseEditor } from './RebaseEditor.jsx';
-import { WELCOME_HEIGHT, Welcome } from './Knot.jsx';
-import { FACES, moodFor } from '../knot.js';
+import { WELCOME_HEIGHT, Welcome } from './Pet.jsx';
+import { FACES, moodFor } from '../pet.js';
 
 const VIEWS = [
   { id: 'graph', label: 'Graph' },
@@ -131,7 +131,7 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
   const [filter, setFilter] = useState(null);
   const [welcome, setWelcome] = useState(true);
   const [update, setUpdate] = useState(null);
-  // Knot looks happy (or worried) for a few seconds after a result; re-render when that wears off.
+  // The pet looks happy (or worried) for a few seconds after a result; re-render when that wears off.
   const [, setMoodTick] = useState(0);
   useEffect(() => {
     const t = setTimeout(() => setMoodTick((n) => n + 1), 8100);
