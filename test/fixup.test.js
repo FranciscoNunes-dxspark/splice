@@ -18,7 +18,7 @@ before(() => {
   process.env.TILLER_HOME = join(base, 'home');
 });
 
-after(() => rmSync(base, { recursive: true, force: true }));
+after(() => rmSync(base, { recursive: true, force: true, maxRetries: 10 }));
 
 let lastApp = null;
 

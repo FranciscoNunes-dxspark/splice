@@ -37,7 +37,7 @@ before(() => {
   writeFileSync(join(dir, 'new.txt'), 'brand new\n');
 });
 
-after(() => rmSync(base, { recursive: true, force: true }));
+after(() => rmSync(base, { recursive: true, force: true, maxRetries: 10 }));
 
 let lastApp = null;
 
