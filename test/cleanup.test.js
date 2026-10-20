@@ -3,11 +3,11 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import React from 'react';
 import { render } from 'ink-testing-library';
+import { removeTemp } from './temp.js';
 import { cleanupChoice, cleanupCount, cleanupOptions, cleanupText, planCleanup } from '../src/cleanup.js';
 import { App } from '../src/ui/App.jsx';
 
@@ -182,7 +182,7 @@ test('the list says what goes, why, and what stays, with paths relative to the r
 const KEYS = { enter: '\r', esc: '\x1b' };
 const base = mkdtempSync(join(tmpdir(), 'tiller-cleanup-'));
 // On Windows a git still finishing for an unmounted app keeps the folder busy for a moment.
-after(() => rm(base, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 }));
+after(() => removeTemp(base));
 
 let lastApp = null;
 

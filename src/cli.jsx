@@ -19,7 +19,8 @@ if (args.includes('-h') || args.includes('--help')) {
   console.log(`tiller [path]
 
 A keyboard-driven git client. Opens the repository at [path] (default: the
-current folder). If that isn't a repository, it lists the ones it finds there.
+current folder). If that isn't a repository, it lists the ones it finds there;
+with no [path], it opens the repository you had open last instead.
 
 Inside: press ? for shortcuts, / for commands, ! to run any git command.`);
   process.exit(0);
@@ -45,9 +46,12 @@ const setTitle = (title) => process.stdout.write(`\x1b]0;${title.replace(/[\x00-
 const checkUpdate = COMPILED ? checkForUpdate : undefined;
 // What an earlier update moved aside; quietly, and it doesn't hold up the start.
 if (COMPILED) removeOldExecutables();
+const path = args.find((x) => !x.startsWith('-'));
+// Started without a path outside a repository, Tiller reopens the last one; a path given means look there.
 const app = render(
   <App
-    initialPath={resolve(args.find((x) => !x.startsWith('-')) ?? process.cwd())}
+    initialPath={resolve(path ?? process.cwd())}
+    reopenLast={!path}
     config={config}
     checkUpdate={checkUpdate}
     installUpdate={COMPILED ? installUpdate : undefined}

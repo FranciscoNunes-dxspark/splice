@@ -2,11 +2,12 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import React from 'react';
 import { render } from 'ink-testing-library';
+import { removeTemp } from './temp.js';
 import { App } from '../src/ui/App.jsx';
 
 const KEYS = { enter: '\r', esc: '\x1b' };
@@ -18,18 +19,26 @@ before(() => {
   process.env.TILLER_HOME = join(base, 'home');
 });
 
-after(() => rmSync(base, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 }));
+after(() => removeTemp(base));
 
 let lastApp = null;
 
 async function until(check, what, ms = 8000) {
   const end = Date.now() + ms;
+  let failed = null;
   while (Date.now() < end) {
-    // Once it shows, give the new view's key handlers a moment to subscribe, as a person would.
-    if (check()) return new Promise((r) => setTimeout(r, 100));
+    // A check that runs git can catch Tiller mid-rebase, while a ref is being replaced ("your current
+    // branch appears to be broken" on Windows): that's "not yet", not a failure.
+    try {
+      // Once it shows, give the new view's key handlers a moment to subscribe, as a person would.
+      if (check()) return new Promise((r) => setTimeout(r, 100));
+      failed = null;
+    } catch (e) {
+      failed = e;
+    }
     await new Promise((r) => setTimeout(r, 40));
   }
-  throw new Error(`Timed out waiting for ${what}. Last frame:\n${lastApp?.lastFrame()}`);
+  throw new Error(`Timed out waiting for ${what}.${failed ? ` Last check: ${failed.message}` : ''} Last frame:\n${lastApp?.lastFrame()}`);
 }
 
 const type = async (stdin, text) => {

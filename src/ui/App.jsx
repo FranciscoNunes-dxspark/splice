@@ -113,7 +113,7 @@ function activityRows(entries) {
 }
 
 // `makeHost` stands in for hosting.js's hostFor in tests, so they never call gh or az.
-export function App({ initialPath, config: initialConfig, checkUpdate, installUpdate, askClaude, setTitle, makeHost = hostFor }) {
+export function App({ initialPath, reopenLast = false, config: initialConfig, checkUpdate, installUpdate, askClaude, setTitle, makeHost = hostFor }) {
   const { exit } = useApp();
   const { columns, rows } = useTerminalSize();
   const [config, setConfigState] = useState(initialConfig);
@@ -440,17 +440,29 @@ export function App({ initialPath, config: initialConfig, checkUpdate, installUp
     }
   };
 
-  // First load: the given folder if it's a repo, otherwise the repo picker scanning that folder.
+  // First load: the given folder if it's a repo. Otherwise, when Tiller was started without a path, the
+  // repository open last time (the most recent one still there); failing that, the repo picker scanning that folder.
   useEffect(() => {
     (async () => {
-      const ok = await openRepo(initialPath, { silent: true });
+      const here = await openRepo(initialPath, { silent: true });
+      let reopened = null;
+      if (!here && reopenLast) {
+        for (const path of configRef.current.recent.filter((r) => existsSync(r)).slice(0, 3)) {
+          if (await openRepo(path, { silent: true })) {
+            reopened = path;
+            break;
+          }
+        }
+      }
       setLoading(false);
-      if (!ok) {
+      if (reopened) {
+        note(`Opened ${basename(reopened)}, the repository you had open last (${initialPath} isn't one). Repos lists the others.`);
+      } else if (!here) {
         setView('repos');
         note(`${initialPath} isn't inside a git repository. Pick one below, or /open <path>.`);
       }
       // Opening a repo only needs the paths (for /open completion); the Repos view fills in the rest when shown.
-      refreshRepos(ok ? [] : [initialPath], { summaries: !ok });
+      refreshRepos(here ? [] : [initialPath], { summaries: !here && !reopened });
       // After the first load, so it doesn't slow it down. cli.jsx passes the check and the install; tests
       // leave them out or pass stubs, so they stay offline and never replace anything.
       if (checkUpdate && configRef.current.checkForUpdates !== false) {

@@ -3,11 +3,12 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import React from 'react';
 import { render } from 'ink-testing-library';
+import { removeTemp } from './temp.js';
 import { hasMarkers, matchLineEndings, parseConflicts, takeSide, unifiedDiff } from '../src/conflict.js';
 import { READ_ONLY, parseResolution, resolveInput, resolvePrompt } from '../src/claude.js';
 import { App } from '../src/ui/App.jsx';
@@ -96,13 +97,7 @@ before(() => {
   process.env.TILLER_HOME = join(base, 'home');
 });
 
-after(() => {
-  try {
-    rmSync(base, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
-  } catch {
-    // Windows may still hold the folder of a git that just exited; it's only a temp folder.
-  }
-});
+after(() => removeTemp(base));
 
 let lastApp = null;
 
@@ -128,8 +123,6 @@ function conflictRepo(name, file, lines, { style = 'merge' } = {}) {
   git('config', 'commit.gpgsign', 'false');
   git('config', 'merge.conflictStyle', style);
   // No background maintenance after the merge, holding the folder open while the test cleans up.
-  git('config', 'maintenance.auto', 'false');
-  git('config', 'gc.auto', '0');
   const content = (side) => `${Array.from({ length: 20 }, (_, i) => (lines.includes(i + 1) && side ? `${side} ${i + 1}` : `line ${i + 1}`)).join('\r\n')}\r\n`;
   writeFileSync(join(dir, file), content(null));
   git('add', '.');
