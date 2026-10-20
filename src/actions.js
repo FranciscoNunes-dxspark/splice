@@ -357,6 +357,36 @@ export async function discard(ctx, f) {
   return ctx.exec(['restore', ...paths(f)], { label: 'Discarding' });
 }
 
+/** Puts every file back the way the last commit has it, staged or not. Ignored files stay. */
+export async function discardAll(ctx) {
+  if (!needRepo(ctx)) return;
+  const { files } = ctx.data.status;
+  if (!files.length) return ctx.note('No changes to discard.', 'error');
+  const { state } = ctx.data;
+  if (state) return ctx.note(`A ${OP[state]} is in progress: /abort puts things back instead.`, 'error');
+  const untracked = files.filter((f) => f.kind === 'untracked').length;
+  const tracked = files.length - untracked;
+  const choice = await ctx.confirm({
+    title: `Discard all changes to ${files.length} ${files.length === 1 ? 'file' : 'files'}?`,
+    detail: `${untracked ? 'Untracked files are deleted. ' : ''}This can't be undone; /stash keeps the changes instead.`,
+    options: [
+      { label: 'Yes, discard everything', value: 'all' },
+      ...(untracked && tracked ? [{ label: 'Discard, but keep the untracked files', value: 'tracked' }] : []),
+      { label: 'No', value: null },
+    ],
+    danger: true,
+  });
+  if (!choice) return;
+  const steps = [];
+  // Before the first commit there is no HEAD to reset to: remove what's staged, files included.
+  if (tracked) steps.push(isInitial(ctx) ? ['rm', '-r', '-f', '-q', '.'] : ['reset', '--hard', '-q']);
+  if (untracked && choice === 'all') steps.push(['clean', '-f', '-d', '-q']);
+  for (const [i, args] of steps.entries()) {
+    const r = await ctx.exec(args, { label: 'Discarding', refresh: i === steps.length - 1 });
+    if (!r.ok) return r;
+  }
+}
+
 /** Takes one side of a conflicted file and marks it resolved. */
 export async function resolveWith(ctx, f, side) {
   const r = await ctx.exec(['checkout', `--${side}`, '--', f.path], { refresh: false, quiet: true });

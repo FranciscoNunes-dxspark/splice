@@ -84,7 +84,7 @@ Prompt
 Slash commands
   /commit <msg>   /amend [msg]   /checkout <ref>   /branch <name> [start]
   /delete <ref>   /merge <ref>   /rebase <ref>     /reset <ref>   /tag <name> [ref]
-  /fetch   /pull [--rebase]   /push [--force]   /stash [msg]   /pop
+  /fetch   /pull [--rebase]   /push [--force]   /stash [msg]   /pop   /discard
   /continue   /abort   /find <text>   /open <path>   /scan <folder>   /last   /quit
   /pr <title> [--into <branch>] [--draft]   /comment <text>   /approve
   /rebase -i <ref>   /reword <message>   /worktree <path> [ref]

@@ -70,7 +70,7 @@ Press `?` inside for every shortcut. The essentials:
 
 Type `/` and the menu narrows as you type; `tab` completes, `↑`/`↓` picks, `↵` runs. Commands that take a branch complete branch, tag and remote names.
 
-`/commit <msg>` `/amend [msg]` `/checkout <ref>` `/branch <name> [start]` `/delete <ref>` `/merge <ref>` `/rebase <ref>` `/reset <ref>` `/tag <name> [ref]` `/fetch` `/pull [--rebase]` `/push [--force]` `/stash [msg]` `/pop` `/continue` `/abort` `/find <text>` `/open <path>` `/scan <folder>` `/last` `/refresh` `/help` `/quit` `/pr <title> [--into <branch>] [--draft]` `/comment <text>` `/approve` `/worktree <path> [ref]` `/describe` `/draft-pr [--into <branch>]` `/explain [ref]` `/review [ref]`
+`/commit <msg>` `/amend [msg]` `/checkout <ref>` `/branch <name> [start]` `/delete <ref>` `/merge <ref>` `/rebase <ref>` `/reset <ref>` `/tag <name> [ref]` `/fetch` `/pull [--rebase]` `/push [--force]` `/stash [msg]` `/pop` `/discard` `/continue` `/abort` `/find <text>` `/open <path>` `/scan <folder>` `/last` `/refresh` `/help` `/quit` `/pr <title> [--into <branch>] [--draft]` `/comment <text>` `/approve` `/worktree <path> [ref]` `/describe` `/draft-pr [--into <branch>]` `/explain [ref]` `/review [ref]`
 
 ### Interactive rebase
 

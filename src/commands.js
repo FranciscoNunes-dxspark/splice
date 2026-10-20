@@ -15,6 +15,7 @@ export const COMMANDS = [
   { name: 'pull', args: '[--rebase]', desc: 'Pull the current branch', run: (ctx, s) => a.pull(ctx, splitArgs(s)) },
   { name: 'push', args: '[--force]', desc: 'Push the current branch (sets the upstream the first time)', run: (ctx, s) => a.push(ctx, splitArgs(s)) },
   { name: 'stash', args: '[message]', desc: 'Stash all changes, untracked files included', run: (ctx, s) => a.stash(ctx, s) },
+  { name: 'discard', desc: 'Discard all uncommitted changes (asks first)', run: (ctx) => a.discardAll(ctx) },
   { name: 'pop', args: '[stash@{n}]', desc: 'Apply a stash and drop it', run: (ctx, s) => a.stashApply(ctx, s, { pop: true }) },
   { name: 'tag', args: '<name> [ref]', desc: 'Create a tag', run: (ctx, s) => a.tag(ctx, s) },
   { name: 'worktree', args: '<path> [ref]', desc: 'Add a worktree at a path (relative to the repository), checking out a ref', run: (ctx, s) => a.addWorktree(ctx, s) },
