@@ -15,6 +15,7 @@ import {
   parseNameStatus,
   parseRefs,
   parseStash,
+  parseStashFiles,
   parseStatus,
   parseWorktrees,
 } from './parse.js';
@@ -277,4 +278,20 @@ export function stashPatch(root, ref) {
   return git(root, ['stash', 'show', '--patch', '--include-untracked', ref]).catch(() =>
     git(root, ['stash', 'show', '--patch', ref]),
   );
+}
+
+/** Each file in a stash with its change (M, A, D), then the untracked files it took, from its third parent. */
+export async function stashFiles(root, ref) {
+  const [tracked, untracked] = await Promise.all([
+    git(root, ['diff', '--name-status', '-z', '--no-renames', `${ref}^1`, ref]),
+    // Only a stash made with --include-untracked (as Tiller's are) has a third parent.
+    git(root, ['ls-tree', '-r', '-z', '--name-only', `${ref}^3`]).catch(() => ''),
+  ]);
+  return parseStashFiles(tracked, untracked);
+}
+
+/** One file's diff in a stash: against the commit it was made on, or all added for an untracked one. */
+export function stashFileDiff(root, ref, file) {
+  if (file.untracked) return git(root, ['show', '--format=', `${ref}^3`, '--', file.path]);
+  return git(root, ['diff', `${ref}^1`, ref, '--', file.path]);
 }

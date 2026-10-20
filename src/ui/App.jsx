@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Box, Text, useApp, useInput } from 'ink';
+import { Box, Text, useApp, useInput, useStdin } from 'ink';
 import { existsSync } from 'node:fs';
 import { basename, resolve } from 'node:path';
 import * as a from '../actions.js';
@@ -7,7 +7,7 @@ import { completionKind, findCommand, suggestionsFor } from '../commands.js';
 import { samePath, saveConfig, withRecent } from '../config.js';
 import { git, run } from '../git.js';
 import { HELP } from '../help.js';
-import { changeDiff, commitPatch, findRepo, loadRepo, snapshot, stashPatch } from '../repo.js';
+import { changeDiff, commitPatch, findRepo, loadRepo, snapshot, stashFileDiff, stashPatch } from '../repo.js';
 import { discover, eachLimited, summarize } from '../repos.js';
 import { BULLET, theme } from '../theme.js';
 import { fitSegments, stringWidth } from '../text.js';
@@ -40,9 +40,9 @@ const VIEWS = [
 
 const HINTS = {
   graph: '↵ diff · c checkout · b branch · m merge · i rebase from here · C cherry-pick · v revert · X reset · e/R Claude explains/reviews',
-  changes: 'space stage · ↵ hunks/lines · a all · u unstage all · d discard · c commit · A amend · F fix up · H history · B blame · W Claude writes it · R review',
+  changes: 'space stage · ↵ hunks/lines · a all · u unstage all · d discard · s stash file · c commit · A amend · F fix up · H history · B blame · W Claude writes it · R review',
   branches: '↵ checkout · n new · m merge · e rebase · d delete · D diff vs default · o open PR · C clean up',
-  stash: '↵ diff · s stash · a apply · o pop · x drop',
+  stash: '↵ diff · s stash · S with a message · a apply · o pop · x drop · F files, to restore one',
   prs: '↵ diff · c checkout · a approve · C comment · o open in browser · n new PR · W Claude drafts one · e/R explain/review',
   repos: '↵ open · s scan folder · x forget',
   worktrees: '↵ open · n new · x remove or prune · C clean up',
@@ -146,6 +146,16 @@ export function App({ initialPath, config: initialConfig, checkUpdate, askClaude
   const lastOutput = useRef(null);
   const polling = useRef(false);
   const loadingMore = useRef(false);
+  // Counts keypresses, ahead of every handler, so the dispatcher can tell the key that opened the prompt.
+  const keySeq = useRef(0);
+  const prefillKey = useRef(-1);
+  const { internal_eventEmitter: inputEvents } = useStdin();
+  useEffect(() => {
+    if (!inputEvents) return;
+    const count = () => keySeq.current++;
+    inputEvents.prependListener('input', count);
+    return () => inputEvents.removeListener('input', count);
+  }, [inputEvents]);
 
   const setConfig = (update) => {
     const next = update(configRef.current);
@@ -267,6 +277,8 @@ export function App({ initialPath, config: initialConfig, checkUpdate, askClaude
     setSugIndex(0);
     historyPos.current = -1;
     setFocus('prompt');
+    // Noted so that the key that did this (c in Changes, say) isn't also typed into the prompt (see the dispatcher).
+    prefillKey.current = keySeq.current;
   };
 
   // `summaries` runs git status in every listed repo, which only the Repos view shows.
@@ -396,6 +408,7 @@ export function App({ initialPath, config: initialConfig, checkUpdate, askClaude
         { diff: true },
       ),
     showStash: (s) => showAsync(`${s.ref} ${s.message}`, () => stashPatch(dataRef.current.root, s.ref), { diff: true }),
+    showStashFile: (s, file) => showAsync(`${file.path} in ${s.ref}`, () => stashFileDiff(dataRef.current.root, s.ref, file), { diff: true }),
   });
 
   const submit = async (raw) => {
@@ -559,7 +572,9 @@ export function App({ initialPath, config: initialConfig, checkUpdate, askClaude
   // One dispatcher reading focus from refs, which change the instant focus moves. Handlers that
   // switch on with the next render would let fast typing (or a paste) after "/" leak into the view.
   useInput((input, key) => {
-    if (focusRef.current === 'prompt' && !confirmRef.current) return promptKeys(input, key);
+    // Ink calls the handlers for a key in no fixed order. When a view's ran first and opened the prompt
+    // (c in Changes prefills "/commit "), this same key mustn't then be typed into it.
+    if (focusRef.current === 'prompt' && !confirmRef.current) return prefillKey.current === keySeq.current ? undefined : promptKeys(input, key);
     if (key.ctrl && input === 'c') return exit();
     if (confirmRef.current || overlayRef.current) return;
     globalKeys(input, key);

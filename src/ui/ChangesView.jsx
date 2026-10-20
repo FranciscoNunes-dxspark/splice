@@ -105,6 +105,7 @@ export function ChangesView({ data, ctx, width, height, active }) {
     // A rename not committed yet has its history under the old name.
     if (input === 'H') return a.fileHistory(ctx, f.orig ?? f.path);
     if (input === 'B') return a.blame(ctx, f.path);
+    if (input === 's') return a.stashFile(ctx, f);
     if (input === 'O' && f.area === 'conflict') return a.resolveWith(ctx, f, 'ours');
     if (input === 'T' && f.area === 'conflict') return a.resolveWith(ctx, f, 'theirs');
   };

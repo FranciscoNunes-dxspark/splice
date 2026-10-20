@@ -220,6 +220,32 @@ export function parseStash(raw) {
     });
 }
 
+/**
+ * The files a stash holds. `tracked` is `git diff --name-status -z --no-renames <stash>^1 <stash>` (what it
+ * changed in tracked files: M, A, D, ...); `untracked` is `git ls-tree -r -z --name-only <stash>^3`, the
+ * untracked files it took, empty when it took none. Untracked files get code "?" and `untracked: true`.
+ */
+export function parseStashFiles(tracked, untracked = '') {
+  const out = [];
+  const parts = tracked.split('\0');
+  for (let i = 0; i < parts.length; i++) {
+    const code = parts[i];
+    if (!code) continue;
+    // Renames and copies (only without --no-renames) carry two paths: taken as the old one going, the new one coming.
+    if (code[0] === 'R' || code[0] === 'C') {
+      const [from, to] = [parts[i + 1], parts[i + 2]];
+      i += 2;
+      if (code[0] === 'R' && from) out.push({ code: 'D', path: from, untracked: false });
+      if (to) out.push({ code: 'A', path: to, untracked: false });
+      continue;
+    }
+    const path = parts[++i];
+    if (path) out.push({ code: code[0], path, untracked: false });
+  }
+  for (const path of untracked.split('\0')) if (path) out.push({ code: '?', path, untracked: true });
+  return out;
+}
+
 /** Parses `git worktree list --porcelain -z`. The first entry is the main working tree. */
 export function parseWorktrees(raw) {
   const out = [];
