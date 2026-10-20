@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Box, Text, useApp, useInput } from 'ink';
+import { Box, Text, useApp, useInput, useStdin } from 'ink';
 import { existsSync } from 'node:fs';
 import { basename, resolve } from 'node:path';
 import * as a from '../actions.js';
@@ -145,6 +145,16 @@ export function App({ initialPath, config: initialConfig, checkUpdate, askClaude
   const lastOutput = useRef(null);
   const polling = useRef(false);
   const loadingMore = useRef(false);
+  // Counts keypresses, ahead of every handler, so the dispatcher can tell the key that opened the prompt.
+  const keySeq = useRef(0);
+  const prefillKey = useRef(-1);
+  const { internal_eventEmitter: inputEvents } = useStdin();
+  useEffect(() => {
+    if (!inputEvents) return;
+    const count = () => keySeq.current++;
+    inputEvents.prependListener('input', count);
+    return () => inputEvents.removeListener('input', count);
+  }, [inputEvents]);
 
   const setConfig = (update) => {
     const next = update(configRef.current);
@@ -266,6 +276,8 @@ export function App({ initialPath, config: initialConfig, checkUpdate, askClaude
     setSugIndex(0);
     historyPos.current = -1;
     setFocus('prompt');
+    // Noted so that the key that did this (c in Changes, say) isn't also typed into the prompt (see the dispatcher).
+    prefillKey.current = keySeq.current;
   };
 
   // `summaries` runs git status in every listed repo, which only the Repos view shows.
@@ -529,7 +541,9 @@ export function App({ initialPath, config: initialConfig, checkUpdate, askClaude
   // One dispatcher reading focus from refs, which change the instant focus moves. Handlers that
   // switch on with the next render would let fast typing (or a paste) after "/" leak into the view.
   useInput((input, key) => {
-    if (focusRef.current === 'prompt' && !confirmRef.current) return promptKeys(input, key);
+    // Ink calls the handlers for a key in no fixed order. When a view's ran first and opened the prompt
+    // (c in Changes prefills "/commit "), this same key mustn't then be typed into it.
+    if (focusRef.current === 'prompt' && !confirmRef.current) return prefillKey.current === keySeq.current ? undefined : promptKeys(input, key);
     if (key.ctrl && input === 'c') return exit();
     if (confirmRef.current || overlayRef.current) return;
     globalKeys(input, key);
