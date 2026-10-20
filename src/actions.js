@@ -5,6 +5,7 @@ import { readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { READ_ONLY, cleanSubject, clip, commitPrompt, lookPrompt, parsePrDraft, parseResolution, prPrompt, resolveInput, resolvePrompt } from './claude.js';
 import { cleanupChoice, cleanupCount, cleanupOptions, cleanupText, planCleanup, readCleanup } from './cleanup.js';
+import { configFile } from './config.js';
 import { matchLineEndings, parseConflicts, takeSide, unifiedDiff } from './conflict.js';
 import { blamePicker, historyPicker, repoPath } from './history.js';
 import { defaultBranch, findArgs, parseGraph, parseStatus, relTime, searchArgs, splitArgs } from './parse.js';
@@ -21,8 +22,9 @@ import {
   planSummary,
   prepare,
 } from './rebase.js';
+import { settingRows, settingSegments } from './settings.js';
 import { fit } from './text.js';
-import { theme } from './theme.js';
+import { DEFAULT_ACCENT, isColour, setAccent, theme } from './theme.js';
 import {
   REFLOG_FORMAT,
   captureDiscard,
@@ -1300,4 +1302,77 @@ export function showReflog(ctx) {
       },
     },
   });
+}
+
+/** `/settings` and `,`: every setting in a list, changed in place and saved as it changes. */
+export function settings(ctx, { replace = false, index } = {}) {
+  ctx.showPicker(
+    {
+      title: 'Settings',
+      hint: '↵ change',
+      index,
+      items: () => settingRows(ctx.config, { file: configFile() }).map((row) => ({ ...row, segments: settingSegments(row) })),
+      redraw: (at) => settings(ctx, { replace: true, index: at }),
+      onPick: (row) => changeSetting(ctx, row),
+    },
+    { replace },
+  );
+}
+
+/** Redraws the settings list (or its folders) after a change, if it's on screen. */
+export function redrawSettings(ctx) {
+  const o = ctx.overlay();
+  if (o?.redraw) o.redraw(o.index);
+}
+
+async function changeSetting(ctx, row) {
+  if (row.action === 'toggle') {
+    ctx.setConfig((c) => ({ ...c, [row.id]: c[row.id] === false }));
+    return redrawSettings(ctx);
+  }
+  if (row.action === 'accent') return ctx.prefill(`/accent ${ctx.config.accent ?? DEFAULT_ACCENT}`);
+  if (row.action === 'roots') return scanFolders(ctx);
+  if (row.action === 'clear') {
+    const ok = await ctx.confirm({
+      title: row.id === 'recent' ? `Forget the ${row.value}?` : `Clear the prompt history (${row.value})?`,
+      detail: row.id === 'recent' ? 'Only the list is cleared; the repositories stay where they are.' : undefined,
+      options: YES_NO(row.id === 'recent' ? 'Yes, forget them' : 'Yes, clear it'),
+    });
+    if (!ok) return;
+    ctx.setConfig((c) => ({ ...c, [row.id]: [] }));
+    redrawSettings(ctx);
+  }
+}
+
+/** The folders scanned for repositories, from /settings: x stops scanning one, s adds one. */
+function scanFolders(ctx, { replace = false, index } = {}) {
+  ctx.showPicker(
+    {
+      title: 'Folders to scan for repositories',
+      hint: 'x remove · s add a folder',
+      empty: 'No folders yet. s adds one (or /scan <folder>).',
+      index,
+      items: () => (ctx.config.roots ?? []).map((path) => ({ path, segments: [{ text: path }] })),
+      redraw: (at) => scanFolders(ctx, { replace: true, index: at }),
+      keys: {
+        x: (it) => {
+          ctx.setConfig((c) => ({ ...c, roots: c.roots.filter((r) => r !== it.path) }));
+          redrawSettings(ctx);
+        },
+      },
+      actions: { s: () => ctx.prefill('/scan ') },
+    },
+    { replace },
+  );
+}
+
+/** `/accent <#rrggbb | default>`: the accent colour, saved and repainted straight away. */
+export function accent(ctx, text) {
+  const value = (text ?? '').trim();
+  if (!value) return ctx.prefill(`/accent ${ctx.config.accent ?? DEFAULT_ACCENT}`);
+  if (value !== 'default' && !isColour(value)) return ctx.note(`${value} isn't a colour. Give one as #rrggbb (like ${DEFAULT_ACCENT}), or default.`, 'error');
+  const colour = value === 'default' ? null : value.toLowerCase();
+  setAccent(colour);
+  ctx.setConfig(({ accent: _, ...rest }) => (colour ? { ...rest, accent: colour } : rest));
+  redrawSettings(ctx);
 }

@@ -334,7 +334,7 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
   };
 
   const ctxRef = useRef(null);
-  if (!ctxRef.current) ctxRef.current = { get data() { return dataRef.current; } };
+  if (!ctxRef.current) ctxRef.current = { get data() { return dataRef.current; }, get config() { return configRef.current; } };
   const ctx = ctxRef.current;
   Object.assign(ctx, {
     exec,
@@ -385,6 +385,8 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
       note(`Scanning ${full} for repositories`);
       setView('repos');
       refreshRepos();
+      // Added from the folders list in /settings: show it there.
+      a.redrawSettings(ctx);
     },
     forgetRepo: (path) => {
       setConfig((c) => ({ ...c, recent: c.recent.filter((r) => !samePath(r, path)) }));
@@ -393,7 +395,16 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
     showText: (title, text, opts = {}) => setOverlay({ title, text, ...opts }),
     showRebase: (plan) => setOverlay({ kind: 'rebase', plan }),
     // A list to pick from: { title, hint, items | load, onPick, keys, empty } (see Picker.jsx).
-    showPicker: (picker) => setOverlay({ ...picker, kind: 'picker', id: ++pickerIds.current }),
+    // `replace`: swaps the picker on screen for this one (the same list, redrawn after a change), keeping
+    // where it goes back to, instead of opening on top of it.
+    showPicker: (picker, { replace = false } = {}) => {
+      const next = { ...picker, kind: 'picker', id: ++pickerIds.current };
+      if (replace) setOverlay((cur) => ({ ...next, back: cur?.back }));
+      else setOverlay(next);
+    },
+    overlay: () => overlayRef.current,
+    // Settings change through App's copy, the only one written to disk (ctx.config reads it).
+    setConfig,
     closeOverlay: () => {
       const closing = overlayRef.current;
       ctx.rebaseEditor = null;
@@ -600,6 +611,7 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
     if (input === '/' || input === ':') return prefill('/');
     if (input === '!') return prefill('!');
     if (input === '?') return ctx.showHelp();
+    if (input === ',') return a.settings(ctx);
     if (input === 'q') return exit();
     const n = Number(input);
     if (n >= 1 && n <= VIEWS.length) return setView(VIEWS[n - 1].id);
