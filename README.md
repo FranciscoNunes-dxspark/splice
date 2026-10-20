@@ -45,7 +45,7 @@ Without `npm link`, run it with `node C:\Team\Tiller\bin\tiller.js`.
 ## Use
 
 ```bash
-tiller              # the repository you're in
+tiller              # the repository you're in (outside one: the repository you had open last)
 tiller C:\Team\Keel # a specific one
 tiller C:\Team      # not a repository: lists the ones it finds inside
 ```

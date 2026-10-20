@@ -19,7 +19,8 @@ if (args.includes('-h') || args.includes('--help')) {
   console.log(`tiller [path]
 
 A keyboard-driven git client. Opens the repository at [path] (default: the
-current folder). If that isn't a repository, it lists the ones it finds there.
+current folder). If that isn't a repository, it lists the ones it finds there;
+with no [path], it opens the repository you had open last instead.
 
 Inside: press ? for shortcuts, / for commands, ! to run any git command.`);
   process.exit(0);
@@ -40,7 +41,9 @@ process.on('exit', () => process.stdout.write('\x1b[?1049l'));
 // Only the downloaded executables look for updates: a checkout updates with git pull, and its
 // package.json version is behind the releases (the Release workflow sets the version as it builds).
 const checkUpdate = COMPILED ? checkForUpdate : undefined;
-const app = render(<App initialPath={resolve(args.find((x) => !x.startsWith('-')) ?? process.cwd())} config={config} checkUpdate={checkUpdate} askClaude={ask} />, {
+const path = args.find((x) => !x.startsWith('-'));
+// Started without a path outside a repository, Tiller reopens the last one; a path given means look there.
+const app = render(<App initialPath={resolve(path ?? process.cwd())} reopenLast={!path} config={config} checkUpdate={checkUpdate} askClaude={ask} />, {
   exitOnCtrlC: false,
 });
 await app.waitUntilExit();
