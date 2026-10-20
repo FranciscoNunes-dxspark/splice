@@ -60,7 +60,7 @@ Press `?` inside for every shortcut. The essentials:
 | Rebase editor | `p` pick · `r` reword · `e` edit · `s` squash · `f` fix up · `d` drop · `J`/`K` move · `↵` start · `esc` cancel |
 | Changes | `space` stage/unstage · `↵` step into the diff · `a` stage all · `u` unstage all · `d` discard · `c` commit · `A` amend · `F` fix up an earlier commit · `W` Claude writes the message · `R` Claude reviews · on conflicts `O` ours / `T` theirs |
 | Changes, in the diff | `j`/`k` changed lines · `n`/`N` hunks · `space` stage (or unstage) the hunk · `v` select lines, then `space` stages just those · `d` discard them · `esc` back |
-| Branches | `↵` check out (remote branches get a tracking branch) · `n` new from here · `m` merge · `e` rebase onto · `d` delete |
+| Branches | `↵` check out (remote branches get a tracking branch) · `n` new from here · `m` merge · `e` rebase onto · `d` delete · `D` diff with the default branch · `o` open its pull request |
 | Worktrees | `↵` open · `n` new · `x` remove (or prune one whose folder is gone) |
 | Stash | `↵` diff · `s` stash · `a` apply · `o` pop · `x` drop |
 | PRs | `↵` diff · `c` check out · `a` approve · `C` comment · `o` open in the browser · `n` new PR from the current branch · `W` Claude drafts one · `e` / `R` Claude explains / reviews it |
@@ -70,7 +70,11 @@ Press `?` inside for every shortcut. The essentials:
 
 Type `/` and the menu narrows as you type; `tab` completes, `↑`/`↓` picks, `↵` runs. Commands that take a branch complete branch, tag and remote names.
 
-`/commit <msg>` `/amend [msg]` `/checkout <ref>` `/branch <name> [start]` `/delete <ref>` `/merge <ref>` `/rebase <ref>` `/reset <ref>` `/tag <name> [ref]` `/fetch` `/pull [--rebase]` `/push [--force]` `/stash [msg]` `/pop` `/discard` `/continue` `/abort` `/find <text>` `/find -S <text>` `/find -G <regex>` `/fixup [ref]` `/open <path>` `/scan <folder>` `/last` `/refresh` `/help` `/quit` `/pr <title> [--into <branch>] [--draft]` `/comment <text>` `/approve` `/worktree <path> [ref]` `/describe` `/draft-pr [--into <branch>]` `/explain [ref]` `/review [ref]`
+`/commit <msg>` `/amend [msg]` `/checkout <ref>` `/branch <name> [start]` `/delete <ref>` `/merge <ref>` `/rebase <ref>` `/reset <ref>` `/tag <name> [ref]` `/fetch` `/pull [--rebase]` `/push [--force]` `/stash [msg]` `/pop` `/discard` `/continue` `/abort` `/find <text>` `/find -S <text>` `/find -G <regex>` `/fixup [ref]` `/open <path>` `/scan <folder>` `/last` `/refresh` `/help` `/quit` `/pr <title> [--into <branch>] [--draft]` `/comment <text>` `/approve` `/worktree <path> [ref]` `/compare <ref> [base]` `/describe` `/draft-pr [--into <branch>]` `/explain [ref]` `/review [ref]`
+
+### Branches
+
+The Branches view (`3`) compares each branch with the default branch: the remote's own default (`origin/HEAD`), or else `main` or `master`. The right-hand pane shows how far the selected branch is ahead and behind, the commits it has that the default branch doesn't, then its earlier history. `D` opens the full diff of what the branch adds, as a pull request would show it; `/compare <ref> [base]` does the same for any ref, against any base. Branches with an open pull request show its number (`#12` on GitHub, `!12` on Azure DevOps), coloured by its review state (green approved, red changes requested, yellow waiting), and its checks; `o` opens it in the browser.
 
 ### Interactive rebase
 

@@ -5,10 +5,10 @@ import { renderMarkdown } from '../markdown.js';
 import { relTime } from '../parse.js';
 import { theme } from '../theme.js';
 import { fit, fitSegments, wrap } from '../text.js';
-import { useAsync, useListNav } from './hooks.js';
+import { useAsync, useListNav, usePrList } from './hooks.js';
 import { Lines, Panel, Row } from './parts.jsx';
 
-const TONE = { good: theme.add, bad: theme.del, wait: theme.warn, none: theme.dim };
+export const TONE = { good: theme.add, bad: theme.del, wait: theme.warn, none: theme.dim };
 const VOTE = {
   approved: ['✓', theme.add],
   suggestions: ['✓', theme.add],
@@ -19,7 +19,7 @@ const VOTE = {
 };
 const CHECK = { pass: ['✓', theme.add], fail: ['✗', theme.del], pending: ['…', theme.warn] };
 
-function checksText(c) {
+export function checksText(c) {
   if (!c) return { text: '' };
   if (c.failed) return { text: `✗ ${c.failed}`, color: theme.del };
   if (c.pending) return { text: `… ${c.pending}`, color: theme.warn };
@@ -68,10 +68,8 @@ function detailLines(pr, d, width) {
 }
 
 export function PrView({ data, ctx, width, height, active, prVersion }) {
-  const host = ctx.host();
-  // A new key every minute refetches while you look; the old list stays up until the new one lands.
-  const listKey = host ? `prs:${data.root}:${host.remoteName}:${prVersion}:${Math.floor(Date.now() / 60000)}` : null;
-  const prs = useAsync(listKey, () => host.list(), 0);
+  const prs = usePrList(ctx, data, prVersion);
+  const { host, key: listKey } = prs;
   const list = prs.value ?? [];
 
   const split = width >= 100;

@@ -41,7 +41,7 @@ const VIEWS = [
 const HINTS = {
   graph: '↵ diff · c checkout · b branch · m merge · i rebase from here · C cherry-pick · v revert · X reset · e/R Claude explains/reviews',
   changes: 'space stage · ↵ hunks/lines · a all · u unstage all · d discard · c commit · A amend · F fix up · W Claude writes it · R review',
-  branches: '↵ checkout · n new · m merge · e rebase · d delete',
+  branches: '↵ checkout · n new · m merge · e rebase · d delete · D diff vs default · o open PR',
   stash: '↵ diff · s stash · a apply · o pop · x drop',
   prs: '↵ diff · c checkout · a approve · C comment · o open in browser · n new PR · W Claude drafts one · e/R explain/review',
   repos: '↵ open · s scan folder · x forget',
@@ -105,7 +105,8 @@ function activityRows(entries) {
   return out.slice(-6);
 }
 
-export function App({ initialPath, config: initialConfig, checkUpdate, askClaude }) {
+// `makeHost` stands in for hosting.js's hostFor in tests, so they never call gh or az.
+export function App({ initialPath, config: initialConfig, checkUpdate, askClaude, makeHost = hostFor }) {
   const { exit } = useApp();
   const { columns, rows } = useTerminalSize();
   const [config, setConfigState] = useState(initialConfig);
@@ -325,7 +326,7 @@ export function App({ initialPath, config: initialConfig, checkUpdate, askClaude
     host: () => {
       const d = dataRef.current;
       const key = d ? `${d.root}|${JSON.stringify(d.remoteUrls)}` : null;
-      if (ctx.hostCache?.key !== key) ctx.hostCache = { key, host: d ? hostFor(d) : null };
+      if (ctx.hostCache?.key !== key) ctx.hostCache = { key, host: d ? makeHost(d) : null };
       return ctx.hostCache.host;
     },
     prsChanged: () => setPrVersion((v) => v + 1),
@@ -384,6 +385,13 @@ export function App({ initialPath, config: initialConfig, checkUpdate, askClaude
     showPatch: (c) => showAsync(`${c.hash.slice(0, 7)} ${c.subject}`, () => commitPatch(dataRef.current.root, c.hash), { diff: true }),
     showChange: (f) => showAsync(`${f.path} (${f.area})`, () => changeDiff(dataRef.current.root, f), { diff: true }),
     showPrDiff: (pr) => showAsync(`${pr.label} ${pr.title}`, () => ctx.host().diff(pr), { diff: true }),
+    // What `ref` adds to `base`: the diff from where they forked (three dots), as a pull request would show it.
+    showCompare: (ref, base) =>
+      showAsync(
+        `${base}...${ref}`,
+        async () => (await git(dataRef.current.root, ['diff', '--stat', '--patch', '-M', `${base}...${ref}`, '--'])) || `${ref} has no changes that ${base} doesn't.`,
+        { diff: true },
+      ),
     showStash: (s) => showAsync(`${s.ref} ${s.message}`, () => stashPatch(dataRef.current.root, s.ref), { diff: true }),
   });
 

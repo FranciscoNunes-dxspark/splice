@@ -2,7 +2,7 @@
 
 export const LOG_FORMAT = '%x1f%H%x1f%P%x1f%D%x1f%an%x1f%at%x1f%s';
 export const REF_FORMAT =
-  '%(refname)%1f%(objectname)%1f%(upstream:short)%1f%(upstream:track)%1f%(HEAD)%1f%(creatordate:unix)%1f%(contents:subject)';
+  '%(refname)%1f%(objectname)%1f%(upstream:short)%1f%(upstream:track)%1f%(HEAD)%1f%(creatordate:unix)%1f%(contents:subject)%1f%(symref)';
 export const STASH_FORMAT = '%gd%x1f%at%x1f%gs';
 
 // Splits `s` on its first `n` spaces; the remainder (a path, which may hold spaces) is the last field.
@@ -134,26 +134,79 @@ export function parseTrack(track) {
   return out;
 }
 
-/** Parses `git for-each-ref --format=REF_FORMAT refs/heads refs/remotes refs/tags`. */
+/**
+ * Parses `git for-each-ref --format=REF_FORMAT refs/heads refs/remotes refs/tags`.
+ * `remoteHeads` has each remote's HEAD (its default branch) as a remote branch name, e.g. { origin: 'origin/main' }.
+ */
 export function parseRefs(raw) {
   const local = [];
   const remote = [];
   const tags = [];
+  const remoteHeads = {};
   for (const line of raw.split('\n')) {
     if (!line) continue;
-    const [ref, oid, upstream, track, head, date, subject] = line.split('\x1f');
+    const [ref, oid, upstream, track, head, date, subject, symref] = line.split('\x1f');
     const base = { oid, date: Number(date) || 0, subject: subject ?? '' };
     if (ref.startsWith('refs/heads/')) {
       local.push({ ...base, name: ref.slice(11), upstream: upstream || null, current: head === '*', ...parseTrack(track) });
     } else if (ref.startsWith('refs/remotes/')) {
       const name = ref.slice(13);
-      if (!name.endsWith('/HEAD') && name.includes('/')) remote.push({ ...base, name, remote: name.slice(0, name.indexOf('/')) });
+      if (name.endsWith('/HEAD')) {
+        if (symref?.startsWith('refs/remotes/')) remoteHeads[name.slice(0, -5)] = symref.slice(13);
+      } else if (name.includes('/')) remote.push({ ...base, name, remote: name.slice(0, name.indexOf('/')) });
     } else if (ref.startsWith('refs/tags/')) {
       tags.push({ ...base, name: ref.slice(10) });
     }
   }
   tags.sort((a, b) => b.date - a.date);
-  return { local, remote, tags };
+  return { local, remote, tags, remoteHeads };
+}
+
+/**
+ * The branch others merge into, from the refs alone (no git, no server): the remote's HEAD
+ * (origin first), else its main or master, else a local main or master. `ref` is what to compare
+ * with: the remote's copy when there is one, since that's what a pull request goes against.
+ * `name` is the branch's own name. Null when there's no telling.
+ */
+export function defaultBranch(refs, remotes = []) {
+  const order = [...remotes].sort((a, b) => (a === 'origin' ? -1 : b === 'origin' ? 1 : 0));
+  const hasRemote = (name) => refs.remote.some((b) => b.name === name);
+  for (const r of order) {
+    const head = refs.remoteHeads?.[r];
+    if (head && hasRemote(head)) return { name: head.slice(r.length + 1), ref: head };
+  }
+  for (const r of order) {
+    for (const n of ['main', 'master']) if (hasRemote(`${r}/${n}`)) return { name: n, ref: `${r}/${n}` };
+  }
+  for (const n of ['main', 'master']) if (refs.local.some((b) => b.name === n)) return { name: n, ref: n };
+  return null;
+}
+
+/** Whether a row of the Branches view is the default branch itself: its local copy or the remote one. */
+export function isDefaultBranch(def, ref, type) {
+  if (!def) return false;
+  if (type === 'local') return ref.name === def.ref || ref.name === def.name;
+  if (type === 'remote') return ref.name === def.ref;
+  return false;
+}
+
+/** Parses `git rev-list --left-right --count <base>...<ref>`: what `ref` has that `base` doesn't, and the reverse. */
+export function parseAheadBehind(raw) {
+  const [behind, ahead] = (raw ?? '').trim().split(/\s+/).map(Number);
+  return { ahead: ahead || 0, behind: behind || 0 };
+}
+
+export const COMMIT_FORMAT = '%H%x1f%h%x1f%at%x1f%s';
+
+/** Parses `git log --format=COMMIT_FORMAT`. */
+export function parseCommits(raw) {
+  return raw
+    .split('\n')
+    .filter(Boolean)
+    .map((l) => {
+      const [full, hash, time, subject] = l.split('\x1f');
+      return { full, hash, time: Number(time), subject: subject ?? '' };
+    });
 }
 
 /** Parses `git stash list --format=STASH_FORMAT`. */

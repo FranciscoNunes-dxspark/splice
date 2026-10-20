@@ -111,6 +111,9 @@ test('through the UI: Claude writes the commit message, then explains and review
     app.unmount();
     if (prevHome === undefined) delete process.env.TILLER_HOME;
     else process.env.TILLER_HOME = prevHome;
-    rmSync(base, { recursive: true, force: true });
+    // On Windows a git still finishing in the background can hold the folder; a leftover temp folder is harmless.
+    try {
+      rmSync(base, { recursive: true, force: true });
+    } catch {}
   }
 });
