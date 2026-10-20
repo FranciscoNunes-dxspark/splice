@@ -62,8 +62,8 @@ Press `?` inside for every shortcut. The essentials:
 | File history | `↵` the commit's diff of the file · `B` blame as of that commit · `esc` close |
 | Blame | `↵` diff of the commit behind the line · `H` the file's history · `esc` close |
 | Changes, in the diff | `j`/`k` changed lines · `n`/`N` hunks · `space` stage (or unstage) the hunk · `v` select lines, then `space` stages just those · `d` discard them · `esc` back |
-| Branches | `↵` check out (remote branches get a tracking branch) · `n` new from here · `m` merge · `e` rebase onto · `d` delete · `D` diff with the default branch · `o` open its pull request |
-| Worktrees | `↵` open · `n` new · `x` remove (or prune one whose folder is gone) |
+| Branches | `↵` check out (remote branches get a tracking branch) · `n` new from here · `m` merge · `e` rebase onto · `d` delete · `D` diff with the default branch · `o` open its pull request · `C` clean up |
+| Worktrees | `↵` open · `n` new · `x` remove (or prune one whose folder is gone) · `C` clean up |
 | Stash | `↵` diff · `s` stash · `a` apply · `o` pop · `x` drop |
 | PRs | `↵` diff · `c` check out · `a` approve · `C` comment · `o` open in the browser · `n` new PR from the current branch · `W` Claude drafts one · `e` / `R` Claude explains / reviews it |
 | Repos | `↵` open · `s` add a folder to scan · `x` forget |
@@ -72,7 +72,7 @@ Press `?` inside for every shortcut. The essentials:
 
 Type `/` and the menu narrows as you type; `tab` completes, `↑`/`↓` picks, `↵` runs. Commands that take a branch complete branch, tag and remote names; `/history` and `/blame` complete the repository's tracked files.
 
-`/commit <msg>` `/amend [msg]` `/checkout <ref>` `/branch <name> [start]` `/delete <ref>` `/merge <ref>` `/rebase <ref>` `/reset <ref>` `/tag <name> [ref]` `/fetch` `/pull [--rebase]` `/push [--force]` `/stash [msg]` `/pop` `/discard` `/continue` `/abort` `/find <text>` `/find -S <text>` `/find -G <regex>` `/fixup [ref]` `/open <path>` `/scan <folder>` `/last` `/refresh` `/help` `/quit` `/pr <title> [--into <branch>] [--draft]` `/comment <text>` `/approve` `/worktree <path> [ref]` `/compare <ref> [base]` `/history <path>` `/blame <path>` `/describe` `/draft-pr [--into <branch>]` `/explain [ref]` `/review [ref]`
+`/commit <msg>` `/amend [msg]` `/checkout <ref>` `/branch <name> [start]` `/delete <ref>` `/merge <ref>` `/rebase <ref>` `/reset <ref>` `/tag <name> [ref]` `/fetch` `/pull [--rebase]` `/push [--force]` `/stash [msg]` `/pop` `/discard` `/continue` `/abort` `/find <text>` `/find -S <text>` `/find -G <regex>` `/fixup [ref]` `/open <path>` `/scan <folder>` `/last` `/refresh` `/help` `/quit` `/pr <title> [--into <branch>] [--draft]` `/comment <text>` `/approve` `/worktree <path> [ref]` `/compare <ref> [base]` `/history <path>` `/blame <path>` `/cleanup` `/describe` `/draft-pr [--into <branch>]` `/explain [ref]` `/review [ref]`
 
 ### Branches
 
@@ -119,13 +119,22 @@ The Worktrees view (`4`) lists the main working tree and every worktree added to
 
 `/worktree <path> [ref]` runs `git worktree add` with git's own defaults: the path is relative to the repository's root, a branch that only exists on one remote gets a local tracking branch, and with no ref git makes a new branch named after the folder. Flags pass through, so `/worktree -b fix ../fix main` works too. `n` in the view starts one next to the repository, as `../<repo>-`. Removing (`x`) asks first and leaves the branch alone; if the worktree has uncommitted changes, it asks again before forcing. A worktree whose folder was deleted shows as missing, and `x` prunes it.
 
+### Cleaning up
+
+`/cleanup` (or `C` in Branches or Worktrees) clears away the branches and worktrees that have nothing of yours left on them. It lists what would go and why in the viewer, then asks: everything, only the branches, only the worktrees, or nothing.
+
+- **Worktrees** go when they have no uncommitted changes (ignored files don't count), and ones whose folder is gone are pruned. Never the main working tree or the one open in Tiller. A worktree on a branch with unpushed commits can still go; the branch stays, and the list says so.
+- **Branches** go when none of their commits exist only here: they're merged into the default branch (the remote's `HEAD`, else what GitHub or Azure DevOps says, else `main` or `master`), or every commit is on a remote branch. That includes branches whose upstream was deleted after merging, and branches you pushed and haven't added to since (`↵` on the remote branch brings one back). Never the current branch, the default branch, or one checked out in a worktree that stays.
+
+Worktrees are removed first with a plain `git worktree remove`, then branches deleted with `git branch -d`; `-D` is used only for branches it refuses because they aren't merged into the one you're on, which were already checked against the remotes and the default branch. Something that fails is reported and the rest carries on. A branch that was squash-merged and whose remote branch was then deleted isn't caught, since its commits are on neither: delete it yourself (`d`). Fetch first (`f`) so Tiller knows which remote branches are gone.
+
 ### Running git directly
 
 `!log --stat -5`, `!remote -v`, `!clean -n`: anything after `!` runs as a git command in the open repository. Short output appears in the activity lines; longer output opens in the viewer. Commands that need a terminal of their own (`add -p`, `rebase -i`, anything that opens an editor) won't work here, because git runs without one.
 
 ## How it behaves
 
-- **Safe by default.** Discarding, force-deleting a branch, deleting a remote branch, dropping a stash, rebasing, resetting and force-pushing all ask first. `/push --force` uses `--force-with-lease`. Deleting a branch tries `git branch -d` first and only offers `-D` when git says the branch isn't merged.
+- **Safe by default.** Discarding, force-deleting a branch, deleting a remote branch, dropping a stash, rebasing, resetting and force-pushing all ask first. `/push --force` uses `--force-with-lease`. Deleting a branch tries `git branch -d` first and only offers `-D` when git says the branch isn't merged. `/cleanup` lists everything it would delete before asking.
 - **First push sets the upstream** (`push -u origin <branch>`), so `P` works on a new branch.
 - **Committing with nothing staged** offers to stage everything first.
 - **Partial staging** builds a patch of just the picked lines and applies it to the index (`git apply --cached`); unstaging and discarding apply it in reverse. Part of a brand-new file works too: the file is first recorded with `git add --intent-to-add`.

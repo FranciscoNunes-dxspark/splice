@@ -106,7 +106,9 @@ export function BranchesView({ data, ctx, width, height, active, prVersion }) {
   useInput(
     (input, key) => {
       if (!ctx.viewHasKeys()) return;
-      if (nav.handle(input, key) || !sel?.ref) return;
+      if (nav.handle(input, key)) return;
+      if (input === 'C') return a.cleanUp(ctx);
+      if (!sel?.ref) return;
       const { name } = sel.ref;
       if (key.return) a.checkout(ctx, name);
       else if (input === 'n') ctx.prefill(`/branch  ${name}`, 8);

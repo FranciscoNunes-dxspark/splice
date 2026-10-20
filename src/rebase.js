@@ -89,22 +89,16 @@ export function parseCommitList(raw) {
 
 /**
  * The refs whose commits a fixup shouldn't offer as targets: the branch's upstream and the default
- * branch (local and on the remote), unless that is the branch itself. `remoteHead` is what
- * refs/remotes/<remote>/HEAD points at ("origin/main"), when known; otherwise main or master.
+ * branch (local and on the remote), unless that is the branch itself. `def` is parse.js's
+ * `defaultBranch()`: { name, ref }.
  */
-export function fixupExclusions({ head, upstream, local = [], remote = [], remoteHead = null }) {
+export function fixupExclusions({ head, upstream, def = null, local = [] }) {
   const out = [];
   const add = (r) => r && !out.includes(r) && out.push(r);
   add(upstream);
-  let remoteName = remote.some((r) => r.startsWith('origin/')) ? 'origin' : remote[0]?.split('/')[0];
-  let name = ['main', 'master'].find((n) => local.includes(n) || remote.includes(`${remoteName}/${n}`));
-  if (remoteHead?.includes('/')) {
-    remoteName = remoteHead.slice(0, remoteHead.indexOf('/'));
-    name = remoteHead.slice(remoteName.length + 1);
-  }
-  if (!name || name === head) return out;
-  if (local.includes(name)) add(name);
-  if (remote.includes(`${remoteName}/${name}`)) add(`${remoteName}/${name}`);
+  if (!def || def.name === head) return out;
+  if (local.includes(def.name)) add(def.name);
+  add(def.ref);
   return out;
 }
 

@@ -41,11 +41,11 @@ const VIEWS = [
 const HINTS = {
   graph: '↵ diff · c checkout · b branch · m merge · i rebase from here · C cherry-pick · v revert · X reset · e/R Claude explains/reviews',
   changes: 'space stage · ↵ hunks/lines · a all · u unstage all · d discard · c commit · A amend · F fix up · H history · B blame · W Claude writes it · R review',
-  branches: '↵ checkout · n new · m merge · e rebase · d delete · D diff vs default · o open PR',
+  branches: '↵ checkout · n new · m merge · e rebase · d delete · D diff vs default · o open PR · C clean up',
   stash: '↵ diff · s stash · a apply · o pop · x drop',
   prs: '↵ diff · c checkout · a approve · C comment · o open in browser · n new PR · W Claude drafts one · e/R explain/review',
   repos: '↵ open · s scan folder · x forget',
-  worktrees: '↵ open · n new · x remove or prune',
+  worktrees: '↵ open · n new · x remove or prune · C clean up',
 };
 
 const POLL_MS = 3000;

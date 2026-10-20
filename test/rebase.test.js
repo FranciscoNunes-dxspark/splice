@@ -38,15 +38,16 @@ test('plan problems and summary', () => {
 
 test('fixup: which refs to leave out of the candidates, the log that lists them, and the fold', () => {
   const local = ['main', 'feature'];
-  const remote = ['origin/main', 'origin/feature'];
+  const def = { name: 'main', ref: 'origin/main' };
   // On a feature branch: its upstream and the default branch, both copies.
-  assert.deepEqual(fixupExclusions({ head: 'feature', upstream: 'origin/feature', local, remote }), ['origin/feature', 'main', 'origin/main']);
-  // The remote's HEAD names the default branch when it's known.
-  assert.deepEqual(fixupExclusions({ head: 'feature', upstream: null, local, remote: [...remote, 'origin/develop'], remoteHead: 'origin/develop' }), ['origin/develop']);
+  assert.deepEqual(fixupExclusions({ head: 'feature', upstream: 'origin/feature', def, local }), ['origin/feature', 'main', 'origin/main']);
+  // A default branch with no local copy.
+  assert.deepEqual(fixupExclusions({ head: 'feature', upstream: null, def: { name: 'develop', ref: 'origin/develop' }, local }), ['origin/develop']);
   // On the default branch itself, only its upstream counts; with no upstream, nothing does.
-  assert.deepEqual(fixupExclusions({ head: 'main', upstream: 'origin/main', local, remote }), ['origin/main']);
-  assert.deepEqual(fixupExclusions({ head: 'main', upstream: null, local: ['main'], remote: [] }), []);
-  assert.deepEqual(fixupExclusions({ head: 'topic', upstream: null, local: ['master', 'topic'], remote: [] }), ['master']);
+  assert.deepEqual(fixupExclusions({ head: 'main', upstream: 'origin/main', def, local }), ['origin/main']);
+  assert.deepEqual(fixupExclusions({ head: 'main', upstream: null, def: { name: 'main', ref: 'main' }, local: ['main'] }), []);
+  assert.deepEqual(fixupExclusions({ head: 'topic', upstream: null, def: { name: 'master', ref: 'master' }, local: ['master', 'topic'] }), ['master']);
+  assert.deepEqual(fixupExclusions({ head: 'topic', upstream: null, def: null, local: ['topic'] }), []);
 
   assert.deepEqual(fixupLogArgs(['origin/feature', 'main']), ['log', '-n200', '--no-merges', `--format=${COMMIT_LIST_FORMAT}`, 'HEAD', '--not', 'origin/feature', 'main', '--']);
   assert.deepEqual(fixupLogArgs([]), ['log', '-n30', '--no-merges', `--format=${COMMIT_LIST_FORMAT}`, 'HEAD', '--']);

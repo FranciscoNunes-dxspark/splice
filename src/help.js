@@ -64,11 +64,13 @@ Branches
   o                Open its pull request in the browser (#12 GitHub, !12 Azure DevOps; coloured by review)
   The right-hand pane: how far it is ahead of and behind the default branch, its commits the default
   branch doesn't have, then its history
+  C                Clean up: delete branches with nothing unpushed or unmerged, and clean worktrees (/cleanup)
 
 Worktrees (● the one open here)
   ↵                Open it in Tiller
   n                New worktree (/worktree <path> [ref]; the path is relative to the repository)
   x                Remove it (asks first; the branch stays), or prune one whose folder is gone
+  C                Clean up: remove worktrees without changes, and branches with nothing unpushed (/cleanup)
 
 Stash
   ↵                Full diff       s           Stash the current changes
@@ -104,7 +106,7 @@ Slash commands
                                      or changing lines that match the regex
   /pr <title> [--into <branch>] [--draft]   /comment <text>   /approve
   /rebase -i <ref>   /reword <message>   /fixup [ref]   /worktree <path> [ref]   /compare <ref> [base]
-  /history <path>   /blame <path>
+  /history <path>   /blame <path>   /cleanup
 
 Viewer (diffs, output, this help)
   j k  space  g G  Scroll         n N         Next, previous hunk
