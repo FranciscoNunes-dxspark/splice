@@ -1,9 +1,10 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { removeTemp } from './temp.js';
 import { run } from '../src/git.js';
 import {
   COMMIT_LIST_FORMAT,
@@ -76,7 +77,7 @@ before(() => {
     git('commit', '-q', '-m', `Add ${n}`);
   }
 });
-after(() => rmSync(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 }));
+after(() => removeTemp(dir));
 
 test('a real rebase: drop, squash, reword and reorder in one go, in a path with spaces', async () => {
   const base = git('rev-parse', 'HEAD~4');

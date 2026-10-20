@@ -1,11 +1,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import React from 'react';
 import { render } from 'ink-testing-library';
+import { removeTemp } from './temp.js';
 import { assetName, checkForUpdate, compareVersions, installUpdate, parseChecksums, removeOldExecutables } from '../src/update.js';
 import { App } from '../src/ui/App.jsx';
 
@@ -88,7 +89,7 @@ test('the app shows a newer release, keeps the check in the config, and can be t
   } finally {
     if (prevHome === undefined) delete process.env.TILLER_HOME;
     else process.env.TILLER_HOME = prevHome;
-    rmSync(home, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
+    await removeTemp(home);
   }
 });
 
@@ -152,7 +153,7 @@ test('installing an update swaps the executable, only with a matching checksum, 
 
     await assert.rejects(installUpdate('0.3.0', { ...win, arch: 'arm64', download: release('x') }), /no release build/);
   } finally {
-    rmSync(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
+    await removeTemp(dir);
   }
 });
 
@@ -170,7 +171,7 @@ test('old executables and abandoned downloads are removed, but not a download st
     await removeOldExecutables(exe);
     assert.deepEqual(readdirSync(dir).sort(), ['.tiller-update-busy', 'notes.txt', 'tiller.exe']);
   } finally {
-    rmSync(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
+    await removeTemp(dir);
   }
 });
 
@@ -212,6 +213,6 @@ test('the app installs a newer release in the background, says when it can\'t, a
   } finally {
     if (prevHome === undefined) delete process.env.TILLER_HOME;
     else process.env.TILLER_HOME = prevHome;
-    rmSync(home, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
+    await removeTemp(home);
   }
 });

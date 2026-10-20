@@ -1,9 +1,10 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { removeTemp } from './temp.js';
 import { buildPatch, coversAll, hunkPicks, parseDiff } from '../src/patch.js';
 import { run } from '../src/git.js';
 
@@ -72,7 +73,7 @@ before(() => {
   git('add', '.');
   git('commit', '-q', '-m', 'base');
 });
-after(() => rmSync(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 }));
+after(() => removeTemp(dir));
 
 const applyCached = (patch, ...flags) => run(dir, ['apply', '--cached', ...flags, '--recount', '-'], { input: patch });
 

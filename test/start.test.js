@@ -3,11 +3,11 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
-import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import React from 'react';
 import { render } from 'ink-testing-library';
+import { removeTemp } from './temp.js';
 import { App } from '../src/ui/App.jsx';
 
 let base;
@@ -32,7 +32,7 @@ before(() => {
   git('commit', '-q', '-m', 'The only commit');
 });
 
-after(() => rm(base, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 }));
+after(() => removeTemp(base));
 
 async function until(check, what, ms = 8000) {
   const end = Date.now() + ms;
