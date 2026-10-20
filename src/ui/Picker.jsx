@@ -32,8 +32,10 @@ export function Picker({ picker, ctx, width, height, active }) {
   const items = state.items ?? [];
   const innerH = height - 2;
   const nav = useListNav(items.length, innerH);
+  // Read before the first render below writes over it.
+  const [returnTo] = useState(picker.index);
   useEffect(() => {
-    if (picker.index) nav.setIndex(picker.index);
+    if (returnTo) nav.setIndex(returnTo);
   }, [picker]);
   picker.index = nav.index;
   const item = items[nav.index];

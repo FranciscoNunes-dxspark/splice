@@ -183,9 +183,9 @@ export async function commitDetail(root, hash) {
   };
 }
 
-/** The patch a commit introduces (first parent for merges), with its header. */
-export function commitPatch(root, hash) {
-  return git(root, ['show', '--stat', '--patch', '-M', '--diff-merges=first-parent', '--format=fuller', hash]);
+/** The patch a commit introduces (first parent for merges), with its header; only to `paths`, if given. */
+export function commitPatch(root, hash, paths = []) {
+  return git(root, ['show', '--stat', '--patch', '-M', '--diff-merges=first-parent', '--format=fuller', hash, ...(paths.length ? ['--', ...paths] : [])]);
 }
 
 const MAX_PREVIEW = 512 * 1024;

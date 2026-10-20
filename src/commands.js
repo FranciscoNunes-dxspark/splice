@@ -35,6 +35,8 @@ export const COMMANDS = [
   },
   { name: 'continue', desc: 'Continue the merge, rebase, cherry-pick or revert', run: (ctx) => a.continueOp(ctx) },
   { name: 'abort', desc: 'Abort the merge, rebase, cherry-pick or revert', run: (ctx) => a.abortOp(ctx) },
+  { name: 'history', args: '<path>', desc: "A file's commits, following renames (deleted files too)", complete: 'files', run: (ctx, s) => a.fileHistory(ctx, s) },
+  { name: 'blame', args: '<path>', desc: 'Who last changed each line of a file', complete: 'files', run: (ctx, s) => a.blame(ctx, s) },
   { name: 'find', args: '<text>', desc: 'Filter the graph by message, author or hash', run: (ctx, s) => ctx.find(s) },
   { name: 'open', args: '<path>', desc: 'Open a repository', complete: 'repos', run: (ctx, s) => (s ? ctx.openRepo(s) : ctx.prefill('/open ')) },
   { name: 'scan', args: '<folder>', desc: 'Add a folder to scan for repositories', run: (ctx, s) => ctx.addRoot(s) },
@@ -53,8 +55,16 @@ export function findCommand(name) {
   return matches.length === 1 ? matches[0] : null;
 }
 
-function completions(kind, data, repos) {
+/** The kind of list (`complete`) offered for what's typed so far, while its first argument is being typed. */
+export function completionKind(value) {
+  const m = /^\/(\S+) (\S*)$/.exec(value);
+  return (m && findCommand(m[1])?.complete) || null;
+}
+
+function completions(kind, data, repos, files) {
   if (kind === 'repos') return repos.map((r) => r.path);
+  // Tracked files, relative to the repository root; App loads them when first asked for (see completionKind).
+  if (kind === 'files') return files ?? [];
   if (!data) return [];
   const { local, remote, tags } = data.refs;
   return [...local.map((b) => b.name), ...remote.map((b) => b.name), ...tags.map((t) => t.name)];
@@ -69,10 +79,10 @@ function ranked(names, query) {
 
 /**
  * What to offer under the prompt for `value`: commands while the name is being typed,
- * then refs or repos for commands that complete their argument.
+ * then refs, repos or files for commands that complete their argument.
  * `insert` replaces the prompt text; `run` means picking it can run straight away.
  */
-export function suggestionsFor(value, { data, repos = [] }) {
+export function suggestionsFor(value, { data, repos = [], files = [] }) {
   if (!value.startsWith('/')) return [];
   const space = value.indexOf(' ');
   if (space < 0) {
@@ -86,7 +96,7 @@ export function suggestionsFor(value, { data, repos = [] }) {
   const cmd = findCommand(value.slice(1, space));
   const rest = value.slice(space + 1);
   if (!cmd?.complete || rest.includes(' ')) return [];
-  const names = ranked(completions(cmd.complete, data, repos), rest);
+  const names = ranked(completions(cmd.complete, data, repos, files), rest);
   if (names.length === 1 && names[0] === rest) return [];
   return names.slice(0, 7).map((n) => ({ label: n, insert: `/${cmd.name} ${n}`, run: true }));
 }

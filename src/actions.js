@@ -3,6 +3,7 @@
 import { rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { READ_ONLY, cleanSubject, clip, commitPrompt, lookPrompt, parsePrDraft, prPrompt } from './claude.js';
+import { blamePicker, historyPicker, repoPath } from './history.js';
 import { splitArgs } from './parse.js';
 import { buildPatch, coversAll, parseDiff } from './patch.js';
 import { cleanup, loadPlan, planProblem, planSummary, prepare } from './rebase.js';
@@ -694,6 +695,22 @@ export function prArgs(text) {
     .replace(/\s+/g, ' ')
     .trim();
   return { target, draft, title };
+}
+
+/** H on a file, or /history <path>: the commits that touched it, following renames. Works for deleted files too. */
+export function fileHistory(ctx, typed) {
+  if (!needRepo(ctx)) return;
+  const path = repoPath(ctx.data.root, typed);
+  if (!path) return ctx.prefill('/history ');
+  ctx.showPicker(historyPicker(ctx, path));
+}
+
+/** B on a file, or /blame <path>: who last changed each line of the working-tree version. */
+export function blame(ctx, typed) {
+  if (!needRepo(ctx)) return;
+  const path = repoPath(ctx.data.root, typed);
+  if (!path) return ctx.prefill('/blame ');
+  ctx.showPicker(blamePicker(ctx, path));
 }
 
 /** `!<args>`: any git command. Output longer than a few lines opens in the viewer. */

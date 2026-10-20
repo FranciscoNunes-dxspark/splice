@@ -3,7 +3,7 @@ import { Box, Text, useApp, useInput } from 'ink';
 import { existsSync } from 'node:fs';
 import { basename, resolve } from 'node:path';
 import * as a from '../actions.js';
-import { findCommand, suggestionsFor } from '../commands.js';
+import { completionKind, findCommand, suggestionsFor } from '../commands.js';
 import { samePath, saveConfig, withRecent } from '../config.js';
 import { git, run } from '../git.js';
 import { HELP } from '../help.js';
@@ -40,7 +40,7 @@ const VIEWS = [
 
 const HINTS = {
   graph: '↵ diff · c checkout · b branch · m merge · i rebase from here · C cherry-pick · v revert · X reset · e/R Claude explains/reviews',
-  changes: 'space stage · ↵ hunks/lines · a all · u unstage all · d discard · c commit · A amend · W Claude writes it · R review',
+  changes: 'space stage · ↵ hunks/lines · a all · u unstage all · d discard · c commit · A amend · H history · B blame · W Claude writes it · R review',
   branches: '↵ checkout · n new · m merge · e rebase · d delete',
   stash: '↵ diff · s stash · a apply · o pop · x drop',
   prs: '↵ diff · c checkout · a approve · C comment · o open in browser · n new PR · W Claude drafts one · e/R explain/review',
@@ -375,12 +375,15 @@ export function App({ initialPath, config: initialConfig, checkUpdate, askClaude
     showPicker: (picker) => setOverlay({ ...picker, kind: 'picker', id: ++pickerIds.current }),
     closeOverlay: () => {
       ctx.rebaseEditor = null;
-      setOverlay(overlayRef.current?.back ?? null);
+      // As a function, so a picker going back to another picker (blame to history) isn't given this one to return to.
+      setOverlay((cur) => cur?.back ?? null);
     },
     overlayHasKeys: () => focusRef.current === 'view' && !confirmRef.current,
     showHelp: () => setOverlay({ title: 'Keyboard shortcuts', text: HELP }),
     showLast: () => (lastOutput.current ? setOverlay({ ...lastOutput.current }) : note('No command has run yet.')),
-    showPatch: (c) => showAsync(`${c.hash.slice(0, 7)} ${c.subject}`, () => commitPatch(dataRef.current.root, c.hash), { diff: true }),
+    // `paths` limits it to some files (a file's history: its path then, and the one before a rename).
+    showPatch: (c, paths = []) =>
+      showAsync(`${c.hash.slice(0, 7)} ${c.subject}${paths.length ? ` · ${paths.at(-1)}` : ''}`, () => commitPatch(dataRef.current.root, c.hash, paths), { diff: true }),
     showChange: (f) => showAsync(`${f.path} (${f.area})`, () => changeDiff(dataRef.current.root, f), { diff: true }),
     showPrDiff: (pr) => showAsync(`${pr.label} ${pr.title}`, () => ctx.host().diff(pr), { diff: true }),
     showStash: (s) => showAsync(`${s.ref} ${s.message}`, () => stashPatch(dataRef.current.root, s.ref), { diff: true }),
@@ -436,6 +439,24 @@ export function App({ initialPath, config: initialConfig, checkUpdate, askClaude
     if (view === 'repos') refreshRepos();
   }, [view]);
 
+  // Tracked files for completing paths (/history, /blame): listed the first time they're asked
+  // for, and again only once the repository has changed since.
+  const [files, setFiles] = useState(null);
+  const filesFor = useRef(null);
+  const wantFiles = focus === 'prompt' && data && completionKind(prompt.value) === 'files';
+  useEffect(() => {
+    if (!wantFiles) return;
+    const key = `${data.root}\n${data.signature}`;
+    if (filesFor.current === key) return;
+    // Another repository's files aren't worth showing while these load.
+    if (!filesFor.current?.startsWith(`${data.root}\n`)) setFiles(null);
+    filesFor.current = key;
+    git(data.root, ['ls-files', '-z']).then(
+      (out) => filesFor.current === key && setFiles(out.split('\0').filter(Boolean)),
+      () => filesFor.current === key && setFiles([]),
+    );
+  }, [wantFiles, data]);
+
   // Notice changes made outside Tiller (an editor saving, a commit from another terminal).
   useEffect(() => {
     const t = setInterval(async () => {
@@ -454,13 +475,13 @@ export function App({ initialPath, config: initialConfig, checkUpdate, askClaude
     return () => clearInterval(t);
   }, []);
 
-  const suggestions = focus === 'prompt' && !confirmReq ? suggestionsFor(prompt.value, { data, repos }) : [];
+  const suggestions = focus === 'prompt' && !confirmReq ? suggestionsFor(prompt.value, { data, repos, files: files ?? [] }) : [];
   const sel = Math.min(sugIndex, Math.max(0, suggestions.length - 1));
 
   // Line editing in the prompt.
   const promptKeys = (input, key) => {
     const { value, cursor } = promptRef.current;
-    const items = suggestionsFor(value, { data: dataRef.current, repos });
+    const items = suggestionsFor(value, { data: dataRef.current, repos, files: files ?? [] });
     const pick = items[Math.min(sugIndex, items.length - 1)];
     const edit = (v, c) => {
       setPrompt(v, c);
