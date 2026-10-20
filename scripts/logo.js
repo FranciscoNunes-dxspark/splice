@@ -1,14 +1,15 @@
-// Draws Knot into assets/: knot.svg (README, GitHub), knot.png (social preview), knot.ico
-// (the Windows executable's icon), and knot-transparent.svg/.png/.ico (just the otter, no background),
-// all from the pixels in src/knot.js, each with a pixel-art Git logo as a badge in the bottom-right corner.
+// Draws the pet into assets/: logo.svg (README, GitHub), logo.png (social preview), logo.ico
+// (the Windows executable's icon), and logo-transparent.svg/.png/.ico (just the pet, no background),
+// all from the pixels in src/pet.js, each with a pixel-art "GIT" tag in the bottom-right corner, the way
+// Trawl's carry "SQL": in the pet's own colours, low enough to leave the face clear.
 //   node scripts/logo.js
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { deflateSync } from 'node:zlib';
-import { PALETTE, knotPixels } from '../src/knot.js';
+import { PALETTE, PET, petPixels } from '../src/pet.js';
 
 const BG = '#16201a';
 // Trim the empty columns kept for the waving paw, so the face sits in the middle.
-const full = knotPixels('idle');
+const full = petPixels('idle');
 const used = [...full[0]].map((_, x) => full.some((row) => row[x] !== '.'));
 const first = used.indexOf(true);
 const last = used.lastIndexOf(true);
@@ -18,37 +19,30 @@ const H = px.length;
 
 const hex = (h) => [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16), 255];
 
-// The Git logo as pixels: the orange diamond with the white branch (a line in from the top-left
-// edge, a node, a stem down to a node and a branch off to a node on the right). 'O' is the orange.
-// It's drawn at twice Knot's resolution, the coarsest the branch still reads at.
-const COLOURS = { ...PALETTE, O: '#f05032' };
+// The badge: "GIT" in the eyes' near-black on the teeth's orange, a rounded tag the size of Trawl's
+// "SQL" one. It's drawn at twice the pet's resolution, the coarsest the letters still read at.
+const COLOURS = PALETTE;
 const GIT = [
-  '......OOO......',
-  '.....OOOOO.....',
-  '....OWOOOOO....',
-  '...OOOWWWOOO...',
-  '..OOOOWWWOOOO..',
-  '.OOOOOWWWOOOOO.',
-  'OOOOOOOWOWOOOOO',
-  'OOOOOOOWOOWWWOO',
-  'OOOOOOOWOOWWWOO',
-  '.OOOOOWWWOWWWO.',
-  '..OOOOWWWOOOO..',
-  '...OOOWWWOOO...',
-  '....OOOOOOO....',
-  '.....OOOOO.....',
-  '......OOO......',
+  '.TTTTTTTTTTTTT.',
+  'TTTTTTTTTTTTTTT',
+  'TTEEETEEETEEETT',
+  'TTETTTTETTTETTT',
+  'TTETETTETTTETTT',
+  'TTETETTETTTETTT',
+  'TTEEETEEETTETTT',
+  'TTTTTTTTTTTTTTT',
+  '.TTTTTTTTTTTTT.',
 ];
 
-// Knot at the badge's resolution: every pixel doubled.
+// The pet at the badge's resolution: every pixel doubled.
 const px2 = px.flatMap((row) => {
   const wide = [...row].map((c) => c + c).join('');
   return [wide, wide];
 });
 
 /**
- * Knot at (ox, oy) on a w × h grid of half-pixels, with the badge's top-left corner at (bx, by),
- * cut out of the otter by a one-cell gap. Rows of palette letters, '.' for nothing.
+ * The pet at (ox, oy) on a w × h grid of half-pixels, with the badge's top-left corner at (bx, by),
+ * cut out of the pet by a one-cell gap. Rows of palette letters, '.' for nothing.
  */
 function grid(w, h, ox, oy, bx, by) {
   const badge = (x, y) => GIT[y - by]?.[x - bx] ?? '.';
@@ -61,12 +55,12 @@ function grid(w, h, ox, oy, bx, by) {
   );
 }
 
-// The dark square: 40 half-pixels across, the 28 × 20 otter centred with a margin.
-const SQUARE = grid(40, 40, 6, 10, 23, 23);
-// The transparent icon: 32 across, so the usual icon sizes (16, 32, 48 … 256) keep Knot's pixels whole.
-const ICON = grid(32, 32, 2, 6, 17, 17);
-// The otter cropped to the drawing, with room right and below for the badge to sit on.
-const CROPPED = grid(px2[0].length + 4, px2.length + 4, 0, 0, px2[0].length - 11, px2.length - 11);
+// The dark square: 40 half-pixels across, the 28 × 20 pet centred with a margin.
+const SQUARE = grid(40, 40, 6, 10, 23, 29);
+// The transparent icon: 32 across, so the usual icon sizes (16, 32, 48 … 256) keep the pet's pixels whole.
+const ICON = grid(32, 32, 0, 4, 17, 23);
+// The pet cropped to the drawing, with room right and below for the badge to sit on.
+const CROPPED = grid(px2[0].length + 4, px2.length + 6, 0, 0, px2[0].length - 11, px2.length - 3);
 
 /** A grid drawn at `scale` image pixels per cell, as RGBA rows; `inside(x, y)` limits it to a shape. */
 function paint(cells, scale, bg = [0, 0, 0, 0], inside = () => true) {
@@ -82,7 +76,7 @@ function paint(cells, scale, bg = [0, 0, 0, 0], inside = () => true) {
   return rows;
 }
 
-// The dark rounded square with the otter, as RGBA rows; transparent outside the corners.
+// The dark rounded square with the pet, as RGBA rows; transparent outside the corners.
 function canvas(size) {
   const radius = size * 0.18;
   return paint(SQUARE, size / 40, hex(BG), (x, y) => {
@@ -92,7 +86,7 @@ function canvas(size) {
   });
 }
 
-// Just the otter on transparency, cropped to the drawing: `scale` image pixels per drawing pixel.
+// Just the pet on transparency, cropped to the drawing: `scale` image pixels per drawing pixel.
 const bare = (scale) => paint(CROPPED, scale / 2);
 
 /** Encodes RGBA rows as a PNG; a number means the square background canvas of that size. */
@@ -130,7 +124,7 @@ function png(image) {
 }
 
 // ICO files may hold PNGs directly (Windows Vista and later).
-// The otter centred on a transparent square, for icons.
+// The pet centred on a transparent square, for icons.
 const bareSquare = (size) => paint(ICON, size / 32);
 
 // An uncompressed 32-bit icon image: BITMAPINFOHEADER, BGRA rows bottom-up, then the 1-bit
@@ -183,7 +177,31 @@ function ico(sizes, draw = canvas) {
   return Buffer.concat([header, ...entries, ...images]);
 }
 
-/** The logo as SVG: on its dark rounded square, or with `background: false` just the otter, cropped. */
+/**
+ * Every size in the .ico files side by side, for the README: each drawn exactly as the .ico holds it,
+ * then scaled up to `cell` px with whole pixels kept, so the small ones show what they really look like.
+ * One row per .ico, on transparency.
+ */
+function iconSheet(rowsOfIcons, cell = 128, gap = 16) {
+  const cols = Math.max(...rowsOfIcons.map((r) => r.length));
+  const width = gap + cols * (cell + gap);
+  const out = Array.from({ length: gap + rowsOfIcons.length * (cell + gap) }, () => new Array(width * 4).fill(0));
+  rowsOfIcons.forEach((icons, r) =>
+    icons.forEach((img, c) => {
+      const n = img.length;
+      for (let y = 0; y < cell; y++) {
+        for (let x = 0; x < cell; x++) {
+          const sx = Math.floor((x * n) / cell);
+          const px = img[Math.floor((y * n) / cell)].slice(sx * 4, sx * 4 + 4);
+          out[gap + r * (cell + gap) + y].splice((gap + c * (cell + gap) + x) * 4, 4, ...px);
+        }
+      }
+    }),
+  );
+  return out;
+}
+
+/** The logo as SVG: on its dark rounded square, or with `background: false` just the pet, cropped. */
 function svg({ background = true } = {}) {
   const cells = background ? SQUARE : CROPPED;
   const rects = [];
@@ -193,19 +211,22 @@ function svg({ background = true } = {}) {
     }),
   );
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${cells[0].length} ${cells.length}" shape-rendering="crispEdges">
-<title>Knot, the Splice otter</title>
+<title>${PET.name}, the Splice ${PET.kind}</title>
 ${background ? `<rect width="40" height="40" rx="7.2" fill="${BG}"/>\n` : ''}${rects.join('\n')}
 </svg>
 `;
 }
 
 mkdirSync('assets', { recursive: true });
-writeFileSync('assets/knot.svg', svg());
-writeFileSync('assets/knot.png', png(512));
-writeFileSync('assets/knot.ico', ico([16, 24, 32, 48, 64, 128, 256]));
-// Just the otter on transparency, for light pages, slides and stickers.
-writeFileSync('assets/knot-transparent.svg', svg({ background: false }));
-writeFileSync('assets/knot-transparent.png', png(bare(32)));
-writeFileSync('assets/knot-transparent@4x.png', png(bare(128)));
-writeFileSync('assets/knot-transparent.ico', ico([16, 32, 48, 64, 128, 256], bareSquare));
-console.log('assets/knot.svg, knot.png, knot.ico, knot-transparent.svg, knot-transparent.png, knot-transparent@4x.png, knot-transparent.ico');
+writeFileSync('assets/logo.svg', svg());
+writeFileSync('assets/logo.png', png(512));
+const ICON_SIZES = [16, 24, 32, 48, 64, 128, 256];
+writeFileSync('assets/logo.ico', ico(ICON_SIZES));
+// Just the pet on transparency, for light pages, slides and stickers.
+const BARE_SIZES = [16, 32, 48, 64, 128, 256];
+writeFileSync('assets/logo-transparent.svg', svg({ background: false }));
+writeFileSync('assets/logo-transparent.png', png(bare(32)));
+writeFileSync('assets/logo-transparent@4x.png', png(bare(128)));
+writeFileSync('assets/logo-transparent.ico', ico(BARE_SIZES, bareSquare));
+writeFileSync('assets/logo-icons.png', png(iconSheet([ICON_SIZES.map(canvas), BARE_SIZES.map(bareSquare)])));
+console.log('assets/logo.svg, logo.png, logo.ico, logo-transparent.svg, logo-transparent.png, logo-transparent@4x.png, logo-transparent.ico, logo-icons.png');

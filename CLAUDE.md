@@ -14,7 +14,7 @@ npm start                                                      # run from the ch
 node bin/splice.js C:\some\repo                                # open a specific repo
 npm run build                                                  # Bun-compiled executable for this machine → dist/
 npm run build:all                                              # every release target
-node scripts/logo.js                                           # regenerate assets/ from src/knot.js
+node scripts/logo.js                                           # regenerate assets/ from src/pet.js
 ```
 
 `bin/splice.js` sets `NODE_ENV=production` only while it imports React and Ink, which picks React's production build (several times faster to render), then removes it so git hooks don't inherit it. The compiled builds define it in the bundle instead. Tests run React's development build.
@@ -44,7 +44,7 @@ Cross-cutting pieces:
 - **Updates** (`src/update.js`): once a day, GitHub's public releases API, then `gh api` as a fallback (the repo is private). A newer release is then installed in the background (`installUpdate`: download next to the executable, check `SHA256SUMS.txt`, swap by renaming; on Windows the running exe is renamed aside and `removeOldExecutables` deletes it on a later start). Release file names must match `TARGETS` in `scripts/build.js`. `cli.jsx` passes both to `App` as the `checkUpdate` and `installUpdate` props, only in compiled builds; tests leave them out or pass stubs, so they never go online or replace anything. The last answer is saved in the config through `App`'s `setConfig`. Don't write the config file from anywhere else: `App` saves its whole copy and would overwrite it.
 - **Config** (`src/config.js`): `~/.splice/config.json`, overridable with `SPLICE_HOME` (tests use this). Compare paths with `samePath` (case-insensitive on Windows).
 - **Theme** (`src/theme.js`): single palette; `accent` is user-configurable. Use `BULLET` instead of `⏺` directly (Windows renders it as a wide emoji). Use `src/text.js` (`fit`, `wrap`, `stringWidth`) for width-aware truncation, never `.length`.
-- **Knot** (`src/knot.js`, `src/ui/Knot.jsx`): the otter mascot's pixel art and mood-from-repo-state logic. `assets/` is generated from it by `scripts/logo.js`; don't hand-edit those files.
+- **Twig** (`src/pet.js`, `src/ui/Pet.jsx`): the beaver mascot's pixel art and mood-from-repo-state logic, drawn to the same rules as Trawl's Glim (coloured from the accent family plus one warm highlight, and a low "GIT" tag in the pet's own colours, like Trawl's "SQL"); `PET` holds the name and species, and the files are named for the role, not the animal, so a new pet is one file plus `node scripts/logo.js`. `assets/` is generated from it by `scripts/logo.js`; don't hand-edit those files.
 
 ## Tests
 

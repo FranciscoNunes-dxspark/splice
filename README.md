@@ -1,4 +1,4 @@
-<p align="center"><img src="assets/knot.svg" width="128" alt="Knot, the Splice otter"></p>
+<p align="center"><img src="assets/logo.svg" width="128" alt="Twig, the Splice beaver"></p>
 
 # Splice
 
@@ -7,7 +7,7 @@ A keyboard-driven git client for the terminal, with an interface modelled on Cla
 Splice used to be called Tiller. A Tiller that updates itself becomes Splice on its own (the executable keeps its old file name until you rename it), and your recent repositories and settings in `~/.tiller` carry over.
 
 ```
-(•ω•) Splice  │  Keel  ⎇ main → origin/main ↑1  ● 2 changes                              C:\Team\Keel
+(•Π•) Splice  │  Keel  ⎇ main → origin/main ↑1  ● 2 changes                              C:\Team\Keel
  1 Graph   2 Changes 2   3 Branches   4 Worktrees   5 Stash   6 PRs   7 Repos
 ╭─ Commits ────────────────────────────────── 125 ─╮╭─ Commit ──────────────── J/K scroll ─╮
 │❯ ◌  // WIP  2 changed files                      ││4e9f0080cb  19/10/2026, 15:14:35      │
@@ -152,11 +152,15 @@ Worktrees are removed first with a plain `git worktree remove`, then branches de
 - **Never hangs on a prompt.** Git runs with `GIT_TERMINAL_PROMPT=0`; credentials come from your credential helper (Git Credential Manager on Windows). Esc cancels a slow fetch or push.
 - The graph loads 400 commits at a time and fetches more as you scroll to the bottom. `/find` filters the loaded commits by message, author, hash or branch name. `/find -S <text>` searches the whole history instead, every branch included, for the commits that add or remove the text, and `/find -G <regex>` for the ones whose added or removed lines match the regex; esc cancels a slow search. Either way the graph shows just the matching commits, `↵` opens one's diff, and esc goes back to the full graph.
 
-## Meet Knot
+## Meet Twig
 
-Knot is Splice's otter: the logo, the app icon, and the face in the top-left corner. Otters hold hands while they sleep so they don't drift apart, which is more or less what a merge is for. A splice, in rope, is the same idea: two lines woven into one.
+Twig is Splice's beaver: the logo, the app icon, and the face in the top-left corner. Beavers spend their lives joining branches together, which is more or less what a merge is for. The `Π` in Twig's face is the two front teeth.
 
-Knot keeps an eye on the repository. They're asleep `(–ω–)` when everything is committed, awake `(•ω•)` when there are changes, waving `(•ω•)/` when you have commits to push, glancing around while git works, pleased `(^ω^)` for a few seconds after something succeeds, and alarmed `(◉ω◉)` on conflicts or an error. When Splice starts (in a terminal at least 28 rows tall), Knot greets you in a welcome box like Claude Code's; esc or your first command puts it away.
+Twig keeps an eye on the repository. They're asleep `(–Π–)` when everything is committed, awake `(•Π•)` when there are changes, waving `(•Π•)/` when you have commits to push, glancing around while git works, pleased `(^Π^)` for a few seconds after something succeeds, and alarmed `(◉Π◉)` on conflicts or an error. When Splice starts (in a terminal at least 28 rows tall), Twig greets you in a welcome box like Claude Code's; esc or your first command puts it away.
+
+The app icon at every size it ships in, drawn by `scripts/logo.js` like the rest: `logo.ico` on top (the executable's icon), `logo-transparent.ico` below.
+
+<p align="center"><img src="assets/logo-icons.png" alt="Twig as an icon at 16, 24, 32, 48, 64, 128 and 256 pixels, on the dark square and on transparency"></p>
 
 ## Settings
 
@@ -208,4 +212,4 @@ Releases are automatic: every push to main (a merged pull request, say) publishe
 - `src/actions.js`: every git operation, written once; keys and slash commands both call these.
 - `src/commands.js`: the slash command list and the completion logic.
 - `src/ui/`: Ink (React for the terminal) components. `App.jsx` owns the layout, focus, the prompt and the `ctx` handle the actions use.
-- `src/knot.js`: Knot's pixels and moods. `node scripts/logo.js` redraws everything in `assets/` from them; rerun it after changing the drawing. `knot.svg`, `knot.png` and `knot.ico` sit on the dark rounded square; `knot-transparent.svg`, `knot-transparent.png` (512 × 384) and `knot-transparent@4x.png` (2048 × 1536) are just the otter, cropped (with room for the badge), on transparency, and `knot-transparent.ico` is the otter centred on a transparent square (16 to 256 px). Each one carries the Git logo as a pixel-art badge in the bottom-right corner, so the icon reads as a git tool at a glance.
+- `src/pet.js`: Twig's pixels and moods (and `PET`, the name and species the text uses). `node scripts/logo.js` redraws everything in `assets/` from them; rerun it after changing the drawing. `logo.svg`, `logo.png` and `logo.ico` sit on the dark rounded square; `logo-transparent.svg`, `logo-transparent.png` (512 × 384) and `logo-transparent@4x.png` (2048 × 1536) are just the beaver, cropped (with room for the badge), on transparency, and `logo-transparent.ico` is the beaver centred on a transparent square (16 to 256 px). `logo-icons.png` shows every size in both `.ico` files, scaled up with whole pixels, for this README. Each one carries a pixel-art "GIT" tag in the bottom-right corner, as Trawl's carry "SQL", so the icon reads as a git tool at a glance. Like Trawl's Glim and Keel's Pinch, Twig is coloured from the accent: the green for the outline, a darker and a paler shade for the fur and muzzle, and one warm colour, the orange of the teeth (a beaver's really are orange), which the tag shares.
