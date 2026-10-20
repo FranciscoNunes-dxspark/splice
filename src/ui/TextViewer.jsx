@@ -1,6 +1,7 @@
 import React, { useMemo, useRef, useState } from 'react';
 import { useInput } from 'ink';
 import { renderMarkdown } from '../markdown.js';
+import { withThreads } from '../review.js';
 import { lineText, markRanges, matcher, matchingLines, wordChanges } from '../search.js';
 import { theme } from '../theme.js';
 import { clean } from '../text.js';
@@ -9,15 +10,20 @@ import { Panel, Row, diffSegments } from './parts.jsx';
 
 /**
  * Full-height scrollable text: diffs, command output, help, Claude's answers (`markdown`: formatted and
- * wrapped to fit). / searches it: matches are picked out, n/N go from one to the next.
+ * wrapped to fit). / searches it: matches are picked out, n/N go from one to the next. A pull request's
+ * diff (`pr`) comes with its review `threads`, drawn under the lines they're about: t/T go from one to
+ * the next, r replies to the one picked (or the first on screen) through /reply.
  */
-export function TextViewer({ title, text, loading, diff, markdown, ctx, width, height, active, onClose }) {
-  const lines = useMemo(() => {
+export function TextViewer({ title, text, loading, diff, markdown, threads, pr, ctx, width, height, active, onClose }) {
+  const [threadId, setThreadId] = useState(null);
+  const { lines, starts } = useMemo(() => {
     const t = (text ?? '').replace(/\n$/, '');
-    return markdown ? renderMarkdown(t, width - 2) : t.split('\n');
-  }, [text, markdown, width]);
+    if (markdown) return { lines: renderMarkdown(t, width - 2), starts: [] };
+    if (threads?.length) return withThreads(t.split('\n'), threads, width - 2, { current: threadId });
+    return { lines: t.split('\n'), starts: [] };
+  }, [text, markdown, width, threads, threadId]);
   // Diff lines are drawn cleaned (tabs to spaces), so the changed words are found in that text.
-  const words = useMemo(() => (diff ? wordChanges(lines.map(clean)) : null), [lines, diff]);
+  const words = useMemo(() => (diff ? wordChanges(lines.map((l) => (typeof l === 'string' ? clean(l) : ''))) : null), [lines, diff]);
   const [offset, setOffset] = useState(0);
   const innerH = height - 2;
   const max = Math.max(0, lines.length - innerH);
@@ -80,6 +86,24 @@ export function TextViewer({ title, text, loading, diff, markdown, ctx, width, h
       }
       if (key.escape || input === 'q') return onClose();
       if (input === '/') return setSearch({ query: '', typing: true, from: offset });
+      if ((input === 't' || input === 'T') && starts.length) {
+        const k = starts.findIndex((s) => s.thread.id === threadId);
+        const next =
+          k >= 0
+            ? (k + (input === 't' ? 1 : starts.length - 1)) % starts.length
+            : input === 't'
+              ? Math.max(0, starts.findIndex((s) => s.at >= offset))
+              : Math.max(0, starts.findLastIndex((s) => s.at < offset));
+        setThreadId(starts[next].thread.id);
+        return to(starts[next].at - 2);
+      }
+      if (input === 'r' && pr) {
+        const picked = starts.find((s) => s.thread.id === threadId) ?? starts.find((s) => s.at >= offset && s.at < offset + innerH);
+        if (!picked) return ctx.note(starts.length ? 'No comment on screen to reply to: t goes to the next one.' : 'This pull request has no review comments to reply to.', 'error');
+        ctx.reviewThread = { pr, thread: picked.thread };
+        setThreadId(picked.thread.id);
+        return ctx.prefill('/reply ');
+      }
       if (key.downArrow || input === 'j') to(offset + 1);
       else if (key.upArrow || input === 'k') to(offset - 1);
       else if (key.pageDown || input === ' ' || (key.ctrl && input === 'd')) to(offset + innerH - 1);
@@ -111,7 +135,7 @@ export function TextViewer({ title, text, loading, diff, markdown, ctx, width, h
 
   const find = matcher(search.query);
   const segmentsOf = (l, idx) => {
-    const segs = markdown ? l : diff ? diffSegments(l, words.get(idx)) : [{ text: l }];
+    const segs = typeof l !== 'string' ? l : diff ? diffSegments(l, words.get(idx)) : [{ text: l }];
     if (!find) return segs;
     const hereLine = here >= 0 && matches[here] === idx;
     return markRanges(segs, find(lineText(segs)), { bg: hereLine ? theme.matchHere : theme.match, color: theme.ink });
@@ -123,7 +147,7 @@ export function TextViewer({ title, text, loading, diff, markdown, ctx, width, h
     ? `/${search.query}▏ ${search.query ? found : ''} · ↵ done · esc cancel`
     : search.query
       ? `"${search.query}" ${found} · n/N · esc clears`
-      : `${pos}${pos ? ' · ' : ''}/ search · esc close`;
+      : `${pos}${pos ? ' · ' : ''}${starts.length ? `${starts.length} comment${starts.length === 1 ? '' : 's'} · t/T · r reply · ` : ''}/ search · esc close`;
   return (
     <Panel title={title} hint={hint} width={width} height={height} focused={active}>
       {loading ? (

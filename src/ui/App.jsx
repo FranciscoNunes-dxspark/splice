@@ -472,6 +472,7 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
     closeOverlay: () => {
       const closing = overlayRef.current;
       ctx.rebaseEditor = null;
+      ctx.reviewThread = null;
       // As a function, so a picker going back to another picker (blame to history) isn't given this one to return to.
       setOverlay((cur) => cur?.back ?? null);
       // An action waiting for the viewer to close (showText(..., { onClosed })) carries on.
@@ -484,7 +485,21 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
     showPatch: (c, paths = []) =>
       showAsync(`${c.hash.slice(0, 7)} ${c.subject}${paths.length ? ` · ${paths.at(-1)}` : ''}`, () => commitPatch(dataRef.current.root, c.hash, paths), { diff: true }),
     showChange: (f) => showAsync(`${f.path} (${f.area})`, () => changeDiff(dataRef.current.root, f), { diff: true }),
-    showPrDiff: (pr) => showAsync(`${pr.label} ${pr.title}`, () => ctx.host().diff(pr), { diff: true }),
+    // The diff with its review comments, when the host can list them; a diff without them if that fails.
+    showPrDiff: (pr) => {
+      const host = ctx.host();
+      showAsync(`${pr.label} ${pr.title}`, () => host.diff(pr), { diff: true, pr });
+      ctx.refreshThreads(pr);
+    },
+    // Fetches a pull request's review threads into its diff, if that's still what the viewer shows.
+    refreshThreads: (pr) =>
+      ctx
+        .host()
+        ?.threads?.(pr)
+        .then(
+          (threads) => setOverlay((o) => (o?.pr === pr ? { ...o, threads } : o)),
+          () => {},
+        ),
     // What `ref` adds to `base`: the diff from where they forked (three dots), as a pull request would show it.
     showCompare: (ref, base) =>
       showAsync(

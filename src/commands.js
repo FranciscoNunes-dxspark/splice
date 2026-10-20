@@ -27,6 +27,7 @@ export const COMMANDS = [
   { name: 'reset', args: '<ref>', desc: 'Move the current branch to a ref (soft, mixed or hard)', complete: 'refs', run: (ctx, s) => a.reset(ctx, s) },
   { name: 'pr', args: '<title> [--into <branch>] [--draft]', desc: 'Open a pull request from the current branch', run: (ctx, s) => a.createPr(ctx, s) },
   { name: 'comment', args: '<text>', desc: 'Comment on the pull request picked in PRs', run: (ctx, s) => a.prComment(ctx, s) },
+  { name: 'reply', args: '<text>', desc: "Reply to a review comment in a pull request's diff (r on it)", run: (ctx, s) => a.replyToThread(ctx, s) },
   { name: 'approve', desc: 'Approve the pull request picked in PRs', run: (ctx) => a.prApprove(ctx, ctx.selectedPr) },
   { name: 'describe', desc: 'Claude writes the commit message for the staged changes', run: (ctx) => a.describeCommit(ctx) },
   { name: 'draft-pr', args: '[--into <branch>]', desc: 'Claude drafts a pull request (title and description) for the current branch', run: (ctx, s) => a.draftPr(ctx, s) },

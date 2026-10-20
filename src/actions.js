@@ -970,6 +970,21 @@ export async function prComment(ctx, text) {
 }
 
 /** `/pr <title> [--into <branch>] [--draft]`: opens a PR from the current branch, pushing it first if needed. */
+/** /reply <text> (r on a review comment in a pull request's diff): posts a reply to that thread, then shows it. */
+export async function replyToThread(ctx, text) {
+  const target = ctx.reviewThread;
+  if (!target) return ctx.note("Open a pull request's diff (↵ in PRs), then r on a review comment.", 'error');
+  if (!text.trim()) return ctx.prefill('/reply ');
+  const host = needHost(ctx);
+  if (!host) return;
+  const { pr, thread } = target;
+  const r = await hostTask(ctx, `Reply to ${thread.comments[0].author} on ${thread.path}`, (signal) => host.reply(pr, thread, text.trim(), signal).then(() => 'Replied'), {
+    label: 'Replying',
+    refresh: false,
+  });
+  if (r.ok) await ctx.refreshThreads(pr);
+}
+
 export async function createPr(ctx, text) {
   const host = needHost(ctx);
   if (!host) return;

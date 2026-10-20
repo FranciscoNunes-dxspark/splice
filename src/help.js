@@ -97,7 +97,8 @@ Stash
 
 PRs (GitHub through gh, Azure DevOps through az: your existing sign-in)
   ◆ asks for your review · ● yours · others below
-  ↵                Full diff       c           Check out its branch
+  ↵                Full diff, with review comments under their lines     c           Check out its branch
+                   In it: t T next, previous comment · r reply to it (/reply <text>)
   a                Approve         C           Comment (/comment <text>)
   o                Open in the browser
   n                New pull request from the current branch (/pr <title> [--into <branch>] [--draft])
@@ -130,7 +131,7 @@ Slash commands
   /settings   /accent <#rrggbb|default>   /update (look for a new version now and install it)
   /find -S <text>   /find -G <regex>   Search all history for commits adding or removing the text,
                                      or changing lines that match the regex
-  /pr <title> [--into <branch>] [--draft]   /comment <text>   /approve
+  /pr <title> [--into <branch>] [--draft]   /comment <text>   /approve   /reply <text>
   /rebase -i <ref>   /reword <message>   /fixup [ref]   /worktree <path> [ref]   /compare <ref> [base]
   /history <path>   /blame <path>   /cleanup
 
