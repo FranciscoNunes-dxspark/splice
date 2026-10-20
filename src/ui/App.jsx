@@ -567,6 +567,7 @@ export function App({ initialPath, config: initialConfig, checkUpdate, askClaude
     if (input === 'p') return a.pull(ctx);
     if (input === 'P') return a.push(ctx);
     if (input === 'r') return ctx.refresh();
+    if (input === 'z') return a.undo(ctx);
   };
 
   // One dispatcher reading focus from refs, which change the instant focus moves. Handlers that
@@ -621,7 +622,7 @@ export function App({ initialPath, config: initialConfig, checkUpdate, askClaude
           : overlay
           ? 'j/k scroll · space page · n/N hunk · esc close'
           : HINTS[view];
-  const right = focus === 'prompt' ? '' : '  f fetch · p pull · P push · / commands · ! git · ? help';
+  const right = focus === 'prompt' ? '' : '  f fetch · p pull · P push · z undo · / commands · ! git · ? help';
 
   return (
     <Box flexDirection="column" width={W} height={H}>
