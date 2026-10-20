@@ -50,6 +50,11 @@ Changes, in the diff
   d                Discard the hunk or the selected lines (asks first)
   ↵                Full-screen diff        esc  ←  h    Back to the file list
 
+Changes, in a conflict (ours, the base in diff3 style, theirs)
+  j k  n N         Next, previous conflict block   J K         Scroll
+  o  t  b          Take ours · Take theirs · Keep both (ours, then theirs) for the block; nothing is staged
+  esc  ←  h        Back to the file list, where space marks the file resolved
+
 File history (H, /history <path>: the commits that touched it, following renames)
   ↵                The commit's diff of the file (esc comes back here)
   B                Blame the file as it was in that commit
@@ -57,11 +62,6 @@ File history (H, /history <path>: the commits that touched it, following renames
 Blame (B, /blame <path>: the working-tree file, so new lines show as not committed yet)
   ↵                Diff of the commit that last changed the line (esc comes back here)
   H                The file's history
-
-Changes, in a conflict (ours, the base in diff3 style, theirs)
-  j k  n N         Next, previous conflict block   J K         Scroll
-  o  t  b          Take ours · Take theirs · Keep both (ours, then theirs) for the block; nothing is staged
-  esc  ←  h        Back to the file list, where space marks the file resolved
 
 Branches
   ↵                Check out (a remote branch gets a local tracking branch)
