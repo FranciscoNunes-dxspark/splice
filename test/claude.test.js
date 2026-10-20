@@ -54,6 +54,9 @@ test('through the UI: Claude writes the commit message, then explains and review
   git('config', 'user.name', 'T');
   git('config', 'user.email', 't@example.com');
   git('config', 'core.autocrlf', 'false');
+  // No background maintenance after the commit, holding the folder open while the test cleans up.
+  git('config', 'maintenance.auto', 'false');
+  git('config', 'gc.auto', '0');
   writeFileSync(join(dir, 'a.txt'), 'one\n');
   git('add', '.');
   git('commit', '-q', '-m', 'Start the notes');
