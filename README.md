@@ -57,7 +57,7 @@ Press `?` inside for every shortcut. The essentials:
 | Where | Keys |
 | --- | --- |
 | Anywhere | `1`–`7` or `tab` switch views · `/` commands · `!` any git command · `f` fetch · `p` pull · `P` push · `r` refresh · `z` undo the last commit, merge, rebase, reset, switch or discard · `,` settings · `esc` cancel the running command · `q` quit |
-| Lists | `j`/`k` or arrows · `g`/`G` top/bottom · `ctrl+d`/`ctrl+u` page · `J`/`K` scroll the right-hand pane |
+| Lists | `j`/`k` or arrows · `g`/`G` top/bottom · `ctrl+d`/`ctrl+u` page · `J`/`K` scroll the right-hand pane · `y` copy what's under the cursor: a commit's hash, a branch name, a file's path, a stash's message, a PR's link |
 | Graph | `↵` full diff · `c` check out · `b` branch here · `t` tag here · `m` merge · `i` interactive rebase from here · `C` cherry-pick · `v` revert · `X` reset to here · `e` / `R` Claude explains / reviews it |
 | Rebase editor | `p` pick · `r` reword · `e` edit · `s` squash · `f` fix up · `d` drop · `J`/`K` move · `↵` start · `esc` cancel |
 | Changes | `space` stage/unstage · `↵` step into the diff · `a` stage all · `u` unstage all · `d` discard · `s` stash just this file · `c` commit · `A` amend · `F` fix up an earlier commit · `H` the file's history · `B` blame · `W` Claude writes the message · `R` Claude reviews · on conflicts `↵` resolve block by block, `O` ours / `T` theirs for the whole file, `C` Claude proposes a resolution |

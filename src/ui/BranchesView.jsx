@@ -110,6 +110,7 @@ export function BranchesView({ data, ctx, width, height, active, prVersion }) {
     if (!sel?.ref) return;
     const { name } = sel.ref;
     if (key.return) a.checkout(ctx, name);
+    else if (input === 'y') ctx.copy(name);
     else if (input === 'n') ctx.prefill(`/branch  ${name}`, 8);
     else if (input === 'm') a.merge(ctx, name, { ask: true });
     else if (input === 'e') a.rebase(ctx, name);

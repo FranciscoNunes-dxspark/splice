@@ -149,6 +149,7 @@ export function GraphView({ data, ctx, width, height, active, filter }) {
     const short = c.hash.slice(0, 7);
     const ref = c.refs.find((r) => r.type === 'local')?.name ?? c.refs.find((r) => r.type === 'remote')?.name ?? c.hash;
     if (key.return) ctx.showPatch(c);
+    else if (input === 'y') ctx.copy(c.hash, `the hash of ${short}`);
     else if (input === 'c') a.checkoutCommit(ctx, c);
     else if (input === 'b') ctx.prefill(`/branch  ${short}`, 8);
     else if (input === 't') ctx.prefill(`/tag  ${short}`, 5);

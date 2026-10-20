@@ -56,6 +56,7 @@ export function WorktreesView({ data, ctx, width, height, active }) {
       if (wt.prunable) return ctx.note('Its folder is gone. Press x to prune it.', 'error');
       ctx.openRepo(wt.path).then((ok) => ok && ctx.setView('graph'));
     } else if (input === 'x') a.removeWorktree(ctx, wt);
+    else if (input === 'y') ctx.copy(wt.path);
   };
   useInput(keys, { isActive: active });
   useMouse(ctx, (e) => {

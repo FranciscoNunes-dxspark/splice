@@ -15,6 +15,7 @@ export const HELP = `Anywhere
 Lists
   j k / ↑ ↓        Move            g G         Top, bottom
   ctrl+d ctrl+u    Page down, up   J K         Scroll the right-hand pane
+  y                Copy it: a commit's hash, a branch name, a file's path, a stash's message, a PR's link
 
 Graph
   ↵                Full diff of the commit

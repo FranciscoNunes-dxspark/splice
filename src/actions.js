@@ -1294,6 +1294,7 @@ export function showReflog(ctx) {
     },
     onPick: (e) => ctx.showPatch({ hash: e.hash, subject: e.subject }),
     keys: {
+      y: (e) => ctx.copy(e.hash, `the hash of ${short(e.hash)}`),
       X: async (e) => done(await reset(ctx, e.hash, `${e.selector} (${short(e.hash)})`)),
       c: async (e) => {
         // Like c in the graph: a branch pointing at it rather than a detached HEAD, when there is one.

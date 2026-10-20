@@ -30,6 +30,7 @@ export function ReposView({ repos, current, ctx, width, height, active, roots })
     if (!sel) return;
     if (key.return) ctx.openRepo(sel.path);
     else if (input === 'x') ctx.forgetRepo(sel.path);
+    else if (input === 'y') ctx.copy(sel.path);
   };
   useInput(keys, { isActive: active });
   useMouse(ctx, (e) => {

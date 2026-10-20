@@ -70,6 +70,7 @@ export function historyPicker(ctx, path) {
     // Both names at a rename, so the diff shows it as one.
     onPick: (e) => ctx.showPatch(e, e.orig ? [e.orig, e.path] : [e.path]),
     keys: {
+      y: (e) => ctx.copy(e.hash, `the hash of ${short(e.hash)}`),
       // A commit that deleted the file has nothing to blame; the one before it does.
       B: (e) => ctx.showPicker(blamePicker(ctx, e.path, { rev: e.status === 'D' ? `${e.hash}^` : e.hash })),
     },
@@ -97,6 +98,9 @@ export function blamePicker(ctx, path, { rev = null } = {}) {
       const before = c.previous?.path;
       return ctx.showPatch({ hash: c.hash, subject: c.summary }, before && before !== l.path ? [before, l.path] : [l.path]);
     },
-    keys: { H: () => ctx.showPicker(historyPicker(ctx, path)) },
+    keys: {
+      H: () => ctx.showPicker(historyPicker(ctx, path)),
+      y: (l) => (l.commit.uncommitted ? ctx.note(`Line ${l.line} isn't committed yet.`) : ctx.copy(l.commit.hash, `the hash of ${short(l.commit.hash)}`)),
+    },
   };
 }

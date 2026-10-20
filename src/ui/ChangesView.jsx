@@ -154,6 +154,7 @@ export function ChangesView({ data, ctx, width, height, active }) {
     if (input === 'A') return ctx.prefill('/amend ');
     if (input === 'W') return a.describeCommit(ctx);
     if (input === 'R') return a.claudeLook(ctx, 'review', { kind: 'changes' });
+    if (input === 'y' && f) return ctx.copy(f.path);
     if (pane === 'conflict') return conflictKeys(input, key);
     return pane === 'diff' ? diffKeys(input, key) : fileKeys(input, key);
   };

@@ -127,7 +127,8 @@ const DOUBLE_CLICK_MS = 400;
 
 // `makeHost` stands in for hosting.js's hostFor in tests, so they never call gh or az. `mouse` is
 // mouse.js's terminalMouse() from cli.jsx (missing where the terminal can't report it); tests pass their own.
-export function App({ initialPath, reopenLast = false, config: initialConfig, checkUpdate, installUpdate, askClaude, setTitle, makeHost = hostFor, mouse }) {
+// `copy` puts text on the clipboard (cli.jsx's; tests pass a stub).
+export function App({ initialPath, reopenLast = false, config: initialConfig, checkUpdate, installUpdate, askClaude, setTitle, makeHost = hostFor, mouse, copy }) {
   const { exit } = useApp();
   const { columns, rows } = useTerminalSize();
   const [config, setConfigState] = useState(initialConfig);
@@ -374,6 +375,12 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
     askClaude,
     // Whether this terminal can report the mouse at all (/settings says so).
     mouseAvailable: Boolean(mouse),
+    // y in the views: `text` to the clipboard, said in the bottom line as "Copied <what>".
+    copy: (text, what = text) => {
+      if (!copy) return note("Copying to the clipboard isn't available here.", 'error');
+      copy(text);
+      setFlash({ text: `Copied ${what}` });
+    },
     openUrl,
     note,
     confirm,
