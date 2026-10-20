@@ -209,6 +209,9 @@ test("a branch's pull request shows next to it, from the same list the PRs view 
     },
     detail: async () => ({ reviewers: [], checks: [], comments: [], conflicts: false }),
   });
+  // The list is fetched again each new minute (usePrList), so a run that crosses one may see a second fetch.
+  const minute = () => Math.floor(Date.now() / 60000);
+  const firstMinute = minute();
   const app = start({ makeHost });
   const frame = () => app.lastFrame() ?? '';
   try {
@@ -222,7 +225,7 @@ test("a branch's pull request shows next to it, from the same list the PRs view 
     await until(() => frame().includes('Add the feature') && frame().includes('Pull requests'), 'the PRs view');
     app.stdin.write('3');
     await until(() => frame().includes('#12 Approved'), 'Branches again');
-    assert.equal(lists, 1, 'the PR list is fetched once for both views');
+    assert.ok(lists === 1 || (lists === 2 && minute() !== firstMinute), `the PR list is fetched once for both views (it was fetched ${lists} times)`);
   } finally {
     app.unmount();
   }

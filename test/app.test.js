@@ -175,6 +175,26 @@ test('interactive rebase from the graph: fix up the last commit into the one bef
   }
 });
 
+test('the window title names the repo and branch, and follows a switch made outside Tiller', async () => {
+  const other = join(base, 'titled');
+  mkdirSync(other);
+  const g = (...args) => execFileSync('git', args, { cwd: other, encoding: 'utf8' }).trim();
+  g('init', '-q', '-b', 'main');
+  g('config', 'user.name', 'T');
+  g('config', 'user.email', 't@example.com');
+  g('commit', '-q', '--allow-empty', '-m', 'Start');
+  const titles = [];
+  lastApp = render(React.createElement(App, { initialPath: other, config: { recent: [], roots: [], history: [] }, setTitle: (t) => titles.push(t) }));
+  const app = lastApp;
+  try {
+    await until(() => titles.at(-1) === 'titled (main) — Tiller', 'the title for main');
+    g('switch', '-q', '-c', 'topic');
+    await until(() => titles.at(-1) === 'titled (topic) — Tiller', 'the title for topic');
+  } finally {
+    app.unmount();
+  }
+});
+
 test('discarding asks first, and "No" leaves the file alone', async () => {
   const app = start();
   const frame = () => app.lastFrame() ?? '';

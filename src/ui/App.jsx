@@ -77,6 +77,13 @@ function Header({ data, width, loading, mood }) {
   return <Row pointer={false} width={width} segments={[...fitSegments(segs, width - pathW - 1), { text: ' ' }, { text: path, color: theme.dim }]} />;
 }
 
+/** The terminal window's title: the repo and branch, which is what tells one Tiller tab from another. */
+export function windowTitle(data) {
+  if (!data) return 'Tiller';
+  const b = data.status.branch;
+  return `${data.name} (${b.head ?? `detached at ${(b.oid ?? '').slice(0, 7)}`}) — Tiller`;
+}
+
 function Tabs({ view, data, width }) {
   const segs = [];
   VIEWS.forEach((v, i) => {
@@ -106,7 +113,7 @@ function activityRows(entries) {
 }
 
 // `makeHost` stands in for hosting.js's hostFor in tests, so they never call gh or az.
-export function App({ initialPath, config: initialConfig, checkUpdate, askClaude, makeHost = hostFor }) {
+export function App({ initialPath, config: initialConfig, checkUpdate, askClaude, setTitle, makeHost = hostFor }) {
   const { exit } = useApp();
   const { columns, rows } = useTerminalSize();
   const [config, setConfigState] = useState(initialConfig);
@@ -481,6 +488,12 @@ export function App({ initialPath, config: initialConfig, checkUpdate, askClaude
       () => filesFor.current === key && setFiles([]),
     );
   }, [wantFiles, data]);
+
+  // cli.jsx passes the terminal's title setter; tests pass a stub or nothing.
+  const title = windowTitle(data);
+  useEffect(() => {
+    setTitle?.(title);
+  }, [title]);
 
   // Notice changes made outside Tiller (an editor saving, a commit from another terminal).
   useEffect(() => {
