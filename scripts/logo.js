@@ -1,7 +1,6 @@
 // Draws the pet into assets/: logo.svg (README, GitHub), logo.png (social preview), logo.ico
 // (the Windows executable's icon), and logo-transparent.svg/.png/.ico (just the pet, no background),
-// all from the pixels in src/pet.js, each with a pixel-art "GIT" tag in the bottom-right corner, the way
-// Trawl's carry "SQL": in the pet's own colours, low enough to leave the face clear.
+// all from the pixels in src/pet.js, each with a pixel-art Git logo as a badge in the bottom-right corner.
 //   node scripts/logo.js
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { deflateSync } from 'node:zlib';
@@ -19,19 +18,26 @@ const H = px.length;
 
 const hex = (h) => [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16), 255];
 
-// The badge: "GIT" in the eyes' near-black on the teeth's orange, a rounded tag the size of Trawl's
-// "SQL" one. It's drawn at twice the pet's resolution, the coarsest the letters still read at.
-const COLOURS = PALETTE;
+// The Git logo as pixels: the orange diamond with the white branch (a line in from the top-left
+// edge, a node, a stem down to a node and a branch off to a node on the right). 'O' is the orange.
+// It's drawn at twice the pet's resolution, the coarsest the branch still reads at.
+const COLOURS = { ...PALETTE, O: '#f05032' };
 const GIT = [
-  '.TTTTTTTTTTTTT.',
-  'TTTTTTTTTTTTTTT',
-  'TTEEETEEETEEETT',
-  'TTETTTTETTTETTT',
-  'TTETETTETTTETTT',
-  'TTETETTETTTETTT',
-  'TTEEETEEETTETTT',
-  'TTTTTTTTTTTTTTT',
-  '.TTTTTTTTTTTTT.',
+  '......OOO......',
+  '.....OOOOO.....',
+  '....OWOOOOO....',
+  '...OOOWWWOOO...',
+  '..OOOOWWWOOOO..',
+  '.OOOOOWWWOOOOO.',
+  'OOOOOOOWOWOOOOO',
+  'OOOOOOOWOOWWWOO',
+  'OOOOOOOWOOWWWOO',
+  '.OOOOOWWWOWWWO.',
+  '..OOOOWWWOOOO..',
+  '...OOOWWWOOO...',
+  '....OOOOOOO....',
+  '.....OOOOO.....',
+  '......OOO......',
 ];
 
 // The pet at the badge's resolution: every pixel doubled.
@@ -56,11 +62,11 @@ function grid(w, h, ox, oy, bx, by) {
 }
 
 // The dark square: 40 half-pixels across, the 28 × 20 pet centred with a margin.
-const SQUARE = grid(40, 40, 6, 10, 23, 29);
+const SQUARE = grid(40, 40, 6, 10, 23, 23);
 // The transparent icon: 32 across, so the usual icon sizes (16, 32, 48 … 256) keep the pet's pixels whole.
-const ICON = grid(32, 32, 0, 4, 17, 23);
+const ICON = grid(32, 32, 2, 6, 17, 17);
 // The pet cropped to the drawing, with room right and below for the badge to sit on.
-const CROPPED = grid(px2[0].length + 4, px2.length + 6, 0, 0, px2[0].length - 11, px2.length - 3);
+const CROPPED = grid(px2[0].length + 4, px2.length + 4, 0, 0, px2[0].length - 11, px2.length - 11);
 
 /** A grid drawn at `scale` image pixels per cell, as RGBA rows; `inside(x, y)` limits it to a shape. */
 function paint(cells, scale, bg = [0, 0, 0, 0], inside = () => true) {
