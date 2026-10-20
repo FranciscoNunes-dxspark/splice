@@ -1,9 +1,10 @@
 // Every git operation the UI offers, written once. Keys and slash commands both call these.
 // `ctx` is the app's handle: data, exec, confirm, note, prefill, and so on (see App.jsx).
+import { existsSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { READ_ONLY, cleanSubject, clip, commitPrompt, lookPrompt, parsePrDraft, prPrompt } from './claude.js';
-import { splitArgs } from './parse.js';
+import { parseStatus, splitArgs } from './parse.js';
 import { buildPatch, coversAll, parseDiff } from './patch.js';
 import { cleanup, loadPlan, planProblem, planSummary, prepare } from './rebase.js';
 
@@ -214,6 +215,58 @@ export function stash(ctx, message) {
   if (!needRepo(ctx)) return;
   if (!ctx.data.status.files.length) return ctx.note('No changes to stash.', 'error');
   return ctx.exec(['stash', 'push', '--include-untracked', ...(message ? ['-m', message] : [])], { label: 'Stashing' });
+}
+
+/** Stashes one file from Changes, staged and unstaged changes alike, with its path as the message. */
+export function stashFile(ctx, f) {
+  if (!needRepo(ctx)) return;
+  if (f.area === 'conflict') return ctx.note(`${f.path} has conflicts, which can't be stashed. Resolve it first (space marks it resolved).`, 'error');
+  // With a path, git stash can't find a file that only the last commit has: the old side of a rename, a staged deletion.
+  if (f.kind === 'renamed' || (f.area === 'staged' && f.x === 'D')) {
+    return ctx.note(`git can't stash a staged ${f.kind === 'renamed' ? 'rename' : 'deletion'} on its own. Unstage it first (space), then stash it.`, 'error');
+  }
+  const untracked = f.kind === 'untracked' ? ['--include-untracked'] : [];
+  return ctx.exec(['stash', 'push', ...untracked, '-m', f.path, '--', f.path], { label: 'Stashing' });
+}
+
+/**
+ * Puts one file from a stash (`file` from stashFiles) into the working tree, as `git stash apply` would leave
+ * it: a change unstaged, a file the stash added staged, an untracked file untracked. Asks before overwriting
+ * uncommitted changes, and before deleting a file the stash deleted.
+ */
+export async function restoreStashFile(ctx, s, file) {
+  if (!needRepo(ctx)) return;
+  const { path } = file;
+  const here = parseStatus(await ctx.git(['status', '--porcelain=v2', '-z', '--untracked-files=all', '--', path])).files;
+  const dirty = here.length > 0;
+  if (file.code === 'D') {
+    if (!existsSync(join(ctx.data.root, path))) return ctx.note(`${path} is already gone here.`);
+    const ok = await ctx.confirm({
+      title: `${path} was deleted in ${s.ref}. Delete it here too?`,
+      detail: dirty ? 'It has uncommitted changes, which would be lost.' : 'The last commit still has it.',
+      options: YES_NO('Yes, delete it'),
+      danger: dirty,
+    });
+    if (!ok) return;
+    await rm(join(ctx.data.root, path), { force: true });
+    ctx.note(`Deleted ${path}`);
+    return ctx.reload();
+  }
+  if (dirty) {
+    const ok = await ctx.confirm({
+      title: `Overwrite ${path} with the copy in ${s.ref}?`,
+      detail: `${path} has uncommitted changes, which would be lost.`,
+      options: YES_NO('Yes, overwrite it'),
+      danger: true,
+    });
+    if (!ok) return;
+  }
+  const args = file.untracked
+    ? ['restore', `--source=${s.ref}^3`, '--worktree', '--', path]
+    : file.code === 'A'
+      ? ['checkout', s.ref, '--', path]
+      : ['restore', `--source=${s.ref}`, '--worktree', '--', path];
+  return ctx.exec(args, { label: 'Restoring' });
 }
 
 export async function stashApply(ctx, ref, { pop = false } = {}) {

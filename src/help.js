@@ -32,6 +32,7 @@ Changes
   space            Stage or unstage the file (on a conflict: mark it resolved)
   a  u             Stage all · Unstage all
   d                Discard the file's changes
+  s                Stash just this file, staged and unstaged changes (its path is the stash's message)
   c  A             Commit · Amend the last commit
   W                Claude writes the commit message for the staged changes, into the prompt to edit
   R                Claude reviews the staged changes (or the unstaged ones, if nothing is staged)
@@ -57,8 +58,13 @@ Worktrees (● the one open here)
   x                Remove it (asks first; the branch stays), or prune one whose folder is gone
 
 Stash
-  ↵                Full diff       s           Stash the current changes
+  ↵                Full diff
+  s  S             Stash the current changes · The same, typing a message first (/stash <message>)
   a  o  x          Apply · Pop · Drop
+  f                Its files (here f doesn't fetch). ↵ restores one into the working tree, as apply
+                   would: a change unstaged, a file the stash added staged, an untracked file
+                   untracked; a file the stash deleted, it offers to delete. Asks before overwriting
+                   uncommitted changes. d shows the file's diff in the stash.
 
 PRs (GitHub through gh, Azure DevOps through az: your existing sign-in)
   ◆ asks for your review · ● yours · others below

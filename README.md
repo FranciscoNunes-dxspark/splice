@@ -54,15 +54,15 @@ Press `?` inside for every shortcut. The essentials:
 
 | Where | Keys |
 | --- | --- |
-| Anywhere | `1`–`7` or `tab` switch views · `/` commands · `!` any git command · `f` fetch · `p` pull · `P` push · `r` refresh · `esc` cancel the running command · `q` quit |
+| Anywhere | `1`–`7` or `tab` switch views · `/` commands · `!` any git command · `f` fetch (in Stash, `f` lists the stash's files) · `p` pull · `P` push · `r` refresh · `esc` cancel the running command · `q` quit |
 | Lists | `j`/`k` or arrows · `g`/`G` top/bottom · `ctrl+d`/`ctrl+u` page · `J`/`K` scroll the right-hand pane |
 | Graph | `↵` full diff · `c` check out · `b` branch here · `t` tag here · `m` merge · `i` interactive rebase from here · `C` cherry-pick · `v` revert · `X` reset to here · `e` / `R` Claude explains / reviews it |
 | Rebase editor | `p` pick · `r` reword · `e` edit · `s` squash · `f` fix up · `d` drop · `J`/`K` move · `↵` start · `esc` cancel |
-| Changes | `space` stage/unstage · `↵` step into the diff · `a` stage all · `u` unstage all · `d` discard · `c` commit · `A` amend · `W` Claude writes the message · `R` Claude reviews · on conflicts `O` ours / `T` theirs |
+| Changes | `space` stage/unstage · `↵` step into the diff · `a` stage all · `u` unstage all · `d` discard · `s` stash just this file · `c` commit · `A` amend · `W` Claude writes the message · `R` Claude reviews · on conflicts `O` ours / `T` theirs |
 | Changes, in the diff | `j`/`k` changed lines · `n`/`N` hunks · `space` stage (or unstage) the hunk · `v` select lines, then `space` stages just those · `d` discard them · `esc` back |
 | Branches | `↵` check out (remote branches get a tracking branch) · `n` new from here · `m` merge · `e` rebase onto · `d` delete |
 | Worktrees | `↵` open · `n` new · `x` remove (or prune one whose folder is gone) |
-| Stash | `↵` diff · `s` stash · `a` apply · `o` pop · `x` drop |
+| Stash | `↵` diff · `s` stash · `S` stash with a message · `a` apply · `o` pop · `x` drop · `f` its files, to restore one (`↵`) or see its diff (`d`) |
 | PRs | `↵` diff · `c` check out · `a` approve · `C` comment · `o` open in the browser · `n` new PR from the current branch · `W` Claude drafts one · `e` / `R` Claude explains / reviews it |
 | Repos | `↵` open · `s` add a folder to scan · `x` forget |
 
@@ -114,6 +114,7 @@ The Worktrees view (`4`) lists the main working tree and every worktree added to
 - **Safe by default.** Discarding, force-deleting a branch, deleting a remote branch, dropping a stash, rebasing, resetting and force-pushing all ask first. `/push --force` uses `--force-with-lease`. Deleting a branch tries `git branch -d` first and only offers `-D` when git says the branch isn't merged.
 - **First push sets the upstream** (`push -u origin <branch>`), so `P` works on a new branch.
 - **Committing with nothing staged** offers to stage everything first.
+- **Stashing and restoring single files.** In Changes, `s` stashes just the file under the cursor, staged and unstaged changes together, with its path as the stash's message (a conflicted file can't be stashed, nor a staged rename or deletion until you unstage it). In Stash, `f` lists the stash's files, untracked ones included, and `↵` puts one back the way `git stash apply` would: a change unstaged, a file the stash added staged, an untracked file untracked. For a file the stash deleted, it offers to delete it. If the file has uncommitted changes, it asks before overwriting them.
 - **Partial staging** builds a patch of just the picked lines and applies it to the index (`git apply --cached`); unstaging and discarding apply it in reverse. Part of a brand-new file works too: the file is first recorded with `git add --intent-to-add`.
 - **Merges, rebases, cherry-picks and reverts that stop on conflicts** show a banner in the header. Resolve files in Changes (`space` marks one resolved, `O`/`T` take a side), then `/continue`, or `/abort`.
 - **Outside changes show up on their own.** While open, Tiller checks the repository every 3 seconds and reloads when the status or any ref changes.

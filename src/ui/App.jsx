@@ -7,7 +7,7 @@ import { findCommand, suggestionsFor } from '../commands.js';
 import { samePath, saveConfig, withRecent } from '../config.js';
 import { git, run } from '../git.js';
 import { HELP } from '../help.js';
-import { changeDiff, commitPatch, findRepo, loadRepo, snapshot, stashPatch } from '../repo.js';
+import { changeDiff, commitPatch, findRepo, loadRepo, snapshot, stashFileDiff, stashPatch } from '../repo.js';
 import { discover, eachLimited, summarize } from '../repos.js';
 import { BULLET, theme } from '../theme.js';
 import { fitSegments, stringWidth } from '../text.js';
@@ -40,13 +40,16 @@ const VIEWS = [
 
 const HINTS = {
   graph: '↵ diff · c checkout · b branch · m merge · i rebase from here · C cherry-pick · v revert · X reset · e/R Claude explains/reviews',
-  changes: 'space stage · ↵ hunks/lines · a all · u unstage all · d discard · c commit · A amend · W Claude writes it · R review',
+  changes: 'space stage · ↵ hunks/lines · a all · u unstage all · d discard · s stash file · c commit · A amend · W Claude writes it · R review',
   branches: '↵ checkout · n new · m merge · e rebase · d delete',
-  stash: '↵ diff · s stash · a apply · o pop · x drop',
+  stash: '↵ diff · s stash · S with a message · a apply · o pop · x drop · f files, to restore one',
   prs: '↵ diff · c checkout · a approve · C comment · o open in browser · n new PR · W Claude drafts one · e/R explain/review',
   repos: '↵ open · s scan folder · x forget',
   worktrees: '↵ open · n new · x remove or prune',
 };
+
+// Keys a view uses itself, which then don't do their "anywhere" job there.
+const VIEW_KEYS = { stash: ['f'] };
 
 const POLL_MS = 3000;
 const firstLine = (s) => String(s ?? '').split('\n')[0];
@@ -396,6 +399,7 @@ export function App({ initialPath, config: initialConfig, checkUpdate, askClaude
     showChange: (f) => showAsync(`${f.path} (${f.area})`, () => changeDiff(dataRef.current.root, f), { diff: true }),
     showPrDiff: (pr) => showAsync(`${pr.label} ${pr.title}`, () => ctx.host().diff(pr), { diff: true }),
     showStash: (s) => showAsync(`${s.ref} ${s.message}`, () => stashPatch(dataRef.current.root, s.ref), { diff: true }),
+    showStashFile: (s, file) => showAsync(`${file.path} in ${s.ref}`, () => stashFileDiff(dataRef.current.root, s.ref, file), { diff: true }),
   });
 
   const submit = async (raw) => {
@@ -532,6 +536,7 @@ export function App({ initialPath, config: initialConfig, checkUpdate, askClaude
       const i = VIEWS.findIndex((v) => v.id === view);
       return setView(VIEWS[(i + (key.shift ? VIEWS.length - 1 : 1)) % VIEWS.length].id);
     }
+    if (VIEW_KEYS[view]?.includes(input)) return;
     if (input === 'f') return a.fetch(ctx);
     if (input === 'p') return a.pull(ctx);
     if (input === 'P') return a.push(ctx);
@@ -590,7 +595,7 @@ export function App({ initialPath, config: initialConfig, checkUpdate, askClaude
           : overlay
           ? 'j/k scroll · space page · n/N hunk · esc close'
           : HINTS[view];
-  const right = focus === 'prompt' ? '' : '  f fetch · p pull · P push · / commands · ! git · ? help';
+  const right = focus === 'prompt' ? '' : `  ${VIEW_KEYS[view]?.includes('f') ? '' : 'f fetch · '}p pull · P push · / commands · ! git · ? help`;
 
   return (
     <Box flexDirection="column" width={W} height={H}>

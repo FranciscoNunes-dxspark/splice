@@ -101,6 +101,7 @@ export function ChangesView({ data, ctx, width, height, active }) {
     if ((key.return || key.rightArrow || input === 'l') && canPick) return setPane('diff');
     if (key.return) return ctx.showChange(f);
     if (input === 'd' && f.area !== 'conflict') return a.discard(ctx, f);
+    if (input === 's') return a.stashFile(ctx, f);
     if (input === 'O' && f.area === 'conflict') return a.resolveWith(ctx, f, 'ours');
     if (input === 'T' && f.area === 'conflict') return a.resolveWith(ctx, f, 'theirs');
   };
