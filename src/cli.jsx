@@ -34,8 +34,11 @@ const config = loadConfig();
 setAccent(config.accent);
 
 // Draw on the alternate screen, like a full-screen app, and give the terminal back untouched on exit.
-process.stdout.write('\x1b[?1049h\x1b[H');
-process.on('exit', () => process.stdout.write('\x1b[?1049l'));
+// The window title is saved on the terminal's title stack and popped on exit. Terminals without one
+// (Windows Terminal) take an empty title as "back to the default" instead.
+process.stdout.write('\x1b[?1049h\x1b[H\x1b[22;0t');
+process.on('exit', () => process.stdout.write('\x1b]0;\x07\x1b[23;0t\x1b[?1049l'));
+const setTitle = (title) => process.stdout.write(`\x1b]0;${title.replace(/[\x00-\x1f\x7f]/g, '')}\x07`);
 
 // Only the downloaded executables look for updates and install them: a checkout updates with git pull,
 // and its package.json version is behind the releases (the Release workflow sets the version as it builds).
@@ -49,6 +52,7 @@ const app = render(
     checkUpdate={checkUpdate}
     installUpdate={COMPILED ? installUpdate : undefined}
     askClaude={ask}
+    setTitle={setTitle}
   />,
   { exitOnCtrlC: false },
 );
