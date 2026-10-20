@@ -4,6 +4,8 @@ export const LOG_FORMAT = '%x1f%H%x1f%P%x1f%D%x1f%an%x1f%at%x1f%s';
 export const REF_FORMAT =
   '%(refname)%1f%(objectname)%1f%(upstream:short)%1f%(upstream:track)%1f%(HEAD)%1f%(creatordate:unix)%1f%(contents:subject)%1f%(symref)';
 export const STASH_FORMAT = '%gd%x1f%at%x1f%gs';
+// The refs `git log` names on its commits: newer git leaves out refs/bisect unless it's asked for them.
+export const DECORATE_REFS = ['refs/heads', 'refs/remotes', 'refs/tags', 'refs/bisect', 'HEAD'].map((r) => `--decorate-refs=${r}`);
 
 // Splits `s` on its first `n` spaces; the remainder (a path, which may hold spaces) is the last field.
 function splitFields(s, n) {
@@ -92,6 +94,8 @@ export function parseDecorations(deco) {
       const name = part.slice(13);
       if (!name.endsWith('/HEAD')) refs.push({ type: 'remote', name });
     } else if (part.startsWith('refs/tags/')) refs.push({ type: 'tag', name: part.slice(10) });
+    // What a bisect has marked: refs/bisect/bad, refs/bisect/good-<hash>, refs/bisect/skip-<hash>.
+    else if (part.startsWith('refs/bisect/')) refs.push({ type: 'bisect', name: part.slice(12).replace(/-.*/, '') });
   }
   return refs;
 }
@@ -424,7 +428,7 @@ export function findArgs(text) {
 
 /** `git log` over the whole history (every branch and tag) for a -S or -G search, in LOG_FORMAT. */
 export function searchArgs(mode, query) {
-  return ['log', '--date-order', '--decorate=full', `-${mode}${query}`, `--format=${LOG_FORMAT}`, '--exclude=refs/stash', '--all'];
+  return ['log', '--date-order', '--decorate=full', ...DECORATE_REFS, `-${mode}${query}`, `--format=${LOG_FORMAT}`, '--exclude=refs/stash', '--all'];
 }
 
 /** Short relative age: "now", "5m", "3h", "2d", "4mo", "1y". */

@@ -25,6 +25,7 @@ Graph
   C  v             Cherry-pick · Revert
   X                Reset the current branch to it (soft, mixed or hard)
   i                Interactive rebase from it (included) up to HEAD
+  B                Bisect: mark it bad or good (or skip); git checks out the commit halfway, to try
   e  R             Claude explains it · Claude reviews it (R on the working tree: your changes)
 
 Rebase editor (newest on top, like the graph)
@@ -123,8 +124,9 @@ Slash commands
   /delete <ref>   /merge <ref>   /rebase <ref>     /reset <ref>   /tag <name> [ref]
   /fetch   /pull [--rebase]   /push [--force]   /stash [msg]   /pop   /discard
   /undo   /reflog
+  /bisect <good|bad|skip|reset> [ref]
   /continue   /abort   /find <text>   /open <path>   /scan <folder>   /last   /quit
-  /settings   /accent <#rrggbb|default>
+  /settings   /accent <#rrggbb|default>   /update (look for a new version now and install it)
   /find -S <text>   /find -G <regex>   Search all history for commits adding or removing the text,
                                      or changing lines that match the regex
   /pr <title> [--into <branch>] [--draft]   /comment <text>   /approve

@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Box, useInput } from 'ink';
 import * as a from '../actions.js';
 import { relTime } from '../parse.js';
@@ -44,6 +44,7 @@ export function refPills(refs) {
   }
   for (const r of refs.filter((x) => x.type === 'remote' && !absorbed.has(x.name))) pill(r.name, theme.remote);
   for (const r of refs.filter((x) => x.type === 'tag')) pill(r.name, theme.tag);
+  for (const r of refs.filter((x) => x.type === 'bisect')) pill(r.name, { bad: theme.del, good: theme.add }[r.name] ?? theme.dim);
   return segs;
 }
 
@@ -127,6 +128,14 @@ export function GraphView({ data, ctx, width, height, active, filter }) {
   }
   const detail = useAsync(c && split ? `detail:${data.root}:${c.hash}` : null, () => commitDetail(data.root, c.hash));
 
+  // While bisecting, the cursor follows HEAD: the commit git just checked out to try.
+  const head = data.status.branch.oid;
+  useEffect(() => {
+    if (data.state !== 'bisecting' || filter) return;
+    const at = rows.findIndex((r) => r.commit?.hash === head);
+    if (at >= 0) nav.setIndex(at);
+  }, [data.state, head]);
+
   const graphW = filter ? 0 : Math.min(Math.floor(innerW * 0.35), Math.max(1, ...data.graph.map((r) => r.graph.length)));
   const metaOn = innerW >= 70;
   const budget = innerW - 2 - (metaOn ? META_W : 0);
@@ -157,6 +166,7 @@ export function GraphView({ data, ctx, width, height, active, filter }) {
     else if (input === 'C') a.cherryPick(ctx, c);
     else if (input === 'v') a.revert(ctx, c);
     else if (input === 'X') a.reset(ctx, c.hash, short);
+    else if (input === 'B') a.bisectMark(ctx, c);
     // From this commit (included) up to HEAD.
     else if (input === 'i') a.openRebase(ctx, c.parents[0] ?? null, short);
     else if (input === 'e' || input === 'R') a.claudeLook(ctx, input === 'e' ? 'explain' : 'review', { kind: 'commit', hash: c.hash, subject: c.subject });

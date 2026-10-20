@@ -38,6 +38,15 @@ export const COMMANDS = [
     desc: 'New message for the commit picked in the rebase editor',
     run: (ctx, s) => (ctx.rebaseEditor ? (s ? ctx.rebaseEditor.reword(s) : ctx.note('Type the new message after /reword.', 'error')) : ctx.note('Open the rebase editor first: i on a commit in the graph.', 'error')),
   },
+  {
+    name: 'bisect',
+    args: '<good|bad|skip|reset> [ref]',
+    desc: 'Find the commit that brought in a problem: mark commits good or bad (HEAD if no ref), reset to stop',
+    run: (ctx, s) => {
+      const [how, ref] = splitArgs(s);
+      return a.bisect(ctx, how, ref);
+    },
+  },
   { name: 'continue', desc: 'Continue the merge, rebase, cherry-pick or revert', run: (ctx) => a.continueOp(ctx) },
   { name: 'abort', desc: 'Abort the merge, rebase, cherry-pick or revert', run: (ctx) => a.abortOp(ctx) },
   { name: 'history', args: '<path>', desc: "A file's commits, following renames (deleted files too)", complete: 'files', run: (ctx, s) => a.fileHistory(ctx, s) },
@@ -59,6 +68,7 @@ export const COMMANDS = [
   { name: 'settings', desc: 'Every setting, changed in place: accent colour, updates, folders, recent, history', run: (ctx) => a.settings(ctx) },
   { name: 'accent', args: '<#rrggbb|default>', desc: 'The accent colour, saved and repainted straight away', run: (ctx, s) => a.accent(ctx, s) },
   { name: 'refresh', desc: 'Reload the repository', run: (ctx) => ctx.refresh() },
+  { name: 'update', desc: 'Look for a new version of Splice now and install it', run: (ctx) => ctx.updateNow() },
   { name: 'help', desc: 'Keyboard shortcuts', run: (ctx) => ctx.showHelp() },
   { name: 'quit', desc: 'Exit Splice', run: (ctx) => ctx.quit() },
 ];

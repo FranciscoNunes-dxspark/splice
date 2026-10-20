@@ -39,7 +39,7 @@ const VIEWS = [
 ];
 
 const HINTS = {
-  graph: '↵ diff · c checkout · b branch · m merge · i rebase from here · C cherry-pick · v revert · X reset · e/R Claude explains/reviews',
+  graph: '↵ diff · c checkout · b branch · m merge · i rebase from here · C cherry-pick · v revert · X reset · B bisect · e/R Claude explains/reviews',
   changes: 'space stage · ↵ hunks/lines · a all · u unstage all · d discard · s stash file · c commit · A amend · F fix up · H history · B blame · W Claude writes it · R review',
   branches: '↵ checkout · n new · m merge · e rebase · d delete · D diff vs default · o open PR · C clean up',
   stash: '↵ diff · s stash · S with a message · a apply · o pop · x drop · F files, to restore one',
@@ -66,7 +66,7 @@ function Header({ data, width, loading, mood }) {
     if (b.behind) segs.push({ text: ` ↓${b.behind}`, color: theme.warn, bold: true });
     const n = data.status.files.length;
     segs.push({ text: n ? `  ● ${n} change${n === 1 ? '' : 's'}` : '  ✓ clean', color: n ? theme.warn : theme.dim });
-    if (data.state) segs.push({ text: '  ' }, { text: ` ${data.state.toUpperCase()} `, bg: theme.del, color: theme.ink, bold: true });
+    if (data.state) segs.push({ text: '  ' }, { text: ` ${data.state.toUpperCase()} `, bg: data.state === 'bisecting' ? theme.hunk : theme.del, color: theme.ink, bold: true });
   } else if (loading) {
     segs.push({ text: '  loading…', color: theme.dim });
   }
@@ -178,6 +178,8 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
   // Counts keypresses, ahead of every handler, so the dispatcher can tell the key that opened the prompt.
   const keySeq = useRef(0);
   const prefillKey = useRef(-1);
+  // The key that answered the last confirmation: it's that one's, and no other handler's.
+  const answerKey = useRef(-1);
   const { internal_eventEmitter: inputEvents } = useStdin();
   useEffect(() => {
     if (!inputEvents) return;
@@ -297,6 +299,7 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
   const onConfirm = (value) => {
     const req = confirmRef.current;
     confirmRef.current = null;
+    answerKey.current = keySeq.current;
     setConfirmReq(null);
     req?.done(value);
   };
@@ -375,6 +378,35 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
     askClaude,
     // Whether this terminal can report the mouse at all (/settings says so).
     mouseAvailable: Boolean(mouse),
+    // /update: asks for the latest release now, whatever the daily check last said, and installs it.
+    updateNow: () => {
+      if (!checkUpdate) return note(`This Splice (${VERSION}) runs from a checkout: git pull updates it.`);
+      if (update?.state === 'installing') return note(`Splice ${update.latest} is being installed already.`);
+      if (update?.state === 'installed') return note(`Splice ${update.latest} is installed. It starts the next time you open Splice.`);
+      const said = (text) => ({ stdout: text, stderr: '' });
+      return task(
+        'Looking for a new version of Splice',
+        async () => {
+          const { checked, newer } = await checkUpdate(null);
+          setConfig((c) => ({ ...c, lastUpdateCheck: checked }));
+          if (!newer) return said(`Splice ${VERSION} is the latest version.`);
+          if (!installUpdate) {
+            setUpdate({ ...checked, state: 'out' });
+            return said(`Splice ${checked.latest} is out (you have ${VERSION}). Download it from ${checked.url}`);
+          }
+          setUpdate({ ...checked, state: 'installing' });
+          try {
+            await installUpdate(checked.latest);
+          } catch (e) {
+            setUpdate({ ...checked, state: 'out' });
+            throw new Error(`Splice ${checked.latest} is out, but it couldn't be installed: ${firstLine(e.message)}\nDownload it from ${checked.url}`);
+          }
+          setUpdate({ ...checked, state: 'installed' });
+          return said(`Splice ${checked.latest} is installed. It starts the next time you open Splice.`);
+        },
+        { label: 'Updating Splice', refresh: false },
+      );
+    },
     // y in the views: `text` to the clipboard, said in the bottom line as "Copied <what>".
     copy: (text, what = text) => {
       if (!copy) return note("Copying to the clipboard isn't available here.", 'error');
@@ -389,7 +421,7 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
     openRepo,
     setView,
     // Views call this first in their key handlers, for the same reason as the dispatcher below.
-    viewHasKeys: () => focusRef.current === 'view' && !overlayRef.current && !confirmRef.current,
+    viewHasKeys: () => focusRef.current === 'view' && !overlayRef.current && !confirmRef.current && answerKey.current !== keySeq.current,
     quit: () => exit(),
     refresh: () => {
       reload();
@@ -443,7 +475,7 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
       // An action waiting for the viewer to close (showText(..., { onClosed })) carries on.
       closing?.onClosed?.();
     },
-    overlayHasKeys: () => focusRef.current === 'view' && !confirmRef.current,
+    overlayHasKeys: () => focusRef.current === 'view' && !confirmRef.current && answerKey.current !== keySeq.current,
     showHelp: () => setOverlay({ title: 'Keyboard shortcuts', text: HELP }),
     showLast: () => (lastOutput.current ? setOverlay({ ...lastOutput.current }) : note('No command has run yet.')),
     // `paths` limits it to some files (a file's history: its path then, and the one before a rename).
@@ -663,7 +695,7 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
     // (c in Changes prefills "/commit "), this same key mustn't then be typed into it.
     if (focusRef.current === 'prompt' && !confirmRef.current) return prefillKey.current === keySeq.current ? undefined : promptKeys(input, key);
     if (key.ctrl && input === 'c') return exit();
-    if (confirmRef.current || overlayRef.current) return;
+    if (confirmRef.current || overlayRef.current || answerKey.current === keySeq.current) return;
     globalKeys(input, key);
   });
 
