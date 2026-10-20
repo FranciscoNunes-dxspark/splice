@@ -56,7 +56,7 @@ Press `?` inside for every shortcut. The essentials:
 
 | Where | Keys |
 | --- | --- |
-| Anywhere | `1`–`7` or `tab` switch views · `/` commands · `!` any git command · `f` fetch · `p` pull · `P` push · `r` refresh · `z` undo the last commit, merge, rebase, reset, switch or discard · `esc` cancel the running command · `q` quit |
+| Anywhere | `1`–`7` or `tab` switch views · `/` commands · `!` any git command · `f` fetch · `p` pull · `P` push · `r` refresh · `z` undo the last commit, merge, rebase, reset, switch or discard · `,` settings · `esc` cancel the running command · `q` quit |
 | Lists | `j`/`k` or arrows · `g`/`G` top/bottom · `ctrl+d`/`ctrl+u` page · `J`/`K` scroll the right-hand pane |
 | Graph | `↵` full diff · `c` check out · `b` branch here · `t` tag here · `m` merge · `i` interactive rebase from here · `C` cherry-pick · `v` revert · `X` reset to here · `e` / `R` Claude explains / reviews it |
 | Rebase editor | `p` pick · `r` reword · `e` edit · `s` squash · `f` fix up · `d` drop · `J`/`K` move · `↵` start · `esc` cancel |
@@ -76,7 +76,7 @@ Press `?` inside for every shortcut. The essentials:
 
 Type `/` and the menu narrows as you type; `tab` completes, `↑`/`↓` picks, `↵` runs. Commands that take a branch complete branch, tag and remote names; `/history` and `/blame` complete the repository's tracked files.
 
-`/commit <msg>` `/amend [msg]` `/checkout <ref>` `/branch <name> [start]` `/delete <ref>` `/merge <ref>` `/rebase <ref>` `/reset <ref>` `/tag <name> [ref]` `/fetch` `/pull [--rebase]` `/push [--force]` `/stash [msg]` `/pop` `/discard` `/undo` `/reflog` `/continue` `/abort` `/find <text>` `/find -S <text>` `/find -G <regex>` `/fixup [ref]` `/open <path>` `/scan <folder>` `/last` `/refresh` `/help` `/quit` `/pr <title> [--into <branch>] [--draft]` `/comment <text>` `/approve` `/worktree <path> [ref]` `/compare <ref> [base]` `/history <path>` `/blame <path>` `/cleanup` `/describe` `/draft-pr [--into <branch>]` `/explain [ref]` `/review [ref]`
+`/commit <msg>` `/amend [msg]` `/checkout <ref>` `/branch <name> [start]` `/delete <ref>` `/merge <ref>` `/rebase <ref>` `/reset <ref>` `/tag <name> [ref]` `/fetch` `/pull [--rebase]` `/push [--force]` `/stash [msg]` `/pop` `/discard` `/undo` `/reflog` `/continue` `/abort` `/find <text>` `/find -S <text>` `/find -G <regex>` `/fixup [ref]` `/open <path>` `/scan <folder>` `/last` `/settings` `/accent <#rrggbb|default>` `/refresh` `/help` `/quit` `/pr <title> [--into <branch>] [--draft]` `/comment <text>` `/approve` `/worktree <path> [ref]` `/compare <ref> [base]` `/history <path>` `/blame <path>` `/cleanup` `/describe` `/draft-pr [--into <branch>]` `/explain [ref]` `/review [ref]`
 
 ### Branches
 
@@ -164,11 +164,13 @@ The app icon at every size it ships in, drawn by `scripts/logo.js` like the rest
 
 ## Settings
 
-`~/.splice/config.json` holds the recent repositories, the folders to scan, and the prompt history. You can also set the accent colour:
+`,` (or `/settings`) lists every setting with its value, and `↵` changes the one under the cursor; each change is saved as you make it:
 
-```json
-{ "accent": "#5fd787" }
-```
+- **Accent colour**: `↵` puts `/accent <colour>` in the prompt; give `#rrggbb`, or `default`. It repaints straight away.
+- **Check for new versions** and **Install them by itself**: on or off (see [Updates](#updates)).
+- **Folders to scan**: the list `/scan` adds to; `x` removes one, `s` adds one.
+- **Recent repositories** and **Prompt history**: `↵` clears them, after asking. Forgetting a repository only takes it off the list.
+- **Settings file**: where it all lives, `~/.splice/config.json` (or under `SPLICE_HOME`), if you'd rather edit it by hand.
 
 ### Updates
 
@@ -180,7 +182,7 @@ The downloaded Splice keeps itself up to date. Once a day at most, after it open
 - If Splice can't write to the folder it's in (installed under Program Files, say), or anything else goes wrong, nothing changes: it says a new version is out, and why it couldn't install it, with the download link.
 - Offline or without gh, it says nothing and tries again next time. Running from a checkout skips all of this; `git pull` updates that.
 
-The last answer is kept in the config as `lastUpdateCheck`. To only be told about new versions, or not to check at all:
+The last answer is kept in the config as `lastUpdateCheck`. To only be told about new versions, or not to check at all, use `/settings`, or set them in the file:
 
 ```json
 { "autoUpdate": false }

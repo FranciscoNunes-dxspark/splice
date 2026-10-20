@@ -6,13 +6,19 @@ import { Panel, Row } from './parts.jsx';
 
 /**
  * A list to pick from, as an overlay (ctx.showPicker): reflog entries, a file's history, a commit to fix up.
- * `items` are { segments, ...anything else the caller needs }, or `load` fetches them first.
- * ↵ runs `onPick(item)`; `keys` maps other keys to `(item) => ...`. Esc closes it, and an overlay
+ * `items` are { segments, ...anything else the caller needs } (or a function returning them, read each
+ * time the picker shows), or `load` fetches them first.
+ * ↵ runs `onPick(item)`; `keys` maps other keys to `(item) => ...`, and `actions` to `() => ...` for
+ * keys about the whole list. Esc closes it, and an overlay
  * opened from here (a diff, say) comes back to it, cursor and all, when that one closes.
  */
 export function Picker({ picker, ctx, width, height, active }) {
-  const { title, hint = '', empty = 'Nothing here.', onPick, keys = {} } = picker;
-  const [state, setState] = useState(() => (picker.items ? { items: picker.items } : { loading: true }));
+  const { title, hint = '', empty = 'Nothing here.', onPick, keys = {}, actions = {} } = picker;
+  // `items` as a function is read afresh whenever the picker shows (a settings list, after a change).
+  const [state, setState] = useState(() => {
+    const items = typeof picker.items === 'function' ? picker.items() : picker.items;
+    return items ? { items } : { loading: true };
+  });
   useEffect(() => {
     if (picker.items) return;
     let live = true;
@@ -45,6 +51,8 @@ export function Picker({ picker, ctx, width, height, active }) {
       if (!ctx.overlayHasKeys()) return;
       if (key.escape || input === 'q') return ctx.closeOverlay();
       if (nav.handle(input, key)) return;
+      // `actions`: keys about the list rather than a row (add one, say), which work even when it's empty.
+      if (actions[input]) return actions[input]();
       if (!item) return;
       if (key.return) return onPick?.(item);
       keys[input]?.(item);

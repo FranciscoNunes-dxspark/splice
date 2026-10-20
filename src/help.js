@@ -6,6 +6,7 @@ export const HELP = `Anywhere
   r                Refresh
   z                Undo the last commit, amend, merge, rebase, reset, switch or discard (asks first)
   esc              Cancel the running command, or clear the activity lines
+  ,                Settings (/settings): accent colour, updates, folders to scan, recent, history
   ?                This help
   q / ctrl+c       Quit
 
@@ -120,6 +121,7 @@ Slash commands
   /fetch   /pull [--rebase]   /push [--force]   /stash [msg]   /pop   /discard
   /undo   /reflog
   /continue   /abort   /find <text>   /open <path>   /scan <folder>   /last   /quit
+  /settings   /accent <#rrggbb|default>
   /find -S <text>   /find -G <regex>   Search all history for commits adding or removing the text,
                                      or changing lines that match the regex
   /pr <title> [--into <branch>] [--draft]   /comment <text>   /approve

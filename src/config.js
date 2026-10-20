@@ -7,6 +7,9 @@ const configDir = () => process.env.SPLICE_HOME || join(homedir(), '.splice');
 // Splice used to be called Tiller: its settings are read from there until Splice saves its own.
 const legacyFile = () => (process.env.SPLICE_HOME ? null : join(homedir(), '.tiller', 'config.json'));
 
+/** Where the settings are kept, to show in /settings. */
+export const configFile = () => join(configDir(), 'config.json');
+
 const DEFAULTS = { recent: [], roots: [], history: [] };
 
 export function loadConfig() {
