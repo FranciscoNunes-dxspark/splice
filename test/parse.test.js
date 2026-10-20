@@ -245,3 +245,21 @@ test('submodules: their state from git submodule status, and changes inside from
   assert.equal(subs[1].dirty, true, 'untracked files inside lib');
   assert.equal(parseSubmodules(` ${h('6')} lib (x)`, status.files)[0].state, 'modified');
 });
+
+test('/filter: author, path and dates, as git log arguments', async () => {
+  const { filterArgs, filterLabel, filterLogArgs } = await import('../src/parse.js');
+  assert.deepEqual(filterArgs(''), {});
+  const f = filterArgs('--author "Ana Lu" --path=src/ui --since "2 weeks ago" --before 2026-03-01');
+  assert.deepEqual(f, { author: 'Ana Lu', path: 'src/ui', since: '2 weeks ago', until: '2026-03-01' });
+  assert.equal(filterLabel(f), 'by Ana Lu, touching src/ui, since 2 weeks ago, until 2026-03-01');
+  const args = filterLogArgs(f, 50);
+  assert.ok(args.includes('--author=Ana Lu') && args.includes('--since=2 weeks ago') && args.includes('--until=2026-03-01'));
+  assert.ok(args.includes('-n50'));
+  assert.deepEqual(args.slice(-2), ['--', 'src/ui'], 'the path last, after --');
+  assert.ok(args.indexOf('--exclude=refs/stash') < args.indexOf('--all'));
+  assert.deepEqual(filterLogArgs({ author: 'bo' }).slice(-1), ['--all']);
+  assert.match(filterArgs('ana').error, /Unknown: ana/);
+  assert.match(filterArgs('--since').error, /Say what after --since/);
+  const flags = suggestionsFor('/filter ', { data: null }).map((s) => s.label);
+  assert.deepEqual(flags, ['--author', '--path', '--since', '--until']);
+});

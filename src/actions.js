@@ -9,7 +9,7 @@ import { configFile } from './config.js';
 import { matchLineEndings, parseConflicts, takeSide, unifiedDiff } from './conflict.js';
 import { blamePicker, historyPicker, repoPath } from './history.js';
 import { MERGE_LABELS, bodyArgs, mergePrArgs, releaseArgs } from './hosting.js';
-import { defaultBranch, findArgs, firstBadCommit, parseGraph, parseStatus, relTime, remoteArgs, searchArgs, splitArgs, stashArgs, upstreamArgs } from './parse.js';
+import { defaultBranch, filterArgs, filterLabel, filterLogArgs, findArgs, firstBadCommit, parseGraph, parseStatus, relTime, remoteArgs, searchArgs, splitArgs, stashArgs, upstreamArgs } from './parse.js';
 import { buildPatch, coversAll, parseDiff } from './patch.js';
 import {
   COMMIT_LIST_FORMAT,
@@ -1235,6 +1235,29 @@ export async function find(ctx, text) {
     { label: 'Searching the history', refresh: false },
   );
   if (r.ok) ctx.find({ mode, query, rows });
+  return r;
+}
+
+/**
+ * /filter --author <name> --path <path> --since <date> --until <date>: the graph shows only the commits, on
+ * any branch, by that author, touching that path, in those dates. /filter alone (or esc in the graph) clears it.
+ */
+export async function filter(ctx, text) {
+  if (!needRepo(ctx)) return;
+  const f = filterArgs(text);
+  if (f.error) return ctx.note(f.error, 'error');
+  if (!Object.keys(f).length) return ctx.find('');
+  const label = filterLabel(f);
+  let rows = [];
+  const r = await ctx.task(
+    `git log ${label}`,
+    async (signal) => {
+      rows = parseGraph(await ctx.git(filterLogArgs(f), { signal })).filter((row) => row.commit);
+      return { stdout: rows.length ? `${rows.length} commit${rows.length === 1 ? '' : 's'}` : 'No commits', stderr: '' };
+    },
+    { label: 'Filtering the history', refresh: false },
+  );
+  if (r.ok) ctx.find({ mode: 'F', query: label, rows });
   return r;
 }
 

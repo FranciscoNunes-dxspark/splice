@@ -152,6 +152,9 @@ Slash commands
   /settings   /accent <#rrggbb|default>   /update (look for a new version now and install it)
   /find -S <text>   /find -G <regex>   Search all history for commits adding or removing the text,
                                      or changing lines that match the regex
+  /filter [--author <name>] [--path <path>] [--since <date>] [--until <date>]
+                   Only the commits, on any branch, by that author, touching that path, in those dates
+                   (dates as git takes them: 2026-01-31, "2 weeks ago"); esc in the graph or /filter clears it
   /pr <title> [--into <branch>] [--draft]   /comment <text>   /approve   /reply <text>
   /merge-pr [squash|merge|rebase] [--delete-branch] [--auto]   /ci
   /remote [add <name> <url> | rename <old> <new> | remove <name> | set-url <name> <url>]

@@ -92,6 +92,7 @@ function detailLines(c, d, width) {
 export function filterTitle(filter, count) {
   const { mode, query } = filter;
   if (mode === 'S') return { title: `Commits adding or removing "${query}" (${count})`, empty: 'No commit in the history adds or removes it.' };
+  if (mode === 'F') return { title: `Commits ${query} (${count})`, empty: 'No commit on any branch matches the filter.' };
   if (mode === 'G') return { title: `Commits changing lines that match /${query}/ (${count})`, empty: 'No commit in the history changes a line that matches.' };
   return { title: `Commits matching "${query}" (${count})`, empty: 'No loaded commit matches.' };
 }

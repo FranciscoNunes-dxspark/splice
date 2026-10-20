@@ -527,3 +527,48 @@ export function stashArgs(text, { untracked = true } = {}) {
     .trim();
   return { args: ['stash', 'push', ...(include ? ['--include-untracked'] : []), ...(message ? ['-m', message] : [])], untracked: include, message };
 }
+
+const FILTER_FLAGS = { '--author': 'author', '--path': 'path', '--since': 'since', '--after': 'since', '--until': 'until', '--before': 'until' };
+
+/**
+ * Reads "/filter --author <name> --path <path> --since <date> --until <date>" (any of them, quoted when they
+ * have spaces; --after and --before are the same as --since and --until). Dates are anything git takes:
+ * 2026-01-31, "2 weeks ago", yesterday. Nothing typed gives {} (no filter); `error` says what's wrong.
+ */
+export function filterArgs(text) {
+  const words = splitArgs(text ?? '');
+  const out = {};
+  for (let i = 0; i < words.length; i++) {
+    const m = /^(--[a-z]+)(?:=(.*))?$/.exec(words[i]);
+    const key = m && FILTER_FLAGS[m[1]];
+    if (!key) return { error: `Unknown: ${words[i]}. Use --author <name>, --path <path>, --since <date>, --until <date>.` };
+    const value = m[2] ?? words[++i];
+    if (value == null || value === '') return { error: `Say what after ${m[1]}.` };
+    out[key] = value;
+  }
+  return out;
+}
+
+/** What a filter keeps, for the graph's title: 'by ana, touching src/, since 2 weeks ago'. */
+export function filterLabel(f) {
+  return [
+    f.author && `by ${f.author}`,
+    f.path && `touching ${f.path}`,
+    f.since && `since ${f.since}`,
+    f.until && `until ${f.until}`,
+  ]
+    .filter(Boolean)
+    .join(', ');
+}
+
+/** `git log` over every branch for a /filter, in LOG_FORMAT, newest first (up to `limit` commits). */
+export function filterLogArgs(f, limit = 2000) {
+  return [
+    'log', '--date-order', '--decorate=full', ...DECORATE_REFS, `-n${limit}`,
+    ...(f.author ? [`--author=${f.author}`, '--regexp-ignore-case'] : []),
+    ...(f.since ? [`--since=${f.since}`] : []),
+    ...(f.until ? [`--until=${f.until}`] : []),
+    `--format=${LOG_FORMAT}`, '--exclude=refs/stash', '--all',
+    ...(f.path ? ['--', f.path] : []),
+  ];
+}
