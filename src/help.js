@@ -102,6 +102,8 @@ PRs (GitHub through gh, Azure DevOps through az: your existing sign-in)
   a                Approve         C           Comment (/comment <text>)
   m                Merge it: squash, merge commit or rebase; now or once checks pass (auto-merge),
                    deleting the branch or not (/merge-pr [squash|merge|rebase] [--delete-branch] [--auto])
+  s                Its checks (/checks), failed first: ↵ the log (a failed job's failed steps), o open in
+                   the browser, R re-run the failed ones
   o                Open in the browser
   n                New pull request from the current branch (/pr <title> [--into <branch>] [--draft])
   W                Claude drafts one: title into the prompt, description offered when you open it
@@ -134,7 +136,7 @@ Slash commands
   /find -S <text>   /find -G <regex>   Search all history for commits adding or removing the text,
                                      or changing lines that match the regex
   /pr <title> [--into <branch>] [--draft]   /comment <text>   /approve   /reply <text>
-  /merge-pr [squash|merge|rebase] [--delete-branch] [--auto]
+  /merge-pr [squash|merge|rebase] [--delete-branch] [--auto]   /checks
   /rebase -i <ref>   /reword <message>   /fixup [ref]   /worktree <path> [ref]   /compare <ref> [base]
   /history <path>   /blame <path>   /cleanup
 

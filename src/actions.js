@@ -1036,6 +1036,58 @@ export async function prMerge(ctx, pr, text = '') {
   return r;
 }
 
+const CHECK_ICON = { pass: ['✓', 'add'], fail: ['✗', 'del'], pending: ['…', 'warn'] };
+
+/**
+ * s in PRs, /checks: the pull request's CI checks in a picker, failed first. ↵ shows a check's log (a failed
+ * job's failed steps), o opens it in the browser, R re-runs the failed ones where the host can.
+ */
+export function prChecks(ctx, pr, { replace = false } = {}) {
+  const host = needHost(ctx);
+  if (!host) return;
+  if (!pr) return ctx.note('Pick a pull request in PRs (6) first.', 'error');
+  if (!host.checks) return ctx.note(`Splice can't list checks on ${host.name}.`, 'error');
+  const order = { fail: 0, pending: 1, pass: 2 };
+  let all = [];
+  ctx.showPicker(
+    {
+      title: `Checks of ${pr.label} ${pr.title}`,
+      hint: `↵ log · o open in browser${host.canRerun ? ' · R re-run failed' : ''}`,
+      empty: 'No checks have run on it.',
+      load: async () => {
+        all = (await host.checks(pr)).sort((a, b) => order[a.state] - order[b.state]);
+        return all.map((c) => {
+          const [icon, tone] = CHECK_ICON[c.state] ?? CHECK_ICON.pending;
+          return {
+            check: c,
+            segments: [{ text: `${icon} `, color: theme[tone], bold: true }, { text: c.name, strong: true }, { text: c.workflow ? `  ${c.workflow}` : '', color: theme.dim }],
+          };
+        });
+      },
+      onPick: ({ check }) => ctx.showAsync(`${check.name} (${check.state === 'fail' ? 'failed steps' : 'log'})`, () => host.checkLog(check)),
+      keys: {
+        o: ({ check }) => (check.url ? ctx.openUrl(check.url) : ctx.note(`${check.name} has no page to open.`, 'error')),
+        y: ({ check }) => (check.url ? ctx.copy(check.url, `the link to ${check.name}`) : undefined),
+      },
+      actions: {
+        R: async () => {
+          if (!host.canRerun) return ctx.note(`Splice can't re-run checks on ${host.name}.`, 'error');
+          const failed = all.filter((c) => c.state === 'fail');
+          if (!failed.length) return ctx.note('No check has failed, so there is nothing to re-run.', 'error');
+          const ok = await ctx.confirm({ title: `Re-run the ${failed.length} failed check${failed.length === 1 ? '' : 's'} of ${pr.label}?`, options: YES_NO('Yes, re-run them') });
+          if (!ok) return;
+          const r = await hostTask(ctx, `Re-run failed checks of ${pr.label}`, (signal) => host.rerun(pr, failed, signal), { label: 'Re-running checks', refresh: false });
+          if (r.ok) {
+            ctx.prsChanged();
+            prChecks(ctx, pr, { replace: true });
+          }
+        },
+      },
+    },
+    { replace },
+  );
+}
+
 /** `/pr <title> [--into <branch>] [--draft]`: opens a PR from the current branch, pushing it first if needed. */
 /** /reply <text> (r on a review comment in a pull request's diff): posts a reply to that thread, then shows it. */
 export async function replyToThread(ctx, text) {

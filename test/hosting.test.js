@@ -87,3 +87,36 @@ test('merging a pull request: the arguments for /merge-pr, gh and az', async () 
     'repos', 'pr', 'update', '--id', '12', '--auto-complete', 'true', '--squash', 'false', '--delete-source-branch', 'false',
   ]);
 });
+
+test("checks: GitHub's rollup with Actions run and job ids, Azure DevOps policies, a build's failed logs", async () => {
+  const { githubChecks, azureChecks, failedLogs } = await import('../src/hosting.js');
+  assert.deepEqual(
+    githubChecks([
+      { __typename: 'CheckRun', name: 'test', workflowName: 'CI', status: 'COMPLETED', conclusion: 'FAILURE', detailsUrl: 'https://github.com/o/r/actions/runs/111/job/222' },
+      { __typename: 'StatusContext', context: 'ci/ext', state: 'PENDING', targetUrl: 'https://ci.example/9' },
+    ]),
+    [
+      { name: 'test', workflow: 'CI', state: 'fail', url: 'https://github.com/o/r/actions/runs/111/job/222', runId: '111', jobId: '222' },
+      { name: 'ci/ext', workflow: '', state: 'pending', url: 'https://ci.example/9', runId: null, jobId: null },
+    ],
+  );
+  const remote = { orgUrl: 'https://dev.azure.com/o', project: 'P 1', repo: 'R' };
+  assert.deepEqual(
+    azureChecks(
+      [
+        { status: 'rejected', evaluationId: 'e1', context: { buildId: 55 }, configuration: { settings: { displayName: 'PR build' } } },
+        { status: 'approved', evaluationId: 'e2', configuration: { type: { displayName: 'Minimum reviewers' } } },
+        { status: 'notApplicable', evaluationId: 'e3' },
+      ],
+      remote,
+    ),
+    [
+      { name: 'PR build', workflow: 'Build', state: 'fail', url: 'https://dev.azure.com/o/P%201/_build/results?buildId=55', evaluationId: 'e1', buildId: 55 },
+      { name: 'Minimum reviewers', workflow: '', state: 'pass', url: null, evaluationId: 'e2', buildId: null },
+    ],
+  );
+  assert.deepEqual(
+    failedLogs({ records: [{ name: 'b', result: 'failed', order: 2, log: { id: 9 } }, { name: 'a', result: 'failed', order: 1, log: { id: 4 } }, { name: 'ok', result: 'succeeded', log: { id: 1 } }, { name: 'job', result: 'failed' }] }),
+    [{ id: 4, name: 'a' }, { id: 9, name: 'b' }],
+  );
+});

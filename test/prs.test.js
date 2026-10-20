@@ -99,3 +99,40 @@ test('m in PRs merges the pull request: asks how, then when, then calls the host
     app.unmount();
   }
 });
+
+test("s in PRs lists the checks, failed first; ↵ shows a check's log and R re-runs the failed ones", async () => {
+  const calls = [];
+  const checks = [
+    { name: 'lint', workflow: 'CI', state: 'pass', url: 'https://example.invalid/lint', runId: '1', jobId: '10' },
+    { name: 'unit tests', workflow: 'CI', state: 'fail', url: 'https://example.invalid/unit', runId: '1', jobId: '11' },
+  ];
+  const app = start(
+    stubHost(calls, {
+      checks: async () => checks,
+      checkLog: async (c) => `log of ${c.name}\nError: expected 2, got 3`,
+      canRerun: true,
+      rerun: async (pr, list) => {
+        calls.push(['rerun', pr.id, list.map((c) => c.name)]);
+      },
+    }),
+  );
+  const frame = () => app.lastFrame() ?? '';
+  try {
+    await until(() => frame().includes('First commit'), 'the graph');
+    app.stdin.write('6');
+    await until(() => /❯.*Bump b/.test(frame()), 'the PR');
+    app.stdin.write('s');
+    await until(() => frame().includes('Checks of #7') && /❯ ✗ unit tests[\s\S]*✓ lint/.test(frame()), 'the checks, failed first');
+    app.stdin.write('\r');
+    await until(() => frame().includes('Error: expected 2, got 3'), 'the failed check’s log');
+    app.stdin.write('\x1b');
+    await until(() => frame().includes('Checks of #7'), 'back to the checks');
+    app.stdin.write('R');
+    await until(() => frame().includes('Re-run the 1 failed check of #7?'), 'the re-run question');
+    app.stdin.write('1');
+    await until(() => calls.length === 1, 'the re-run');
+    assert.deepEqual(calls[0], ['rerun', 7, ['unit tests']]);
+  } finally {
+    app.unmount();
+  }
+});
