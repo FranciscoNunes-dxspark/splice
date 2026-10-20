@@ -76,7 +76,7 @@ before(() => {
     git('commit', '-q', '-m', `Add ${n}`);
   }
 });
-after(() => rmSync(dir, { recursive: true, force: true, maxRetries: 10 }));
+after(() => rmSync(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 }));
 
 test('a real rebase: drop, squash, reword and reorder in one go, in a path with spaces', async () => {
   const base = git('rev-parse', 'HEAD~4');

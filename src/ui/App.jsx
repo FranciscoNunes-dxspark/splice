@@ -113,7 +113,7 @@ function activityRows(entries) {
 }
 
 // `makeHost` stands in for hosting.js's hostFor in tests, so they never call gh or az.
-export function App({ initialPath, reopenLast = false, config: initialConfig, checkUpdate, askClaude, setTitle, makeHost = hostFor }) {
+export function App({ initialPath, reopenLast = false, config: initialConfig, checkUpdate, installUpdate, askClaude, setTitle, makeHost = hostFor }) {
   const { exit } = useApp();
   const { columns, rows } = useTerminalSize();
   const [config, setConfigState] = useState(initialConfig);
@@ -463,14 +463,30 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
       }
       // Opening a repo only needs the paths (for /open completion); the Repos view fills in the rest when shown.
       refreshRepos(here ? [] : [initialPath], { summaries: !here && !reopened });
-      // After the first load, so it doesn't slow it down. cli.jsx passes the check; tests don't, so they stay offline.
+      // After the first load, so it doesn't slow it down. cli.jsx passes the check and the install; tests
+      // leave them out or pass stubs, so they stay offline and never replace anything.
       if (checkUpdate && configRef.current.checkForUpdates !== false) {
         checkUpdate(configRef.current.lastUpdateCheck).then(
           ({ checked, newer }) => {
             setConfig((c) => ({ ...c, lastUpdateCheck: checked }));
             if (!newer) return;
-            setUpdate(checked);
-            note(`Tiller ${checked.latest} is out (you have ${VERSION}).\nDownload it from ${checked.url}`);
+            const outNote = (why = '') => note(`Tiller ${checked.latest} is out (you have ${VERSION})${why}.\nDownload it from ${checked.url}`);
+            if (!installUpdate || configRef.current.autoUpdate === false) {
+              setUpdate({ ...checked, state: 'out' });
+              return outNote();
+            }
+            // In the background, without the spinner: nothing waits on it, and it only counts from the next start.
+            setUpdate({ ...checked, state: 'installing' });
+            installUpdate(checked.latest).then(
+              () => {
+                setUpdate({ ...checked, state: 'installed' });
+                note(`Tiller ${checked.latest} is installed. It starts the next time you open Tiller.`);
+              },
+              (e) => {
+                setUpdate({ ...checked, state: 'out' });
+                outNote(`, but it couldn't be installed: ${firstLine(e.message)}`);
+              },
+            );
           },
           // Offline, or no way to ask: try again next time.
           () => {},

@@ -5,7 +5,7 @@ import { COMPILED, VERSION } from './version.js';
 import { loadConfig } from './config.js';
 import { setAccent } from './theme.js';
 import { App } from './ui/App.jsx';
-import { checkForUpdate } from './update.js';
+import { checkForUpdate, installUpdate, removeOldExecutables } from './update.js';
 import { ask } from './claude.js';
 
 const args = process.argv.slice(2);
@@ -41,13 +41,24 @@ process.stdout.write('\x1b[?1049h\x1b[H\x1b[22;0t');
 process.on('exit', () => process.stdout.write('\x1b]0;\x07\x1b[23;0t\x1b[?1049l'));
 const setTitle = (title) => process.stdout.write(`\x1b]0;${title.replace(/[\x00-\x1f\x7f]/g, '')}\x07`);
 
-// Only the downloaded executables look for updates: a checkout updates with git pull, and its
-// package.json version is behind the releases (the Release workflow sets the version as it builds).
+// Only the downloaded executables look for updates and install them: a checkout updates with git pull,
+// and its package.json version is behind the releases (the Release workflow sets the version as it builds).
 const checkUpdate = COMPILED ? checkForUpdate : undefined;
+// What an earlier update moved aside; quietly, and it doesn't hold up the start.
+if (COMPILED) removeOldExecutables();
 const path = args.find((x) => !x.startsWith('-'));
 // Started without a path outside a repository, Tiller reopens the last one; a path given means look there.
-const app = render(<App initialPath={resolve(path ?? process.cwd())} reopenLast={!path} config={config} checkUpdate={checkUpdate} askClaude={ask} setTitle={setTitle} />, {
-  exitOnCtrlC: false,
-});
+const app = render(
+  <App
+    initialPath={resolve(path ?? process.cwd())}
+    reopenLast={!path}
+    config={config}
+    checkUpdate={checkUpdate}
+    installUpdate={COMPILED ? installUpdate : undefined}
+    askClaude={ask}
+    setTitle={setTitle}
+  />,
+  { exitOnCtrlC: false },
+);
 await app.waitUntilExit();
 process.exit(0);
