@@ -4,9 +4,11 @@ import { dirname, basename } from 'node:path/posix';
 import * as a from '../actions.js';
 import { hunkPicks, isChange, parseDiff } from '../patch.js';
 import { changeDiff } from '../repo.js';
+import { wordChanges } from '../search.js';
 import { codeColor, theme } from '../theme.js';
+import { clean } from '../text.js';
 import { useAsync, useListNav, useMouse } from './hooks.js';
-import { Panel, Row, diffSegment } from './parts.jsx';
+import { Panel, Row, diffSegments } from './parts.jsx';
 import { ConflictPane, useConflicts } from './ConflictPane.jsx';
 
 function fileSegments(f) {
@@ -70,6 +72,7 @@ export function ChangesView({ data, ctx, width, height, active }) {
   const raw = diff.error ? diff.error.message : (diff.value ?? '');
   const parsed = useMemo(() => parseDiff(raw), [raw]);
   const dRows = useMemo(() => diffRows(parsed, raw), [parsed, raw]);
+  const words = useMemo(() => wordChanges(dRows.map((r) => clean(r.text))), [dRows]);
   const dnav = useListNav(dRows.length, innerH, { selectable: (i) => Boolean(dRows[i]?.change), resetKey: fileKey });
   // Never apply picks made on a diff that's stale (still loading after a change).
   const fresh = diff.key === diffKey && !diff.loading && !diff.error;
@@ -154,6 +157,7 @@ export function ChangesView({ data, ctx, width, height, active }) {
     if (input === 'A') return ctx.prefill('/amend ');
     if (input === 'W') return a.describeCommit(ctx);
     if (input === 'R') return a.claudeLook(ctx, 'review', { kind: 'changes' });
+    if (input === 'y' && f) return ctx.copy(f.path);
     if (pane === 'conflict') return conflictKeys(input, key);
     return pane === 'diff' ? diffKeys(input, key) : fileKeys(input, key);
   };
@@ -239,7 +243,7 @@ export function ChangesView({ data, ctx, width, height, active }) {
                     width={diffW - 2}
                     pointer={false}
                     selected={picking && (range ? inPick && r.change : idx === dnav.index)}
-                    segments={[{ text: inPick ? '▌' : ' ', color: theme.accent }, diffSegment(r.text)]}
+                    segments={[{ text: inPick ? '▌' : ' ', color: theme.accent }, ...diffSegments(r.text, words.get(idx))]}
                   />
                 );
               })

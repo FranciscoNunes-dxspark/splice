@@ -39,7 +39,7 @@ const VIEWS = [
 ];
 
 const HINTS = {
-  graph: '↵ diff · c checkout · b branch · m merge · i rebase from here · C cherry-pick · v revert · X reset · e/R Claude explains/reviews',
+  graph: '↵ diff · c checkout · b branch · m merge · i rebase from here · C cherry-pick · v revert · X reset · B bisect · e/R Claude explains/reviews',
   changes: 'space stage · ↵ hunks/lines · a all · u unstage all · d discard · s stash file · c commit · A amend · F fix up · H history · B blame · W Claude writes it · R review',
   branches: '↵ checkout · n new · m merge · e rebase · d delete · D diff vs default · o open PR · C clean up',
   stash: '↵ diff · s stash · S with a message · a apply · o pop · x drop · F files, to restore one',
@@ -66,7 +66,7 @@ function Header({ data, width, loading, mood }) {
     if (b.behind) segs.push({ text: ` ↓${b.behind}`, color: theme.warn, bold: true });
     const n = data.status.files.length;
     segs.push({ text: n ? `  ● ${n} change${n === 1 ? '' : 's'}` : '  ✓ clean', color: n ? theme.warn : theme.dim });
-    if (data.state) segs.push({ text: '  ' }, { text: ` ${data.state.toUpperCase()} `, bg: theme.del, color: theme.ink, bold: true });
+    if (data.state) segs.push({ text: '  ' }, { text: ` ${data.state.toUpperCase()} `, bg: data.state === 'bisecting' ? theme.hunk : theme.del, color: theme.ink, bold: true });
   } else if (loading) {
     segs.push({ text: '  loading…', color: theme.dim });
   }
@@ -127,7 +127,8 @@ const DOUBLE_CLICK_MS = 400;
 
 // `makeHost` stands in for hosting.js's hostFor in tests, so they never call gh or az. `mouse` is
 // mouse.js's terminalMouse() from cli.jsx (missing where the terminal can't report it); tests pass their own.
-export function App({ initialPath, reopenLast = false, config: initialConfig, checkUpdate, installUpdate, askClaude, setTitle, makeHost = hostFor, mouse }) {
+// `copy` puts text on the clipboard (cli.jsx's; tests pass a stub).
+export function App({ initialPath, reopenLast = false, config: initialConfig, checkUpdate, installUpdate, askClaude, setTitle, makeHost = hostFor, mouse, copy }) {
   const { exit } = useApp();
   const { columns, rows } = useTerminalSize();
   const [config, setConfigState] = useState(initialConfig);
@@ -177,6 +178,8 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
   // Counts keypresses, ahead of every handler, so the dispatcher can tell the key that opened the prompt.
   const keySeq = useRef(0);
   const prefillKey = useRef(-1);
+  // The key that answered the last confirmation: it's that one's, and no other handler's.
+  const answerKey = useRef(-1);
   const { internal_eventEmitter: inputEvents } = useStdin();
   useEffect(() => {
     if (!inputEvents) return;
@@ -296,6 +299,7 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
   const onConfirm = (value) => {
     const req = confirmRef.current;
     confirmRef.current = null;
+    answerKey.current = keySeq.current;
     setConfirmReq(null);
     req?.done(value);
   };
@@ -374,6 +378,41 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
     askClaude,
     // Whether this terminal can report the mouse at all (/settings says so).
     mouseAvailable: Boolean(mouse),
+    // /update: asks for the latest release now, whatever the daily check last said, and installs it.
+    updateNow: () => {
+      if (!checkUpdate) return note(`This Splice (${VERSION}) runs from a checkout: git pull updates it.`);
+      if (update?.state === 'installing') return note(`Splice ${update.latest} is being installed already.`);
+      if (update?.state === 'installed') return note(`Splice ${update.latest} is installed. It starts the next time you open Splice.`);
+      const said = (text) => ({ stdout: text, stderr: '' });
+      return task(
+        'Looking for a new version of Splice',
+        async () => {
+          const { checked, newer } = await checkUpdate(null);
+          setConfig((c) => ({ ...c, lastUpdateCheck: checked }));
+          if (!newer) return said(`Splice ${VERSION} is the latest version.`);
+          if (!installUpdate) {
+            setUpdate({ ...checked, state: 'out' });
+            return said(`Splice ${checked.latest} is out (you have ${VERSION}). Download it from ${checked.url}`);
+          }
+          setUpdate({ ...checked, state: 'installing' });
+          try {
+            await installUpdate(checked.latest);
+          } catch (e) {
+            setUpdate({ ...checked, state: 'out' });
+            throw new Error(`Splice ${checked.latest} is out, but it couldn't be installed: ${firstLine(e.message)}\nDownload it from ${checked.url}`);
+          }
+          setUpdate({ ...checked, state: 'installed' });
+          return said(`Splice ${checked.latest} is installed. It starts the next time you open Splice.`);
+        },
+        { label: 'Updating Splice', refresh: false },
+      );
+    },
+    // y in the views: `text` to the clipboard, said in the bottom line as "Copied <what>".
+    copy: (text, what = text) => {
+      if (!copy) return note("Copying to the clipboard isn't available here.", 'error');
+      copy(text);
+      setFlash({ text: `Copied ${what}` });
+    },
     openUrl,
     note,
     confirm,
@@ -382,7 +421,7 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
     openRepo,
     setView,
     // Views call this first in their key handlers, for the same reason as the dispatcher below.
-    viewHasKeys: () => focusRef.current === 'view' && !overlayRef.current && !confirmRef.current,
+    viewHasKeys: () => focusRef.current === 'view' && !overlayRef.current && !confirmRef.current && answerKey.current !== keySeq.current,
     quit: () => exit(),
     refresh: () => {
       reload();
@@ -416,6 +455,8 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
       refreshRepos();
     },
     showText: (title, text, opts = {}) => setOverlay({ title, text, ...opts }),
+    // The viewer, saying Loading… until `load()` resolves with its text.
+    showAsync,
     showRebase: (plan) => setOverlay({ kind: 'rebase', plan }),
     // A list to pick from: { title, hint, items | load, onPick, keys, empty } (see Picker.jsx).
     // `replace`: swaps the picker on screen for this one (the same list, redrawn after a change), keeping
@@ -431,19 +472,34 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
     closeOverlay: () => {
       const closing = overlayRef.current;
       ctx.rebaseEditor = null;
+      ctx.reviewThread = null;
       // As a function, so a picker going back to another picker (blame to history) isn't given this one to return to.
       setOverlay((cur) => cur?.back ?? null);
       // An action waiting for the viewer to close (showText(..., { onClosed })) carries on.
       closing?.onClosed?.();
     },
-    overlayHasKeys: () => focusRef.current === 'view' && !confirmRef.current,
+    overlayHasKeys: () => focusRef.current === 'view' && !confirmRef.current && answerKey.current !== keySeq.current,
     showHelp: () => setOverlay({ title: 'Keyboard shortcuts', text: HELP }),
     showLast: () => (lastOutput.current ? setOverlay({ ...lastOutput.current }) : note('No command has run yet.')),
     // `paths` limits it to some files (a file's history: its path then, and the one before a rename).
     showPatch: (c, paths = []) =>
       showAsync(`${c.hash.slice(0, 7)} ${c.subject}${paths.length ? ` · ${paths.at(-1)}` : ''}`, () => commitPatch(dataRef.current.root, c.hash, paths), { diff: true }),
     showChange: (f) => showAsync(`${f.path} (${f.area})`, () => changeDiff(dataRef.current.root, f), { diff: true }),
-    showPrDiff: (pr) => showAsync(`${pr.label} ${pr.title}`, () => ctx.host().diff(pr), { diff: true }),
+    // The diff with its review comments, when the host can list them; a diff without them if that fails.
+    showPrDiff: (pr) => {
+      const host = ctx.host();
+      showAsync(`${pr.label} ${pr.title}`, () => host.diff(pr), { diff: true, pr });
+      ctx.refreshThreads(pr);
+    },
+    // Fetches a pull request's review threads into its diff, if that's still what the viewer shows.
+    refreshThreads: (pr) =>
+      ctx
+        .host()
+        ?.threads?.(pr)
+        .then(
+          (threads) => setOverlay((o) => (o?.pr === pr ? { ...o, threads } : o)),
+          () => {},
+        ),
     // What `ref` adds to `base`: the diff from where they forked (three dots), as a pull request would show it.
     showCompare: (ref, base) =>
       showAsync(
@@ -656,7 +712,7 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
     // (c in Changes prefills "/commit "), this same key mustn't then be typed into it.
     if (focusRef.current === 'prompt' && !confirmRef.current) return prefillKey.current === keySeq.current ? undefined : promptKeys(input, key);
     if (key.ctrl && input === 'c') return exit();
-    if (confirmRef.current || overlayRef.current) return;
+    if (confirmRef.current || overlayRef.current || answerKey.current === keySeq.current) return;
     globalKeys(input, key);
   });
 
@@ -763,7 +819,7 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
         : overlay?.kind === 'picker'
           ? 'j/k move · esc close'
           : overlay
-          ? 'j/k scroll · space page · n/N hunk · esc close'
+          ? 'j/k scroll · space page · n/N hunk · / search · esc close'
           : HINTS[view];
   const right = focus === 'prompt' ? '' : '  f fetch · p pull · P push · z undo · / commands · ! git · ? help';
 

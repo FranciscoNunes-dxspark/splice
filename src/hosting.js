@@ -115,6 +115,53 @@ export function azurePr(p, me, remote) {
   };
 }
 
+/**
+ * GitHub review comments (the pulls/<n>/comments API) as threads, in Splice's shape:
+ * { id, path, line, side: 'new' | 'old', outdated, resolved, comments: [{ id, author, body, time }] }.
+ * A thread is a comment and its replies; `id` is the first comment's, which replies are posted to.
+ * GitHub's API doesn't say which threads are resolved, so `resolved` is null.
+ */
+export function githubThreads(comments) {
+  const threadOf = new Map();
+  const threads = [];
+  for (const c of [...comments].sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at))) {
+    const comment = { id: c.id, author: c.user?.login ?? '', body: c.body ?? '', time: Date.parse(c.created_at) / 1000 };
+    const parent = c.in_reply_to_id != null ? threadOf.get(c.in_reply_to_id) : null;
+    if (parent) {
+      parent.comments.push(comment);
+      threadOf.set(c.id, parent);
+      continue;
+    }
+    // A comment on code that has since changed has no line any more, only the one it was written on.
+    const t = { id: c.id, path: c.path, line: c.line ?? null, side: c.side === 'LEFT' ? 'old' : 'new', outdated: c.line == null, resolved: null, comments: [comment] };
+    threads.push(t);
+    threadOf.set(c.id, t);
+  }
+  return threads;
+}
+
+const DONE = new Set(['fixed', 'closed', 'byDesign', 'wontFix']);
+
+/**
+ * Azure DevOps pull request threads on code (pullRequestThreads), in the shape githubThreads gives.
+ * General comments (no file) and the system's own notes are left out.
+ */
+export function azureThreads(value) {
+  const out = [];
+  for (const t of value ?? []) {
+    const at = t.threadContext;
+    if (t.isDeleted || !at?.filePath) continue;
+    const comments = (t.comments ?? [])
+      .filter((c) => !c.isDeleted && c.commentType !== 'system' && c.content)
+      .map((c) => ({ id: c.id, author: c.author?.displayName ?? '', body: c.content, time: Date.parse(c.publishedDate) / 1000 }));
+    if (!comments.length) continue;
+    const side = at.rightFileStart ? 'new' : 'old';
+    const line = (side === 'new' ? at.rightFileStart : at.leftFileStart)?.line ?? null;
+    out.push({ id: t.id, path: at.filePath.replace(/^\//, ''), line, side, outdated: false, resolved: DONE.has(t.status), comments });
+  }
+  return out;
+}
+
 /** Your review requests first, then your own PRs, then the rest; newest first within each. */
 export function sortPrs(prs) {
   const rank = (p) => (p.reviewMe ? 0 : p.mine ? 1 : 2);
@@ -210,6 +257,14 @@ function github(root, remote) {
       };
     },
     diff: (pr) => gh(['pr', 'diff', String(pr.id), ...repoArg]),
+    // --jq '.[]': one comment per line, which reads the same whatever page it came on.
+    async threads(pr) {
+      const out = await gh(['api', '--paginate', `repos/${remote.owner}/${remote.repo}/pulls/${pr.id}/comments`, '--jq', '.[]']);
+      return githubThreads(out.split('\n').filter(Boolean).map((l) => JSON.parse(l)));
+    },
+    // -f sends the text as it is (-F would read a file for text starting with @).
+    reply: (pr, thread, text, signal) =>
+      gh(['api', '-X', 'POST', `repos/${remote.owner}/${remote.repo}/pulls/${pr.id}/comments/${thread.id}/replies`, '-f', `body=${text}`], { signal }),
     checkout: (pr, signal) => gh(['pr', 'checkout', String(pr.id), ...repoArg], { signal }),
     approve: (pr, signal) => gh(['pr', 'review', String(pr.id), ...repoArg, '--approve'], { signal }),
     comment: (pr, text, signal) => gh(['pr', 'comment', String(pr.id), ...repoArg, '--body', text], { signal }),
@@ -228,6 +283,17 @@ function azure(root, remote, remoteName) {
   const az = (args, opts) => cli('az', [...args, ...org, '--only-show-errors', '-o', 'json'], { cwd: root, ...opts });
   const threadsRoute = (pr) => ['devops', 'invoke', '--area', 'git', '--resource', 'pullRequestThreads', '--api-version', '7.0',
     '--route-parameters', `project=${remote.project}`, `repositoryId=${remote.repo}`, `pullRequestId=${pr.id}`];
+  // Posting needs a JSON body, which `az devops invoke` only takes from a file.
+  const post = async (route, body, signal) => {
+    const dir = await mkdtemp(join(tmpdir(), 'splice-'));
+    const file = join(dir, 'body.json');
+    try {
+      await writeFile(file, JSON.stringify(body));
+      return await az([...route, '--http-method', 'POST', '--in-file', file], { signal });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  };
   let me;
   const whoami = async () => (me ??= JSON.parse(await cli('az', ['account', 'show', '--query', 'user.name', '-o', 'json'])));
   return {
@@ -269,17 +335,17 @@ function azure(root, remote, remoteName) {
     },
     checkout: null, // done with plain git: fetch, then switch to a tracking branch
     approve: (pr, signal) => az(['repos', 'pr', 'set-vote', '--id', String(pr.id), '--vote', 'approve'], { signal }),
-    async comment(pr, text, signal) {
-      // Posting a thread needs a JSON body, which `az devops invoke` only takes from a file.
-      const dir = await mkdtemp(join(tmpdir(), 'splice-'));
-      const file = join(dir, 'thread.json');
-      try {
-        await writeFile(file, JSON.stringify({ comments: [{ parentCommentId: 0, content: text, commentType: 1 }], status: 1 }));
-        return await az([...threadsRoute(pr), '--http-method', 'POST', '--in-file', file], { signal });
-      } finally {
-        await rm(dir, { recursive: true, force: true });
-      }
+    comment: (pr, text, signal) => post(threadsRoute(pr), { comments: [{ parentCommentId: 0, content: text, commentType: 1 }], status: 1 }, signal),
+    async threads(pr) {
+      return azureThreads((await json(az(threadsRoute(pr)))).value);
     },
+    reply: (pr, thread, text, signal) =>
+      post(
+        ['devops', 'invoke', '--area', 'git', '--resource', 'pullRequestThreadComments', '--api-version', '7.0', '--route-parameters',
+          `project=${remote.project}`, `repositoryId=${remote.repo}`, `pullRequestId=${pr.id}`, `threadId=${thread.id}`],
+        { content: text, parentCommentId: thread.comments[0].id, commentType: 1 },
+        signal,
+      ),
     async create({ title, body = '', source, target, draft }, signal) {
       // az takes the description as one value per line.
       const description = body ? ['--description', ...body.split('\n')] : [];

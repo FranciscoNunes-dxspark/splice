@@ -7,6 +7,12 @@ export const theme = {
   ink: '#121212',
   add: '#5fd75f',
   del: '#ff5f5f',
+  // Behind the words a diff line changed.
+  addWord: '#1f5f2f',
+  delWord: '#6f1f1f',
+  // Behind search matches in the viewer, and the current one.
+  match: '#5f5f00',
+  matchHere: '#af8700',
   hunk: '#5fafd7',
   warn: '#ffd75f',
   local: '#5fafff',

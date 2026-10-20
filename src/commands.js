@@ -27,6 +27,7 @@ export const COMMANDS = [
   { name: 'reset', args: '<ref>', desc: 'Move the current branch to a ref (soft, mixed or hard)', complete: 'refs', run: (ctx, s) => a.reset(ctx, s) },
   { name: 'pr', args: '<title> [--into <branch>] [--draft]', desc: 'Open a pull request from the current branch', run: (ctx, s) => a.createPr(ctx, s) },
   { name: 'comment', args: '<text>', desc: 'Comment on the pull request picked in PRs', run: (ctx, s) => a.prComment(ctx, s) },
+  { name: 'reply', args: '<text>', desc: "Reply to a review comment in a pull request's diff (r on it)", run: (ctx, s) => a.replyToThread(ctx, s) },
   { name: 'approve', desc: 'Approve the pull request picked in PRs', run: (ctx) => a.prApprove(ctx, ctx.selectedPr) },
   { name: 'describe', desc: 'Claude writes the commit message for the staged changes', run: (ctx) => a.describeCommit(ctx) },
   { name: 'draft-pr', args: '[--into <branch>]', desc: 'Claude drafts a pull request (title and description) for the current branch', run: (ctx, s) => a.draftPr(ctx, s) },
@@ -37,6 +38,15 @@ export const COMMANDS = [
     args: '<message>',
     desc: 'New message for the commit picked in the rebase editor',
     run: (ctx, s) => (ctx.rebaseEditor ? (s ? ctx.rebaseEditor.reword(s) : ctx.note('Type the new message after /reword.', 'error')) : ctx.note('Open the rebase editor first: i on a commit in the graph.', 'error')),
+  },
+  {
+    name: 'bisect',
+    args: '<good|bad|skip|reset> [ref]',
+    desc: 'Find the commit that brought in a problem: mark commits good or bad (HEAD if no ref), reset to stop',
+    run: (ctx, s) => {
+      const [how, ref] = splitArgs(s);
+      return a.bisect(ctx, how, ref);
+    },
   },
   { name: 'continue', desc: 'Continue the merge, rebase, cherry-pick or revert', run: (ctx) => a.continueOp(ctx) },
   { name: 'abort', desc: 'Abort the merge, rebase, cherry-pick or revert', run: (ctx) => a.abortOp(ctx) },
@@ -59,6 +69,7 @@ export const COMMANDS = [
   { name: 'settings', desc: 'Every setting, changed in place: accent colour, updates, folders, recent, history', run: (ctx) => a.settings(ctx) },
   { name: 'accent', args: '<#rrggbb|default>', desc: 'The accent colour, saved and repainted straight away', run: (ctx, s) => a.accent(ctx, s) },
   { name: 'refresh', desc: 'Reload the repository', run: (ctx) => ctx.refresh() },
+  { name: 'update', desc: 'Look for a new version of Splice now and install it', run: (ctx) => ctx.updateNow() },
   { name: 'help', desc: 'Keyboard shortcuts', run: (ctx) => ctx.showHelp() },
   { name: 'quit', desc: 'Exit Splice', run: (ctx) => ctx.quit() },
 ];

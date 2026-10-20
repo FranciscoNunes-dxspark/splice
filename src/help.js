@@ -15,6 +15,7 @@ export const HELP = `Anywhere
 Lists
   j k / ↑ ↓        Move            g G         Top, bottom
   ctrl+d ctrl+u    Page down, up   J K         Scroll the right-hand pane
+  y                Copy it: a commit's hash, a branch name, a file's path, a stash's message, a PR's link
 
 Graph
   ↵                Full diff of the commit
@@ -24,6 +25,7 @@ Graph
   C  v             Cherry-pick · Revert
   X                Reset the current branch to it (soft, mixed or hard)
   i                Interactive rebase from it (included) up to HEAD
+  B                Bisect: mark it bad or good (or skip); git checks out the commit halfway, to try
   e  R             Claude explains it · Claude reviews it (R on the working tree: your changes)
 
 Rebase editor (newest on top, like the graph)
@@ -65,6 +67,7 @@ File history (H, /history <path>: the commits that touched it, following renames
 Blame (B, /blame <path>: the working-tree file, so new lines show as not committed yet)
   ↵                Diff of the commit that last changed the line (esc comes back here)
   H                The file's history
+  v  L             Select lines (v, move, v) · Every commit that changed them, and how (git log -L)
 
 Branches
   ↵                Check out (a remote branch gets a local tracking branch)
@@ -94,7 +97,8 @@ Stash
 
 PRs (GitHub through gh, Azure DevOps through az: your existing sign-in)
   ◆ asks for your review · ● yours · others below
-  ↵                Full diff       c           Check out its branch
+  ↵                Full diff, with review comments under their lines     c           Check out its branch
+                   In it: t T next, previous comment · r reply to it (/reply <text>)
   a                Approve         C           Comment (/comment <text>)
   o                Open in the browser
   n                New pull request from the current branch (/pr <title> [--into <branch>] [--draft])
@@ -122,14 +126,18 @@ Slash commands
   /delete <ref>   /merge <ref>   /rebase <ref>     /reset <ref>   /tag <name> [ref]
   /fetch   /pull [--rebase]   /push [--force]   /stash [msg]   /pop   /discard
   /undo   /reflog
+  /bisect <good|bad|skip|reset> [ref]
   /continue   /abort   /find <text>   /open <path>   /scan <folder>   /last   /quit
-  /settings   /accent <#rrggbb|default>
+  /settings   /accent <#rrggbb|default>   /update (look for a new version now and install it)
   /find -S <text>   /find -G <regex>   Search all history for commits adding or removing the text,
                                      or changing lines that match the regex
-  /pr <title> [--into <branch>] [--draft]   /comment <text>   /approve
+  /pr <title> [--into <branch>] [--draft]   /comment <text>   /approve   /reply <text>
   /rebase -i <ref>   /reword <message>   /fixup [ref]   /worktree <path> [ref]   /compare <ref> [base]
   /history <path>   /blame <path>   /cleanup
 
 Viewer (diffs, output, this help)
   j k  space  g G  Scroll         n N         Next, previous hunk
-  esc / q          Close`;
+  /                Search: matches show as you type, ↵ keeps it (a capital letter makes it match case)
+  n N              With a search: next, previous match
+  esc / q          Clear the search, then close
+  Diffs pick out the words that changed within a line.`;

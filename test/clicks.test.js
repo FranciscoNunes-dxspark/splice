@@ -88,7 +88,9 @@ test('clicks pick rows and tabs, double-clicks do what ↵ does, the wheel scrol
     await until(() => /❯.*Commit number 38/.test(frame()), 'the cursor on the clicked commit');
     assert.doesNotMatch(frame(), /esc close/);
 
-    // Clicking it again quickly is a double-click: its diff, as ↵ shows it.
+    // Two quick clicks are a double-click: its diff, as ↵ shows it. (Both at once: under load, waiting
+    // between them could take longer than a double-click may.)
+    mouse.click(p.x, p.y);
     mouse.click(p.x, p.y);
     await until(() => /─ [0-9a-f]{7} Commit number 38 ─.*esc close/.test(frame()), 'the diff of the double-clicked commit');
 

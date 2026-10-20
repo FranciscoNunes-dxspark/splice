@@ -1,13 +1,17 @@
 import React, { useEffect, useState } from 'react';
 import { Box, Text, useInput } from 'ink';
 import { theme } from '../theme.js';
+import { markRanges } from '../search.js';
 import { clean, fit, fitSegments, stringWidth } from '../text.js';
 
-/** One line of styled segments, cut to `width`. Draws the ❯ cursor and the selection background. */
-export function Row({ segments, width, selected = false, focused = true, pointer = true }) {
+/**
+ * One line of styled segments, cut to `width`. Draws the ❯ cursor and the selection background;
+ * `marked` gives a row the background without the cursor (one of several rows selected).
+ */
+export function Row({ segments, width, selected = false, marked = false, focused = true, pointer = true }) {
   const head = pointer ? [{ text: selected ? '❯ ' : '  ', color: theme.accent, bold: true }] : [];
   const segs = fitSegments([...head, ...segments], width);
-  const bg = selected && focused ? theme.selBg : undefined;
+  const bg = (selected || marked) && focused ? theme.selBg : undefined;
   return (
     <Text wrap="truncate">
       {segs.map((s, i) => (
@@ -78,6 +82,13 @@ export function diffSegment(line) {
   if (line.startsWith('-')) return { text, color: theme.del };
   if (/^commit [0-9a-f]{7,}/.test(line)) return { text, color: theme.warn, bold: true };
   return { text };
+}
+
+/** A diff line as segments, with the words it changed (`ranges`, from search.js's wordChanges) picked out. */
+export function diffSegments(line, ranges) {
+  const seg = diffSegment(line);
+  if (!ranges) return [seg];
+  return markRanges([seg], ranges, { bg: line[0] === '+' ? theme.addWord : theme.delWord, bold: true });
 }
 
 const FRAMES = ['·', '✢', '✳', '✶', '✻', '✽', '✻', '✶', '✳', '✢'];

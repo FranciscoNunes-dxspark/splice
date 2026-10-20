@@ -81,7 +81,7 @@ export const FACES = {
 
 /** How the pet feels about the repository right now. */
 export function moodFor({ data, busy, lastEntry, now = Date.now() }) {
-  if (data?.state || data?.changes.conflicts.length) return 'worried';
+  if ((data?.state && data.state !== 'bisecting') || data?.changes.conflicts.length) return 'worried';
   if (lastEntry?.status === 'error' && now - lastEntry.at < 8000) return 'worried';
   if (busy) return 'look';
   if (lastEntry?.status === 'ok' && now - lastEntry.at < 4000) return 'happy';

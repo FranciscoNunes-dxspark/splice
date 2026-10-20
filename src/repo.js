@@ -5,6 +5,7 @@ import { samePath } from './config.js';
 import { git } from './git.js';
 import {
   COMMIT_FORMAT,
+  DECORATE_REFS,
   LOG_FORMAT,
   REF_FORMAT,
   STASH_FORMAT,
@@ -46,6 +47,7 @@ export function repoState(gitDir) {
   if (existsSync(join(gitDir, 'MERGE_HEAD'))) return 'merging';
   if (existsSync(join(gitDir, 'CHERRY_PICK_HEAD'))) return 'cherry-picking';
   if (existsSync(join(gitDir, 'REVERT_HEAD'))) return 'reverting';
+  if (existsSync(join(gitDir, 'BISECT_LOG'))) return 'bisecting';
   return null;
 }
 
@@ -131,7 +133,7 @@ export async function loadRepo(repo, { graphLimit = 400 } = {}) {
     readState(repo, REF_FORMAT, refsSignature),
     // An empty repository has nothing to log, which git reports as an error.
     git(repo.root, [
-      'log', '--graph', '--date-order', '--decorate=full', `-n${graphLimit}`,
+      'log', '--graph', '--date-order', '--decorate=full', ...DECORATE_REFS, `-n${graphLimit}`,
       `--format=${LOG_FORMAT}`, '--exclude=refs/stash', '--all',
     ]).catch(() => ''),
     readRemotes(repo),

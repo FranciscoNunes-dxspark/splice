@@ -49,6 +49,7 @@ export function StashView({ data, ctx, width, height, active }) {
     if (input === 'S') return ctx.prefill('/stash ');
     if (!s) return;
     if (key.return) ctx.showStash(s);
+    else if (input === 'y') ctx.copy(s.message, `the message of ${s.ref}`);
     else if (input === 'a') a.stashApply(ctx, s.ref);
     else if (input === 'o') a.stashApply(ctx, s.ref, { pop: true });
     else if (input === 'x') a.stashDrop(ctx, s);

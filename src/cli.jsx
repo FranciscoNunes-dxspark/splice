@@ -7,7 +7,8 @@ import { setAccent } from './theme.js';
 import { App } from './ui/App.jsx';
 import { checkForUpdate, installUpdate, removeOldExecutables } from './update.js';
 import { ask } from './claude.js';
-import { terminalMouse } from './mouse.js';
+import { copyText, terminalMouse } from './mouse.js';
+import { osc52 } from './selection.js';
 
 const args = process.argv.slice(2);
 
@@ -50,6 +51,11 @@ if (COMPILED) removeOldExecutables();
 // Clicks and the wheel, where the terminal can report them; App turns reporting on unless the setting is off.
 // Set up before rendering, so mouse reports never reach Ink as keys.
 const mouse = await terminalMouse(process.stdin, process.stdout);
+// y copies: through the terminal (which works over SSH too) and the system clipboard.
+const copy = (text) => {
+  process.stdout.write(osc52(text));
+  copyText(text);
+};
 const path = args.find((x) => !x.startsWith('-'));
 // Started without a path outside a repository, Splice reopens the last one; a path given means look there.
 const app = render(
@@ -62,6 +68,7 @@ const app = render(
     askClaude={ask}
     setTitle={setTitle}
     mouse={mouse}
+    copy={copy}
   />,
   // Through the mouse's stdout, which watches the frames to select text from.
   { exitOnCtrlC: false, stdout: mouse?.stdout ?? process.stdout },

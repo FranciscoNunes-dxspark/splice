@@ -89,6 +89,7 @@ export function PrView({ data, ctx, width, height, active, prVersion }) {
     if (input === 'W') return a.draftPr(ctx, '');
     if (!pr) return;
     if (key.return) ctx.showPrDiff(pr);
+    else if (input === 'y') ctx.copy(pr.url, `the link to ${pr.label}`);
     else if (input === 'c') a.prCheckout(ctx, pr);
     else if (input === 'a') a.prApprove(ctx, pr);
     else if (input === 'C') ctx.prefill('/comment ');

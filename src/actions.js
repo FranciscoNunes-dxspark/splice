@@ -232,12 +232,13 @@ export async function rebase(ctx, ref) {
   afterConflicts(ctx);
 }
 
-const OP = { merging: 'merge', rebasing: 'rebase', 'cherry-picking': 'cherry-pick', reverting: 'revert' };
+const OP = { merging: 'merge', rebasing: 'rebase', 'cherry-picking': 'cherry-pick', reverting: 'revert', bisecting: 'bisect' };
 
 export async function continueOp(ctx) {
   if (!needRepo(ctx)) return;
   const { state } = ctx.data;
   if (!state) return ctx.note('There is no merge, rebase, cherry-pick or revert in progress.', 'error');
+  if (state === 'bisecting') return ctx.note('A bisect goes on as you mark commits: B on one in the graph, or /bisect good, bad or skip.', 'error');
   if (ctx.data.changes.conflicts.length) return ctx.note('Some files still have conflicts. Resolve and stage them first.', 'error');
   // A merge is finished by committing it; the others have --continue.
   await ctx.exec(state === 'merging' ? ['commit', '--no-edit'] : [OP[state], '--continue'], { label: 'Continuing' });
@@ -249,6 +250,7 @@ export async function abortOp(ctx) {
   if (!needRepo(ctx)) return;
   const { state } = ctx.data;
   if (!state) return ctx.note('There is no merge, rebase, cherry-pick or revert in progress.', 'error');
+  if (state === 'bisecting') return bisect(ctx, 'reset');
   const ok = await ctx.confirm({
     title: `Abort the ${OP[state]}?`,
     detail: 'Puts the branch back the way it was before it started.',
@@ -257,6 +259,49 @@ export async function abortOp(ctx) {
   if (!ok) return;
   await ctx.exec([OP[state], '--abort'], { label: 'Aborting' });
   if (!ctx.data.state) await cleanup(ctx.data.gitDir);
+}
+
+/**
+ * B on a commit in the graph: marks it bad (has the problem), good (from before it) or skipped, starting
+ * a bisect if there isn't one. Once there's a good and a bad commit, git checks out one halfway between
+ * to test, and the graph moves to it.
+ */
+export async function bisectMark(ctx, c) {
+  if (!needRepo(ctx)) return;
+  const { state } = ctx.data;
+  if (state && state !== 'bisecting') return ctx.note(`A ${OP[state]} is in progress. Finish it first (/continue or /abort).`, 'error');
+  const on = state === 'bisecting';
+  const how = await ctx.confirm({
+    title: on ? `Mark ${short(c.hash)} as` : `Find the commit that brought in a problem: is ${short(c.hash)} bad or good?`,
+    detail: on ? c.subject : 'Then mark one of the other kind, and git checks out commits in between for you to try, halving the range each time.',
+    options: [
+      { label: 'Bad: it has the problem', value: 'bad' },
+      { label: 'Good: from before the problem', value: 'good' },
+      ...(on ? [{ label: "Skip: can't tell (it doesn't build, say)", value: 'skip' }] : []),
+      { label: 'Cancel', value: null },
+    ],
+  });
+  if (how) await bisect(ctx, how, c.hash);
+}
+
+/** /bisect good|bad|skip [ref] (HEAD if none), and /bisect reset: what B does, from the prompt. */
+export async function bisect(ctx, how, ref) {
+  if (!needRepo(ctx)) return;
+  const on = ctx.data.state === 'bisecting';
+  if (how === 'reset') {
+    if (!on) return ctx.note('There is no bisect in progress.', 'error');
+    const ok = await ctx.confirm({ title: 'Stop bisecting?', detail: 'Goes back to the branch or commit you were on when it started.', options: YES_NO('Yes, stop') });
+    if (ok) await ctx.exec(['bisect', 'reset'], { label: 'Ending the bisect' });
+    return;
+  }
+  if (!['good', 'bad', 'skip'].includes(how)) return ctx.note('Use /bisect good, bad or skip [ref], or /bisect reset.', 'error');
+  if (!on) {
+    if (how === 'skip') return ctx.note('Start a bisect by marking a commit good or bad (B in the graph).', 'error');
+    if (!(await ctx.exec(['bisect', 'start'], { label: 'Starting a bisect', refresh: false })).ok) return;
+  }
+  const r = await ctx.exec(['bisect', how, ...(ref ? [ref] : [])], { label: 'Bisecting' });
+  const found = r.ok && /^([0-9a-f]{7,}) is the first bad commit/m.exec(r.out);
+  if (found) ctx.note(`Found it: ${short(found[1])} is the first bad commit (↵ on it shows its diff). /abort ends the bisect and goes back to where you were.`);
 }
 
 export function stash(ctx, message) {
@@ -925,6 +970,21 @@ export async function prComment(ctx, text) {
 }
 
 /** `/pr <title> [--into <branch>] [--draft]`: opens a PR from the current branch, pushing it first if needed. */
+/** /reply <text> (r on a review comment in a pull request's diff): posts a reply to that thread, then shows it. */
+export async function replyToThread(ctx, text) {
+  const target = ctx.reviewThread;
+  if (!target) return ctx.note("Open a pull request's diff (↵ in PRs), then r on a review comment.", 'error');
+  if (!text.trim()) return ctx.prefill('/reply ');
+  const host = needHost(ctx);
+  if (!host) return;
+  const { pr, thread } = target;
+  const r = await hostTask(ctx, `Reply to ${thread.comments[0].author} on ${thread.path}`, (signal) => host.reply(pr, thread, text.trim(), signal).then(() => 'Replied'), {
+    label: 'Replying',
+    refresh: false,
+  });
+  if (r.ok) await ctx.refreshThreads(pr);
+}
+
 export async function createPr(ctx, text) {
   const host = needHost(ctx);
   if (!host) return;
@@ -1294,6 +1354,7 @@ export function showReflog(ctx) {
     },
     onPick: (e) => ctx.showPatch({ hash: e.hash, subject: e.subject }),
     keys: {
+      y: (e) => ctx.copy(e.hash, `the hash of ${short(e.hash)}`),
       X: async (e) => done(await reset(ctx, e.hash, `${e.selector} (${short(e.hash)})`)),
       c: async (e) => {
         // Like c in the graph: a branch pointing at it rather than a detached HEAD, when there is one.

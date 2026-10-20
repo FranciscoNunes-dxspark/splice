@@ -178,7 +178,8 @@ test('/find: plain text, -S and -G, with their flags offered while typing', () =
   const args = searchArgs('S', '-x y');
   assert.ok(args.includes('-S-x y'), 'the text is one argument, glued to its flag');
   assert.ok(args.indexOf('--exclude=refs/stash') < args.indexOf('--all'), '--exclude only applies to a later --all');
-  assert.equal(searchArgs('G', 'a.c')[3], '-Ga.c');
+  assert.ok(searchArgs('G', 'a.c').includes('-Ga.c'));
+  assert.ok(args.includes('--decorate-refs=refs/bisect'), 'bisect marks show on the commits found');
 
   const flags = suggestionsFor('/find ', { data: null });
   assert.deepEqual(flags.map((s) => s.label), ['-S', '-G']);
