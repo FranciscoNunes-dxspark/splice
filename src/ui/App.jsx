@@ -388,9 +388,12 @@ export function App({ initialPath, config: initialConfig, checkUpdate, askClaude
     // A list to pick from: { title, hint, items | load, onPick, keys, empty } (see Picker.jsx).
     showPicker: (picker) => setOverlay({ ...picker, kind: 'picker', id: ++pickerIds.current }),
     closeOverlay: () => {
+      const closing = overlayRef.current;
       ctx.rebaseEditor = null;
       // As a function, so a picker going back to another picker (blame to history) isn't given this one to return to.
       setOverlay((cur) => cur?.back ?? null);
+      // An action waiting for the viewer to close (showText(..., { onClosed })) carries on.
+      closing?.onClosed?.();
     },
     overlayHasKeys: () => focusRef.current === 'view' && !confirmRef.current,
     showHelp: () => setOverlay({ title: 'Keyboard shortcuts', text: HELP }),

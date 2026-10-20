@@ -1,5 +1,6 @@
 // Claude through the Claude Code CLI (`claude -p`), signed in as you already are, so Tiller never
 // sees a key. The prompts and the parsing of answers are pure, for tests; `ask` runs the CLI.
+import { hasMarkers } from './conflict.js';
 import { cli } from './hosting.js';
 
 // Each flag takes seconds off a call: no MCP servers to start, no settings files (whose hooks and
@@ -63,6 +64,45 @@ export function lookPrompt(mode, subject) {
     "You may read other files in the repository for context; the working tree may have moved on since the change was made.",
     FORMAT,
   ].join('\n');
+}
+
+/** What to ask for resolving the conflicts in the file at `path`; `resolveInput` makes what goes on stdin. */
+export function resolvePrompt(path) {
+  return [
+    `Resolve the merge conflicts in ${path}.`,
+    'Standard input says what each side of the conflict is, with its commit message, then has the whole file with its conflict markers (<<<<<<< ours, ||||||| base if present, =======, >>>>>>> theirs).',
+    'Keep what both sides meant to do wherever they can live together; where they truly contradict, go by what the commit messages say each side intended. Leave everything outside the conflicts exactly as it is.',
+    'You may read other files in the repository for context.',
+    'Reply with the complete resolved file and nothing else: no explanation before or after it, no code fences, no conflict markers.',
+  ].join('\n');
+}
+
+// Who "ours" and "theirs" are, for each operation that stops on conflicts (a rebase turns them round).
+const SIDES = {
+  merging: ['the branch you are on', 'the branch being merged in'],
+  rebasing: ['the branch being rebased onto, with the commits replayed so far', 'the commit being replayed'],
+  'cherry-picking': ['the branch you are on', 'the commit being cherry-picked'],
+  reverting: ['the branch you are on', 'undoing the commit being reverted'],
+};
+
+/**
+ * Claude's input for resolving a conflicted file: `state` is the operation in progress (data.state, or null,
+ * for a stash say), `ours` and `theirs` are { ref, message } or null when unknown, `text` the file as it is.
+ */
+export function resolveInput({ path, state, ours, theirs, text }) {
+  const [oursRole, theirsRole] = SIDES[state] ?? ['the branch you are on', 'the changes being applied (a stash, say)'];
+  const side = (name, role, s) => `${name}: ${role}${s ? `, ${s.ref}:\n${s.message}` : '.'}`;
+  return [`File: ${path}`, '', side('Ours', oursRole, ours), '', side('Theirs', theirsRole, theirs), '', 'The file, with its conflict markers:', text].join('\n');
+}
+
+/** The resolved file in Claude's answer, without code fences around it; `error` says why there's none. */
+export function parseResolution(answer) {
+  let text = (answer ?? '').replace(/\r\n/g, '\n');
+  const fenced = text.match(/^\s*```[^\n]*\n([\s\S]*?)\n?```\s*$/);
+  if (fenced) text = fenced[1];
+  if (!text.trim()) return { error: "Claude didn't send back a resolved file." };
+  if (hasMarkers(text)) return { error: "Claude's answer still has conflict markers, so it wasn't used." };
+  return { text };
 }
 
 /** The commit subject in Claude's answer: its first line, without quotes or a "Subject:" label. */

@@ -36,11 +36,12 @@ Changes
   s                Stash just this file, staged and unstaged changes (its path is the stash's message)
   c  A             Commit · Amend the last commit
   F                Fix up an earlier commit with the staged changes (pick it; then fold it in, or keep it for later)
-  W             Claude writes the commit message for the staged changes, into the prompt to edit
+  W                Claude writes the commit message for the staged changes, into the prompt to edit
   R                Claude reviews the staged changes (or the unstaged ones, if nothing is staged)
-  O  T             On a conflict: take ours · take theirs
+  O  T             On a conflict: take ours · take theirs, for the whole file
+  C                On a conflict: Claude proposes the resolved file, shown as a diff; asks before writing it
   H  B             The file's history · Blame it (who last changed each line)
-  ↵  →  l          Step into the diff to stage hunks or single lines
+  ↵  →  l          Step into the diff to stage hunks or single lines (on a conflict: into its conflict blocks)
 
 Changes, in the diff
   j k              Move between changed lines      n N  ] [    Next, previous hunk
@@ -56,6 +57,11 @@ File history (H, /history <path>: the commits that touched it, following renames
 Blame (B, /blame <path>: the working-tree file, so new lines show as not committed yet)
   ↵                Diff of the commit that last changed the line (esc comes back here)
   H                The file's history
+
+Changes, in a conflict (ours, the base in diff3 style, theirs)
+  j k  n N         Next, previous conflict block   J K         Scroll
+  o  t  b          Take ours · Take theirs · Keep both (ours, then theirs) for the block; nothing is staged
+  esc  ←  h        Back to the file list, where space marks the file resolved
 
 Branches
   ↵                Check out (a remote branch gets a local tracking branch)

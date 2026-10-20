@@ -1,10 +1,11 @@
 // Every git operation the UI offers, written once. Keys and slash commands both call these.
 // `ctx` is the app's handle: data, exec, confirm, note, prefill, and so on (see App.jsx).
 import { existsSync } from 'node:fs';
-import { rm } from 'node:fs/promises';
+import { readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { READ_ONLY, cleanSubject, clip, commitPrompt, lookPrompt, parsePrDraft, prPrompt } from './claude.js';
+import { READ_ONLY, cleanSubject, clip, commitPrompt, lookPrompt, parsePrDraft, parseResolution, prPrompt, resolveInput, resolvePrompt } from './claude.js';
 import { cleanupChoice, cleanupCount, cleanupOptions, cleanupText, planCleanup, readCleanup } from './cleanup.js';
+import { matchLineEndings, parseConflicts, takeSide, unifiedDiff } from './conflict.js';
 import { blamePicker, historyPicker, repoPath } from './history.js';
 import { defaultBranch, findArgs, parseGraph, parseStatus, relTime, searchArgs, splitArgs } from './parse.js';
 import { buildPatch, coversAll, parseDiff } from './patch.js';
@@ -637,6 +638,38 @@ export async function resolveWith(ctx, f, side) {
   if (r.ok) return ctx.exec(['add', '--', f.path], { quiet: true });
 }
 
+const SIDE_NAMES = { ours: 'ours', theirs: 'theirs', both: 'both sides' };
+
+/**
+ * Takes one side ("ours", "theirs" or "both") of conflict block `index` in a conflicted file, rewriting
+ * the working file and leaving it unstaged. `seen` is the file's content as shown (a Buffer): if the
+ * file has changed since, it's left alone. Resolves with { buf, left } (the new content, the blocks
+ * still in it), or null.
+ */
+export async function resolveBlock(ctx, f, seen, index, side) {
+  const full = join(ctx.data.root, f.path);
+  try {
+    const buf = await readFile(full);
+    if (!buf.equals(seen)) {
+      ctx.note(`${f.path} changed on disk, so nothing was taken. Here it is again.`, 'error');
+      ctx.reload();
+      return null;
+    }
+    // Bytes one to one, so a file in any encoding comes back as it was outside the block.
+    const next = takeSide(buf.toString('latin1'), index, side);
+    if (next == null) return null;
+    const out = Buffer.from(next, 'latin1');
+    await writeFile(full, out);
+    const left = parseConflicts(next).blocks.length;
+    if (!left) ctx.note(`No conflicts left in ${f.path}: space marks it resolved`);
+    ctx.reload();
+    return { buf: out, left };
+  } catch (e) {
+    ctx.note(`Couldn't take ${SIDE_NAMES[side]} in ${f.path}: ${e.message.split('\n')[0]}`, 'error');
+    return null;
+  }
+}
+
 const apply = (ctx, patch, flags, label, opts) =>
   ctx.exec(['apply', ...flags, '--recount', '--whitespace=nowarn', '-'], { input: patch, quiet: true, label, ...opts });
 
@@ -1049,6 +1082,87 @@ export async function claudeRef(ctx, mode, ref) {
   }
   const [hash, subject] = out.trim().split('\x1f');
   return claudeLook(ctx, mode, { kind: 'commit', hash, subject });
+}
+
+// The commit on the other side of a conflict, by operation; a stash leaves none of these.
+const THEIRS = { merging: 'MERGE_HEAD', rebasing: 'REBASE_HEAD', 'cherry-picking': 'CHERRY_PICK_HEAD', reverting: 'REVERT_HEAD' };
+
+/** Both sides of the conflicts in progress, as { ref, message } (null when there's no such commit). */
+async function conflictSides(ctx) {
+  const message = (ref) => ctx.git(['log', '-1', '--format=%h %s%n%n%b', ref, '--']).then((s) => s.trim() || null, () => null);
+  const ours = await message('HEAD');
+  let theirs = null;
+  for (const ref of new Set([THEIRS[ctx.data.state], ...Object.values(THEIRS)].filter(Boolean))) {
+    const m = await message(ref);
+    if (m) {
+      theirs = { ref, message: m };
+      break;
+    }
+  }
+  return { ours: ours && { ref: 'HEAD', message: ours }, theirs };
+}
+
+/**
+ * Claude proposes the whole resolved file for a conflicted file. The proposal opens as a diff against
+ * the file as it is, then asks before writing it (with the file's line endings, unstaged).
+ */
+export async function claudeResolve(ctx, f) {
+  if (!needClaude(ctx)) return;
+  const full = join(ctx.data.root, f.path);
+  let current;
+  try {
+    current = await readFile(full, 'utf8');
+  } catch {
+    return ctx.note(`${f.path} isn't in the working tree (one side deleted it), so there's nothing to merge. O or T takes a side.`, 'error');
+  }
+  if (!parseConflicts(current).blocks.length) return ctx.note(`No conflict markers in ${f.path}: space marks it resolved, or O/T takes a side.`, 'error');
+  const { ours, theirs } = await conflictSides(ctx);
+  const input = resolveInput({ path: f.path, state: ctx.data.state, ours, theirs, text: current });
+  // A cut-off file can't come back whole.
+  if (clip(input) !== input) return ctx.note(`${f.path} is too big to send to Claude whole.`, 'error');
+  const r = await askClaude(ctx, `resolve ${f.path}`, resolvePrompt(f.path), input, READ_ONLY);
+  if (!r.ok) return r;
+  const answer = parseResolution(r.out);
+  if (answer.error) {
+    ctx.note(answer.error, 'error');
+    return r;
+  }
+  const proposed = matchLineEndings(answer.text, current);
+  const title = `Claude's resolution of ${f.path}`;
+  const diff = unifiedDiff(current, proposed, f.path);
+  let choice;
+  for (;;) {
+    let closed;
+    const done = new Promise((resolve) => (closed = resolve));
+    ctx.showText(title, diff, { diff: true, onClosed: closed });
+    choice = await ctx.confirm({
+      title: `Use Claude's resolution for ${f.path}?`,
+      detail: "Writes it to the file, not staged: look it over, then space marks it resolved.",
+      options: [
+        { label: 'Yes, write it', value: true },
+        { label: 'No', value: false },
+        { label: 'Scroll through the diff first (esc comes back here)', value: 'read' },
+      ],
+    });
+    if (choice !== 'read') break;
+    await done;
+  }
+  ctx.closeOverlay();
+  if (!choice) return r;
+  try {
+    // Claude took a while: don't overwrite edits made meanwhile.
+    if ((await readFile(full, 'utf8')) !== current) {
+      ctx.note(`${f.path} changed while Claude was working on it, so it was left alone. C asks again.`, 'error');
+      return r;
+    }
+    await writeFile(full, proposed);
+  } catch (e) {
+    ctx.note(`Couldn't write ${f.path}: ${e.message.split('\n')[0]}`, 'error');
+    return r;
+  }
+  ctx.note(`Wrote Claude's resolution to ${f.path}: look it over, then space marks it resolved`);
+  ctx.reload();
+  return r;
 }
 
 /**
