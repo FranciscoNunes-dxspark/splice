@@ -72,6 +72,8 @@ Press `?` inside for every shortcut. The essentials:
 | Reflog (`/reflog`) | `↵` the commit's diff · `X` reset the current branch to it · `c` check it out |
 | Repos | `↵` open · `s` add a folder to scan · `x` forget |
 
+The mouse works too: click a tab, a row or the prompt, double-click a row to do what `↵` does, and scroll the list or pane under the pointer with the wheel. In Changes, clicking a `+` or `-` line puts the cursor in the diff, ready to stage that hunk with `space`. Drag to select text as you would in the terminal: it's copied when you let go (through the terminal and the system clipboard), and stays highlighted until the next key or click. With the mouse turned off in the settings, the terminal does its own selecting again. On Windows the downloaded Splice handles the mouse itself; run from a checkout, it needs Node 22.17 or later.
+
 ### Slash commands
 
 Type `/` and the menu narrows as you type; `tab` completes, `↑`/`↓` picks, `↵` runs. Commands that take a branch complete branch, tag and remote names; `/history` and `/blame` complete the repository's tracked files.
@@ -167,6 +169,7 @@ The app icon at every size it ships in, drawn by `scripts/logo.js` like the rest
 `,` (or `/settings`) lists every setting with its value, and `↵` changes the one under the cursor; each change is saved as you make it:
 
 - **Accent colour**: `↵` puts `/accent <colour>` in the prompt; give `#rrggbb`, or `default`. It repaints straight away.
+- **Mouse**: on or off. Off, Splice leaves clicks and selecting to the terminal.
 - **Check for new versions** and **Install them by itself**: on or off (see [Updates](#updates)).
 - **Folders to scan**: the list `/scan` adds to; `x` removes one, `s` adds one.
 - **Recent repositories** and **Prompt history**: `↵` clears them, after asking. Forgetting a repository only takes it off the list.

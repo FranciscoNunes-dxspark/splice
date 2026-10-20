@@ -7,6 +7,7 @@ import { setAccent } from './theme.js';
 import { App } from './ui/App.jsx';
 import { checkForUpdate, installUpdate, removeOldExecutables } from './update.js';
 import { ask } from './claude.js';
+import { terminalMouse } from './mouse.js';
 
 const args = process.argv.slice(2);
 
@@ -46,6 +47,9 @@ const setTitle = (title) => process.stdout.write(`\x1b]0;${title.replace(/[\x00-
 const checkUpdate = COMPILED ? checkForUpdate : undefined;
 // What an earlier update moved aside; quietly, and it doesn't hold up the start.
 if (COMPILED) removeOldExecutables();
+// Clicks and the wheel, where the terminal can report them; App turns reporting on unless the setting is off.
+// Set up before rendering, so mouse reports never reach Ink as keys.
+const mouse = await terminalMouse(process.stdin, process.stdout);
 const path = args.find((x) => !x.startsWith('-'));
 // Started without a path outside a repository, Splice reopens the last one; a path given means look there.
 const app = render(
@@ -57,8 +61,10 @@ const app = render(
     installUpdate={COMPILED ? installUpdate : undefined}
     askClaude={ask}
     setTitle={setTitle}
+    mouse={mouse}
   />,
-  { exitOnCtrlC: false },
+  // Through the mouse's stdout, which watches the frames to select text from.
+  { exitOnCtrlC: false, stdout: mouse?.stdout ?? process.stdout },
 );
 await app.waitUntilExit();
 process.exit(0);

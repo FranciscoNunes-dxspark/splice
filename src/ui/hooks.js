@@ -22,11 +22,16 @@ export function useListNav(count, height, { selectable = () => true, resetKey } 
   const [index, setIndex] = useState(0);
   const offset = useRef(0);
   const lastKey = useRef(resetKey);
+  // Scrolled with the wheel, the view leaves the cursor where it was, out of sight if need be,
+  // until the cursor moves again.
+  const free = useRef(false);
+  const [, setScrolled] = useState(0);
   let i = index;
   if (lastKey.current !== resetKey) {
     lastKey.current = resetKey;
     i = 0;
     offset.current = 0;
+    free.current = false;
     if (index !== 0) setIndex(0);
   }
 
@@ -41,17 +46,23 @@ export function useListNav(count, height, { selectable = () => true, resetKey } 
   }
 
   const h = Math.max(1, height);
-  if (i < offset.current) offset.current = i;
-  if (i >= offset.current + h) offset.current = i - h + 1;
-  // Keep a section header in view above the first row under it.
-  if (i > 0 && i === offset.current && !selectable(i - 1)) offset.current = i - 1;
+  if (!free.current) {
+    if (i < offset.current) offset.current = i;
+    if (i >= offset.current + h) offset.current = i - h + 1;
+    // Keep a section header in view above the first row under it.
+    if (i > 0 && i === offset.current && !selectable(i - 1)) offset.current = i - 1;
+  }
   offset.current = Math.max(0, Math.min(offset.current, Math.max(0, count - h)));
 
+  const moveTo = (j) => {
+    free.current = false;
+    setIndex(j);
+  };
   const go = (target, dir) => {
     const t = Math.max(0, Math.min(target, count - 1));
     let j = find(t, dir);
     if (j < 0) j = find(t, -dir);
-    if (j >= 0) setIndex(j);
+    if (j >= 0) moveTo(j);
   };
 
   const handle = (input, key) => {
@@ -66,7 +77,40 @@ export function useListNav(count, height, { selectable = () => true, resetKey } 
     return true;
   };
 
-  return { index: i, offset: offset.current, handle, setIndex };
+  /** Puts the cursor on the visible row `row` (a click), if that row takes it. Returns whether it did. */
+  const pick = (row) => {
+    const j = offset.current + row;
+    if (row < 0 || row >= h || j >= count || !selectable(j)) return false;
+    moveTo(j);
+    return true;
+  };
+
+  /** Scrolls the list `n` rows (the wheel), leaving the cursor where it is. */
+  const scrollBy = (n) => {
+    if (!count) return;
+    free.current = true;
+    offset.current = Math.max(0, Math.min(offset.current + n, count - h));
+    setScrolled((s) => s + 1);
+  };
+
+  return { index: i, offset: offset.current, handle, setIndex: moveTo, pick, scrollBy };
+}
+
+/**
+ * Mouse events for the component in the main area: wheel notches and left presses, with `y` counted
+ * from the top of the main area and `double` set on a double-click. App hands them to the handler of
+ * the component mounted last, which is the one on screen (a view, or an overlay over it).
+ */
+export function useMouse(ctx, handler) {
+  const ref = useRef(handler);
+  ref.current = handler;
+  useEffect(() => {
+    const fn = (e) => ref.current(e);
+    ctx.mouseHandlers.push(fn);
+    return () => {
+      ctx.mouseHandlers = ctx.mouseHandlers.filter((h) => h !== fn);
+    };
+  }, []);
 }
 
 // Results of slow reads (diffs, commit details), keyed by what was asked, so moving back is instant.

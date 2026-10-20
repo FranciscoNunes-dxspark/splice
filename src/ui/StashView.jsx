@@ -6,7 +6,7 @@ import { relTime } from '../parse.js';
 import { stashFiles, stashStat } from '../repo.js';
 import { codeColor, theme } from '../theme.js';
 import { fit } from '../text.js';
-import { useAsync, useListNav } from './hooks.js';
+import { useAsync, useListNav, useMouse } from './hooks.js';
 import { Lines, Panel, Row } from './parts.jsx';
 
 const WHAT = { M: 'modified', A: 'added', D: 'deleted', T: 'type changed', '?': 'untracked' };
@@ -42,21 +42,25 @@ export function StashView({ data, ctx, width, height, active }) {
       keys: { d: (it) => ctx.showStashFile(st, it.file) },
     });
 
-  useInput(
-    (input, key) => {
-      if (!ctx.viewHasKeys()) return;
-      if (nav.handle(input, key)) return;
-      if (input === 's') return a.stash(ctx);
-      if (input === 'S') return ctx.prefill('/stash ');
-      if (!s) return;
-      if (key.return) ctx.showStash(s);
-      else if (input === 'a') a.stashApply(ctx, s.ref);
-      else if (input === 'o') a.stashApply(ctx, s.ref, { pop: true });
-      else if (input === 'x') a.stashDrop(ctx, s);
-      else if (input === 'F') showFiles(s);
-    },
-    { isActive: active },
-  );
+  const keys = (input, key) => {
+    if (!ctx.viewHasKeys()) return;
+    if (nav.handle(input, key)) return;
+    if (input === 's') return a.stash(ctx);
+    if (input === 'S') return ctx.prefill('/stash ');
+    if (!s) return;
+    if (key.return) ctx.showStash(s);
+    else if (input === 'a') a.stashApply(ctx, s.ref);
+    else if (input === 'o') a.stashApply(ctx, s.ref, { pop: true });
+    else if (input === 'x') a.stashDrop(ctx, s);
+    else if (input === 'F') showFiles(s);
+  };
+  useInput(keys, { isActive: active });
+  useMouse(ctx, (e) => {
+    if (split && e.x >= listW) return;
+    if (e.wheel) return nav.scrollBy(e.wheel * 3);
+    // Rows start under the panel's top border. A double-click does what ↵ does.
+    if (nav.pick(e.y - 1) && e.double) keys('', { return: true });
+  });
 
   return (
     <Box width={width} height={height}>

@@ -5,7 +5,7 @@ import * as a from '../actions.js';
 import { hunkPicks, isChange, parseDiff } from '../patch.js';
 import { changeDiff } from '../repo.js';
 import { codeColor, theme } from '../theme.js';
-import { useAsync, useListNav } from './hooks.js';
+import { useAsync, useListNav, useMouse } from './hooks.js';
 import { Panel, Row, diffSegment } from './parts.jsx';
 import { ConflictPane, useConflicts } from './ConflictPane.jsx';
 
@@ -146,20 +146,33 @@ export function ChangesView({ data, ctx, width, height, active }) {
     }
   };
 
-  useInput(
-    (input, key) => {
-      if (!ctx.viewHasKeys()) return;
-      if (input === 'a') return a.stageAll(ctx);
-      if (input === 'u') return a.unstageAll(ctx);
-      if (input === 'c') return a.commit(ctx, '');
-      if (input === 'A') return ctx.prefill('/amend ');
-      if (input === 'W') return a.describeCommit(ctx);
-      if (input === 'R') return a.claudeLook(ctx, 'review', { kind: 'changes' });
-      if (pane === 'conflict') return conflictKeys(input, key);
-      return pane === 'diff' ? diffKeys(input, key) : fileKeys(input, key);
-    },
-    { isActive: active },
-  );
+  const keys = (input, key) => {
+    if (!ctx.viewHasKeys()) return;
+    if (input === 'a') return a.stageAll(ctx);
+    if (input === 'u') return a.unstageAll(ctx);
+    if (input === 'c') return a.commit(ctx, '');
+    if (input === 'A') return ctx.prefill('/amend ');
+    if (input === 'W') return a.describeCommit(ctx);
+    if (input === 'R') return a.claudeLook(ctx, 'review', { kind: 'changes' });
+    if (pane === 'conflict') return conflictKeys(input, key);
+    return pane === 'diff' ? diffKeys(input, key) : fileKeys(input, key);
+  };
+  useInput(keys, { isActive: active });
+  useMouse(ctx, (e) => {
+    const inDiff = split ? e.x >= listW : pane !== 'files';
+    if (!inDiff) {
+      if (e.wheel) return nav.scrollBy(e.wheel * 3);
+      if (!nav.pick(e.y - 1)) return;
+      if (pane !== 'files') setPane('files');
+      // ↵ on a file: into its diff to pick hunks, or its conflict blocks.
+      if (e.double) keys('', { return: true });
+      return;
+    }
+    if (target === 'conflict') return e.wheel ? cf.page(e.wheel) : setPane('conflict');
+    if (e.wheel) return dnav.scrollBy(e.wheel * 3);
+    // A click on a + or - line puts the cursor there, to stage its hunk with space.
+    if (target === 'diff' && dnav.pick(e.y - 1)) setPane('diff');
+  });
 
   const showList = split || pane === 'files';
   const showDiff = split || pane !== 'files';

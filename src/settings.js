@@ -9,14 +9,22 @@ const count = (n, one, many = `${one}s`) => (n ? `${n} ${n === 1 ? one : many}` 
 /**
  * The rows, from the config: { id, label, value, note, action }, where `action` is what ↵ does:
  * 'toggle' (an on/off setting named `id`), 'accent', 'roots', 'clear' (the list named `id`) or 'none'.
+ * `mouse`: whether this terminal can report the mouse at all.
  */
-export function settingRows(config, { file = '' } = {}) {
+export function settingRows(config, { file = '', mouse = true } = {}) {
   const roots = config.roots ?? [];
   const recent = config.recent ?? [];
   const history = config.history ?? [];
   const checks = isOn(config.checkForUpdates);
   return [
     { id: 'accent', label: 'Accent colour', value: config.accent ?? `${DEFAULT_ACCENT} (default)`, colour: config.accent ?? DEFAULT_ACCENT, note: 'type a new one', action: 'accent' },
+    {
+      id: 'mouse',
+      label: 'Mouse',
+      value: isOn(config.mouse) ? 'on' : 'off',
+      note: !mouse ? "this terminal can't report it" : isOn(config.mouse) ? 'off leaves selecting to the terminal' : 'click, scroll, drag to copy',
+      action: 'toggle',
+    },
     { id: 'checkForUpdates', label: 'Check for new versions', value: checks ? 'on' : 'off', note: 'once a day, in the downloaded Splice', action: 'toggle' },
     {
       id: 'autoUpdate',

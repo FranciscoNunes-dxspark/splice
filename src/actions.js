@@ -1311,7 +1311,7 @@ export function settings(ctx, { replace = false, index } = {}) {
       title: 'Settings',
       hint: '↵ change',
       index,
-      items: () => settingRows(ctx.config, { file: configFile() }).map((row) => ({ ...row, segments: settingSegments(row) })),
+      items: () => settingRows(ctx.config, { file: configFile(), mouse: ctx.mouseAvailable }).map((row) => ({ ...row, segments: settingSegments(row) })),
       redraw: (at) => settings(ctx, { replace: true, index: at }),
       onPick: (row) => changeSetting(ctx, row),
     },

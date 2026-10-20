@@ -6,7 +6,7 @@ import { defaultBranch, isDefaultBranch, relTime } from '../parse.js';
 import { compareRefs, refLog } from '../repo.js';
 import { theme } from '../theme.js';
 import { fit } from '../text.js';
-import { useAsync, useListNav, usePrList } from './hooks.js';
+import { useAsync, useListNav, useMouse, usePrList } from './hooks.js';
 import { Lines, Panel, Row } from './parts.jsx';
 import { TONE, checksText } from './PrView.jsx';
 
@@ -103,28 +103,32 @@ export function BranchesView({ data, ctx, width, height, active, prVersion }) {
   const prW = prOf.size && innerW >= 2 + nameW + 9 + 12 + 5 + 6 ? 12 : 0;
   const upW = innerW >= 90 + prW ? Math.min(24, Math.max(0, ...local.map((b) => (b.upstream ?? '').length))) : 0;
 
-  useInput(
-    (input, key) => {
-      if (!ctx.viewHasKeys()) return;
-      if (nav.handle(input, key)) return;
-      if (input === 'C') return a.cleanUp(ctx);
-      if (!sel?.ref) return;
-      const { name } = sel.ref;
-      if (key.return) a.checkout(ctx, name);
-      else if (input === 'n') ctx.prefill(`/branch  ${name}`, 8);
-      else if (input === 'm') a.merge(ctx, name, { ask: true });
-      else if (input === 'e') a.rebase(ctx, name);
-      else if (input === 'd') a.deleteRef(ctx, name);
-      else if (input === 'D') a.compare(ctx, name);
-      else if (input === 'o') {
-        if (selPr) ctx.openUrl(selPr.url);
-        else if (!prs.host) ctx.note("This repository's remote isn't on GitHub or Azure DevOps.", 'error');
-        else if (!prs.value) ctx.note(`Pull requests from ${prs.host.name} haven't loaded. Check the PRs view (6).`, 'error');
-        else ctx.note(`${name} has no open pull request.`, 'error');
-      }
-    },
-    { isActive: active },
-  );
+  const keys = (input, key) => {
+    if (!ctx.viewHasKeys()) return;
+    if (nav.handle(input, key)) return;
+    if (input === 'C') return a.cleanUp(ctx);
+    if (!sel?.ref) return;
+    const { name } = sel.ref;
+    if (key.return) a.checkout(ctx, name);
+    else if (input === 'n') ctx.prefill(`/branch  ${name}`, 8);
+    else if (input === 'm') a.merge(ctx, name, { ask: true });
+    else if (input === 'e') a.rebase(ctx, name);
+    else if (input === 'd') a.deleteRef(ctx, name);
+    else if (input === 'D') a.compare(ctx, name);
+    else if (input === 'o') {
+      if (selPr) ctx.openUrl(selPr.url);
+      else if (!prs.host) ctx.note("This repository's remote isn't on GitHub or Azure DevOps.", 'error');
+      else if (!prs.value) ctx.note(`Pull requests from ${prs.host.name} haven't loaded. Check the PRs view (6).`, 'error');
+      else ctx.note(`${name} has no open pull request.`, 'error');
+    }
+  };
+  useInput(keys, { isActive: active });
+  useMouse(ctx, (e) => {
+    if (split && e.x >= listW) return;
+    if (e.wheel) return nav.scrollBy(e.wheel * 3);
+    // Rows start under the panel's top border. A double-click does what ↵ does.
+    if (nav.pick(e.y - 1) && e.double) keys('', { return: true });
+  });
 
   const hint = [vsDefault ? 'D diff' : '', selPr ? 'o open PR' : ''].filter(Boolean).join(' · ');
   return (

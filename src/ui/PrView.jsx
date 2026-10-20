@@ -5,7 +5,7 @@ import { renderMarkdown } from '../markdown.js';
 import { relTime } from '../parse.js';
 import { theme } from '../theme.js';
 import { fit, fitSegments, wrap } from '../text.js';
-import { useAsync, useListNav, usePrList } from './hooks.js';
+import { useAsync, useListNav, useMouse, usePrList } from './hooks.js';
 import { Lines, Panel, Row } from './parts.jsx';
 
 export const TONE = { good: theme.add, bad: theme.del, wait: theme.warn, none: theme.dim };
@@ -82,22 +82,26 @@ export function PrView({ data, ctx, width, height, active, prVersion }) {
   ctx.selectedPr = pr ?? null;
   const detail = useAsync(pr && split ? `prd:${listKey}:${pr.id}` : null, () => host.detail(pr), 150);
 
-  useInput(
-    (input, key) => {
-      if (!ctx.viewHasKeys()) return;
-      if (nav.handle(input, key)) return;
-      if (input === 'n') return a.createPr(ctx, '');
-      if (input === 'W') return a.draftPr(ctx, '');
-      if (!pr) return;
-      if (key.return) ctx.showPrDiff(pr);
-      else if (input === 'c') a.prCheckout(ctx, pr);
-      else if (input === 'a') a.prApprove(ctx, pr);
-      else if (input === 'C') ctx.prefill('/comment ');
-      else if (input === 'o') ctx.openUrl(pr.url);
-      else if (input === 'e' || input === 'R') a.claudeLook(ctx, input === 'e' ? 'explain' : 'review', { kind: 'pr', pr });
-    },
-    { isActive: active },
-  );
+  const keys = (input, key) => {
+    if (!ctx.viewHasKeys()) return;
+    if (nav.handle(input, key)) return;
+    if (input === 'n') return a.createPr(ctx, '');
+    if (input === 'W') return a.draftPr(ctx, '');
+    if (!pr) return;
+    if (key.return) ctx.showPrDiff(pr);
+    else if (input === 'c') a.prCheckout(ctx, pr);
+    else if (input === 'a') a.prApprove(ctx, pr);
+    else if (input === 'C') ctx.prefill('/comment ');
+    else if (input === 'o') ctx.openUrl(pr.url);
+    else if (input === 'e' || input === 'R') a.claudeLook(ctx, input === 'e' ? 'explain' : 'review', { kind: 'pr', pr });
+  };
+  useInput(keys, { isActive: active });
+  useMouse(ctx, (e) => {
+    if (split && e.x >= listW) return;
+    if (e.wheel) return nav.scrollBy(e.wheel * 3);
+    // Rows start under the panel's top border. A double-click does what ↵ does.
+    if (nav.pick(e.y - 1) && e.double) keys('', { return: true });
+  });
 
   let message = null;
   if (!host) message = "This repository's remote isn't on GitHub or Azure DevOps.";

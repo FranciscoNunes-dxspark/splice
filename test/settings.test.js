@@ -13,8 +13,9 @@ import { App } from '../src/ui/App.jsx';
 test('the settings list: values, plurals, and what ↵ does', () => {
   const rows = settingRows({ recent: [], roots: [], history: [] }, { file: '/home/me/.splice/config.json' });
   const by = Object.fromEntries(rows.map((r) => [r.id, r]));
-  assert.deepEqual(rows.map((r) => r.id), ['accent', 'checkForUpdates', 'autoUpdate', 'roots', 'recent', 'history', 'file']);
+  assert.deepEqual(rows.map((r) => r.id), ['accent', 'mouse', 'checkForUpdates', 'autoUpdate', 'roots', 'recent', 'history', 'file']);
   assert.equal(by.accent.value, `${DEFAULT_ACCENT} (default)`);
+  assert.equal(by.mouse.value, 'on');
   assert.equal(by.checkForUpdates.value, 'on');
   assert.equal(by.autoUpdate.value, 'on');
   assert.equal(by.roots.value, 'none');
@@ -27,6 +28,7 @@ test('the settings list: values, plurals, and what ↵ does', () => {
   );
   assert.equal(set.accent.value, '#ff8800');
   assert.equal(set.checkForUpdates.value, 'off');
+  assert.match(settingRows({ mouse: false }, { mouse: false }).find((r) => r.id === 'mouse').note, /can't report it/);
   assert.match(set.autoUpdate.note, /only while checking is on/);
   assert.equal(set.roots.value, '1 folder');
   assert.equal(set.recent.value, '2 repositories');
@@ -88,6 +90,7 @@ test('settings change in place, are saved as they change, and the accent repaint
       await until(() => new RegExp(`❯ ${label}`).test(frame()), `the cursor on ${label}`);
     };
     // Accent, checking, then installing: ↵ turns it off, and it's saved at once.
+    await down('Mouse');
     await down('Check for new versions');
     await down('Install them by itself');
     app.stdin.write('\r');

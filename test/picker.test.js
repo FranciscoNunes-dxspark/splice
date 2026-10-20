@@ -15,7 +15,7 @@ const until = async (check, what) => {
 
 test('the picker loads its items, moves, picks with ↵, runs its keys and closes on esc', async () => {
   const picked = [];
-  const ctx = { overlayHasKeys: () => true, closeOverlay: () => picked.push('closed') };
+  const ctx = { overlayHasKeys: () => true, closeOverlay: () => picked.push('closed'), mouseHandlers: [] };
   const picker = {
     title: 'Pick one',
     hint: '↵ take it',
