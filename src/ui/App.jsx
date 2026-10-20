@@ -84,16 +84,27 @@ export function windowTitle(data) {
   return `${data.name} (${b.head ?? `detached at ${(b.oid ?? '').slice(0, 7)}`}) — Splice`;
 }
 
-function Tabs({ view, data, width }) {
-  const segs = [];
-  VIEWS.forEach((v, i) => {
-    let label = `${i + 1} ${v.label}`;
+/** The tabs' labels and the columns each one covers (`from` up to `to`), which clicks are matched against. */
+function tabLabels(data) {
+  let x = 0;
+  return VIEWS.map((v, i) => {
+    let label = ` ${i + 1} ${v.label}`;
     if (data && v.id === 'changes' && data.status.files.length) label += ` ${data.status.files.length}`;
     if (data && v.id === 'stash' && data.stashes.length) label += ` ${data.stashes.length}`;
     if (data && v.id === 'worktrees' && data.worktrees.length > 1) label += ` ${data.worktrees.length}`;
-    const on = v.id === view;
-    segs.push({ text: ` ${label} `, bg: on ? theme.accent : undefined, color: on ? theme.ink : theme.dim, bold: on }, { text: ' ' });
+    label += ' ';
+    const from = x;
+    x += stringWidth(label) + 1;
+    return { id: v.id, label, from, to: from + stringWidth(label) };
   });
+}
+
+function Tabs({ view, data, width }) {
+  const segs = [];
+  for (const t of tabLabels(data)) {
+    const on = t.id === view;
+    segs.push({ text: t.label, bg: on ? theme.accent : undefined, color: on ? theme.ink : theme.dim, bold: on }, { text: ' ' });
+  }
   return <Row pointer={false} width={width} segments={segs} />;
 }
 
@@ -112,8 +123,11 @@ function activityRows(entries) {
   return out.slice(-6);
 }
 
-// `makeHost` stands in for hosting.js's hostFor in tests, so they never call gh or az.
-export function App({ initialPath, reopenLast = false, config: initialConfig, checkUpdate, installUpdate, askClaude, setTitle, makeHost = hostFor }) {
+const DOUBLE_CLICK_MS = 400;
+
+// `makeHost` stands in for hosting.js's hostFor in tests, so they never call gh or az. `mouse` is
+// mouse.js's terminalMouse() from cli.jsx (missing where the terminal can't report it); tests pass their own.
+export function App({ initialPath, reopenLast = false, config: initialConfig, checkUpdate, installUpdate, askClaude, setTitle, makeHost = hostFor, mouse }) {
   const { exit } = useApp();
   const { columns, rows } = useTerminalSize();
   const [config, setConfigState] = useState(initialConfig);
@@ -138,6 +152,13 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
     return () => clearTimeout(t);
   }, [entries]);
   const [prVersion, setPrVersion] = useState(0);
+  // A word in the bottom line for a moment ("Copied 3 lines"), where it moves nothing on screen.
+  const [flash, setFlash] = useState(null);
+  useEffect(() => {
+    if (!flash) return;
+    const t = setTimeout(() => setFlash(null), 3000);
+    return () => clearTimeout(t);
+  }, [flash]);
 
   // Async actions read the latest state through refs, not through stale closures.
   const repoRef = useRef(null);
@@ -334,7 +355,7 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
   };
 
   const ctxRef = useRef(null);
-  if (!ctxRef.current) ctxRef.current = { get data() { return dataRef.current; }, get config() { return configRef.current; } };
+  if (!ctxRef.current) ctxRef.current = { get data() { return dataRef.current; }, get config() { return configRef.current; }, mouseHandlers: [] };
   const ctx = ctxRef.current;
   Object.assign(ctx, {
     exec,
@@ -351,6 +372,8 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
     prsChanged: () => setPrVersion((v) => v + 1),
     // claude.js's `ask`, from cli.jsx. Tests pass a stub, or nothing (and the Claude keys say it's unavailable).
     askClaude,
+    // Whether this terminal can report the mouse at all (/settings says so).
+    mouseAvailable: Boolean(mouse),
     openUrl,
     note,
     confirm,
@@ -637,6 +660,62 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
     globalKeys(input, key);
   });
 
+  // The terminal reports the mouse while the setting is on (it is unless set off).
+  useEffect(() => {
+    mouse?.enable(config.mouse !== false);
+  }, [config.mouse]);
+
+  // Where things were drawn, for matching clicks against (set as the layout below is worked out).
+  const layout = useRef(null);
+  const lastPress = useRef(null);
+  const onMouse = (e) => {
+    if (e.type === 'copy') {
+      const n = e.text.split('\n').length;
+      return setFlash({ text: n > 1 ? `Copied ${n} lines` : `Copied ${e.text.length} character${e.text.length === 1 ? '' : 's'}` });
+    }
+    if (e.button === 'left' && !e.release && !e.drag) {
+      const prev = lastPress.current;
+      const now = Date.now();
+      e.double = Boolean(prev && prev.x === e.x && prev.y === e.y && now - prev.at < DOUBLE_CLICK_MS);
+      // A third click starts over rather than counting as another double-click.
+      lastPress.current = e.double ? null : { x: e.x, y: e.y, at: now };
+    } else if (e.button !== 'wheel') return;
+    // A confirmation's options are picked with keys.
+    if (confirmRef.current || !layout.current) return;
+    const { mainTop, mainH, promptTop, sugCount, tabs } = layout.current;
+    if (e.y === mainTop - 1 && !e.wheel) {
+      const tab = tabs.find((t) => e.x >= t.from && e.x < t.to);
+      if (!tab) return;
+      // Whatever is open over the view closes: a click on a tab should never do nothing.
+      for (let n = 0; overlayRef.current && n < 20; n++) ctx.closeOverlay();
+      setFocus('view');
+      return setView(tab.id);
+    }
+    if (e.y >= mainTop && e.y < mainTop + mainH) {
+      // Like esc, a click on the view leaves the prompt's text for later.
+      if (!e.wheel && focusRef.current === 'prompt') setFocus('view');
+      return ctx.mouseHandlers.at(-1)?.({ ...e, y: e.y - mainTop });
+    }
+    if (e.wheel) return;
+    if (e.y >= promptTop && e.y < promptTop + 3) {
+      // The text starts after the border, the padding and "> ", scrolled as PromptBox scrolls it.
+      const { value, cursor } = promptRef.current;
+      const inner = columns - 6;
+      const start = focusRef.current === 'prompt' ? Math.max(0, cursor - inner + 1) : 0;
+      setPrompt(value, Math.max(0, Math.min(value.length, start + e.x - 4)));
+      return setFocus('prompt');
+    }
+    const sug = e.y - promptTop - 3;
+    if (sug >= 0 && sug < sugCount) {
+      setSugIndex(sug);
+      // As ↵ would, on the suggestion under the pointer.
+      if (e.double) promptKeys('', { return: true });
+    }
+  };
+  const mouseRef = useRef(onMouse);
+  mouseRef.current = onMouse;
+  useEffect(() => mouse?.subscribe((e) => mouseRef.current(e)), [mouse]);
+
   // Layout: everything is sized to the terminal, one row short of it so Ink never clears the screen.
   const W = columns;
   const H = Math.max(12, rows - 1);
@@ -647,6 +726,13 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
   const showWelcome = welcome && H >= 28;
   const mainH = Math.max(6, H - 2 - act.length - (busy ? 1 : 0) - bottom - 1 - (showWelcome ? WELCOME_HEIGHT : 0));
   const viewActive = focus === 'view' && !overlay && !confirmReq;
+  layout.current = {
+    mainTop: 2,
+    mainH,
+    promptTop: 2 + mainH + (showWelcome ? WELCOME_HEIGHT : 0) + act.length + (busy ? 1 : 0),
+    sugCount: suggestions.length,
+    tabs: tabLabels(data),
+  };
 
   let main;
   if (overlay?.kind === 'rebase') {
@@ -654,7 +740,7 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
   } else if (overlay?.kind === 'picker') {
     main = <Picker key={overlay.id} picker={overlay} ctx={ctx} width={W} height={mainH} active={focus === 'view' && !confirmReq} />;
   } else if (overlay) {
-    main = <TextViewer {...overlay} width={W} height={mainH} active={focus === 'view' && !confirmReq} onClose={ctx.closeOverlay} />;
+    main = <TextViewer {...overlay} ctx={ctx} width={W} height={mainH} active={focus === 'view' && !confirmReq} onClose={ctx.closeOverlay} />;
   } else if (view === 'repos') {
     main = <ReposView repos={repos} roots={[...config.roots, ...extraRoots.current]} current={data?.root} ctx={ctx} width={W} height={mainH} active={viewActive} />;
   } else if (!data) {
@@ -668,8 +754,9 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
     main = <View data={data} ctx={ctx} width={W} height={mainH} active={viewActive} filter={filter} prVersion={prVersion} />;
   }
 
-  const left =
-    focus === 'prompt'
+  const left = flash
+    ? flash.text
+    : focus === 'prompt'
       ? 'enter run · tab complete · ↑↓ pick or history · esc back'
       : overlay?.kind === 'rebase'
         ? '↵ start the rebase · esc cancel'

@@ -3,7 +3,7 @@ import { useInput } from 'ink';
 import { samePath } from '../config.js';
 import { theme } from '../theme.js';
 import { fit } from '../text.js';
-import { useListNav } from './hooks.js';
+import { useListNav, useMouse } from './hooks.js';
 import { Panel, Row } from './parts.jsx';
 
 export function summaryText(s) {
@@ -23,17 +23,20 @@ export function ReposView({ repos, current, ctx, width, height, active, roots })
   const sel = repos[nav.index];
   const nameW = Math.min(36, Math.max(10, ...repos.map((r) => r.name.length)));
 
-  useInput(
-    (input, key) => {
-      if (!ctx.viewHasKeys()) return;
-      if (nav.handle(input, key)) return;
-      if (input === 's') return ctx.prefill('/scan ');
-      if (!sel) return;
-      if (key.return) ctx.openRepo(sel.path);
-      else if (input === 'x') ctx.forgetRepo(sel.path);
-    },
-    { isActive: active },
-  );
+  const keys = (input, key) => {
+    if (!ctx.viewHasKeys()) return;
+    if (nav.handle(input, key)) return;
+    if (input === 's') return ctx.prefill('/scan ');
+    if (!sel) return;
+    if (key.return) ctx.openRepo(sel.path);
+    else if (input === 'x') ctx.forgetRepo(sel.path);
+  };
+  useInput(keys, { isActive: active });
+  useMouse(ctx, (e) => {
+    if (e.wheel) return nav.scrollBy(e.wheel * 3);
+    // Rows start under the border and the "Scanning" line.
+    if (nav.pick(e.y - 2) && e.double) keys('', { return: true });
+  });
 
   const scanning = roots.length ? `Scanning ${roots.join(', ')}` : 'Press s (or /scan <folder>) to add a folder of repositories.';
   return (

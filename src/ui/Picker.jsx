@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useInput } from 'ink';
 import { theme } from '../theme.js';
-import { useListNav } from './hooks.js';
+import { useListNav, useMouse } from './hooks.js';
 import { Panel, Row } from './parts.jsx';
 
 /**
@@ -46,19 +46,21 @@ export function Picker({ picker, ctx, width, height, active }) {
   picker.index = nav.index;
   const item = items[nav.index];
 
-  useInput(
-    (input, key) => {
-      if (!ctx.overlayHasKeys()) return;
-      if (key.escape || input === 'q') return ctx.closeOverlay();
-      if (nav.handle(input, key)) return;
-      // `actions`: keys about the list rather than a row (add one, say), which work even when it's empty.
-      if (actions[input]) return actions[input]();
-      if (!item) return;
-      if (key.return) return onPick?.(item);
-      keys[input]?.(item);
-    },
-    { isActive: active },
-  );
+  const press = (input, key) => {
+    if (!ctx.overlayHasKeys()) return;
+    if (key.escape || input === 'q') return ctx.closeOverlay();
+    if (nav.handle(input, key)) return;
+    // `actions`: keys about the list rather than a row (add one, say), which work even when it's empty.
+    if (actions[input]) return actions[input]();
+    if (!item) return;
+    if (key.return) return onPick?.(item);
+    keys[input]?.(item);
+  };
+  useInput(press, { isActive: active });
+  useMouse(ctx, (e) => {
+    if (e.wheel) return nav.scrollBy(e.wheel * 3);
+    if (nav.pick(e.y - 1) && e.double) press('', { return: true });
+  });
 
   const status = state.loading ? 'Loading…' : state.error ? state.error : items.length ? null : empty;
   const pos = items.length > innerH ? `${nav.index + 1}/${items.length} · ` : '';

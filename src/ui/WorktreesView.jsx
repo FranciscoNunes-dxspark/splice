@@ -7,7 +7,7 @@ import { worktreeDetail } from '../repo.js';
 import { eachLimited, summarize } from '../repos.js';
 import { codeColor, theme } from '../theme.js';
 import { fit } from '../text.js';
-import { useAsync, useListNav } from './hooks.js';
+import { useAsync, useListNav, useMouse } from './hooks.js';
 import { Lines, Panel, Row } from './parts.jsx';
 import { summaryText } from './ReposView.jsx';
 
@@ -46,20 +46,24 @@ export function WorktreesView({ data, ctx, width, height, active }) {
     };
   }, [data.loadedAt]);
 
-  useInput(
-    (input, key) => {
-      if (!ctx.viewHasKeys()) return;
-      if (nav.handle(input, key)) return;
-      if (input === 'n') return ctx.prefill(`/worktree ../${data.name}-`);
-      if (input === 'C') return a.cleanUp(ctx);
-      if (!wt) return;
-      if (key.return) {
-        if (wt.prunable) return ctx.note('Its folder is gone. Press x to prune it.', 'error');
-        ctx.openRepo(wt.path).then((ok) => ok && ctx.setView('graph'));
-      } else if (input === 'x') a.removeWorktree(ctx, wt);
-    },
-    { isActive: active },
-  );
+  const keys = (input, key) => {
+    if (!ctx.viewHasKeys()) return;
+    if (nav.handle(input, key)) return;
+    if (input === 'n') return ctx.prefill(`/worktree ../${data.name}-`);
+    if (input === 'C') return a.cleanUp(ctx);
+    if (!wt) return;
+    if (key.return) {
+      if (wt.prunable) return ctx.note('Its folder is gone. Press x to prune it.', 'error');
+      ctx.openRepo(wt.path).then((ok) => ok && ctx.setView('graph'));
+    } else if (input === 'x') a.removeWorktree(ctx, wt);
+  };
+  useInput(keys, { isActive: active });
+  useMouse(ctx, (e) => {
+    if (split && e.x >= listW) return;
+    if (e.wheel) return nav.scrollBy(e.wheel * 3);
+    // Rows start under the panel's top border. A double-click does what ↵ does.
+    if (nav.pick(e.y - 1) && e.double) keys('', { return: true });
+  });
 
   const nameW = Math.min(28, Math.max(8, ...list.map((w) => basename(w.path).length)));
   const branchW = Math.min(28, Math.max(8, ...list.map((w) => branchLabel(w).text.length)));

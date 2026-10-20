@@ -1,6 +1,10 @@
 # Mouse support (future feature)
 
-Status: **not started**. A design shared by the three Ink terminal apps: **Splice** (git), **Trawl** (SQL Server) and **Keel** (Azure DevOps). They're built the same way (Ink 6.8, React 19, plain JS, Bun-compiled executables, a `ui/` folder with `hooks.js`, `parts.jsx` and an `App.jsx` that builds `ctx`), so one implementation can be copied between them. Paths below are relative to each app's UI root: `src/` in Splice and Trawl, `cli/` in Keel.
+Status in Splice: **done** (`src/mouse.js`, `src/selection.js`). Selection is linear only (no block selection with alt), and copying is always on release (no `copyOnSelect` setting).
+
+Windows, checked 2026-10-20 in Windows Terminal: the console only hands mouse reports over as text in VT input mode (`ENABLE_VIRTUAL_TERMINAL_INPUT`, 0x200); otherwise they arrive as console mouse records, which libuv drops. Node 22.17 and later turn that mode on with raw mode (`UV_TTY_MODE_RAW_VT`); Node 22.13 doesn't. The compiled builds set it themselves through `bun:ffi` after every switch to raw mode (whether Bun 1.4.2's raw mode already does is unchecked; setting it again is harmless). Older Node on Windows gets no mouse.
+
+ A design shared by the three Ink terminal apps: **Splice** (git), **Trawl** (SQL Server) and **Keel** (Azure DevOps). They're built the same way (Ink 6.8, React 19, plain JS, Bun-compiled executables, a `ui/` folder with `hooks.js`, `parts.jsx` and an `App.jsx` that builds `ctx`), so one implementation can be copied between them. Paths below are relative to each app's UI root: `src/` in Splice and Trawl, `cli/` in Keel.
 
 ## The goal
 

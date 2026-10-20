@@ -2,10 +2,11 @@ import React, { useMemo, useState } from 'react';
 import { useInput } from 'ink';
 import { renderMarkdown } from '../markdown.js';
 import { theme } from '../theme.js';
+import { useMouse } from './hooks.js';
 import { Panel, Row, diffSegment } from './parts.jsx';
 
 /** Full-height scrollable text: diffs, command output, help, Claude's answers (`markdown`: formatted and wrapped to fit). */
-export function TextViewer({ title, text, loading, diff, markdown, width, height, active, onClose }) {
+export function TextViewer({ title, text, loading, diff, markdown, ctx, width, height, active, onClose }) {
   const lines = useMemo(() => {
     const t = (text ?? '').replace(/\n$/, '');
     return markdown ? renderMarkdown(t, width - 2) : t.split('\n');
@@ -37,6 +38,7 @@ export function TextViewer({ title, text, loading, diff, markdown, width, height
     },
     { isActive: active },
   );
+  useMouse(ctx, (e) => e.wheel && setOffset((o) => Math.max(0, Math.min(max, o + e.wheel * 3))));
 
   const pos = lines.length > innerH ? `${Math.min(lines.length, offset + innerH)}/${lines.length}` : '';
   return (

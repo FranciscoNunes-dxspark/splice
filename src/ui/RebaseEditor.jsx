@@ -4,7 +4,7 @@ import * as a from '../actions.js';
 import { planProblem } from '../rebase.js';
 import { theme } from '../theme.js';
 import { fit } from '../text.js';
-import { useListNav } from './hooks.js';
+import { useListNav, useMouse } from './hooks.js';
 import { Panel, Row } from './parts.jsx';
 
 const KEYS = { p: 'pick', r: 'reword', e: 'edit', s: 'squash', f: 'fixup', d: 'drop' };
@@ -36,21 +36,21 @@ export function RebaseEditor({ plan, ctx, width, height, active }) {
   // /reword <message> lands here.
   ctx.rebaseEditor = { reword: (text) => update(at, { action: 'reword', newMessage: text }) };
 
-  useInput(
-    (input, key) => {
-      if (!ctx.overlayHasKeys()) return;
-      if (key.escape || input === 'q') return ctx.closeOverlay();
-      if (input === 'K' || (key.shift && key.upArrow)) return move(1);
-      if (input === 'J' || (key.shift && key.downArrow)) return move(-1);
-      if (nav.handle(input, key)) return;
-      if (key.return) return a.runRebase(ctx, plan.base, rows);
-      const action = KEYS[input];
-      if (!action) return;
-      if (action === 'reword') return ctx.prefill(`/reword ${rows[at].newMessage ?? rows[at].subject}`);
-      update(at, { action });
-    },
-    { isActive: active },
-  );
+  const keys = (input, key) => {
+    if (!ctx.overlayHasKeys()) return;
+    if (key.escape || input === 'q') return ctx.closeOverlay();
+    if (input === 'K' || (key.shift && key.upArrow)) return move(1);
+    if (input === 'J' || (key.shift && key.downArrow)) return move(-1);
+    if (nav.handle(input, key)) return;
+    if (key.return) return a.runRebase(ctx, plan.base, rows);
+    const action = KEYS[input];
+    if (!action) return;
+    if (action === 'reword') return ctx.prefill(`/reword ${rows[at].newMessage ?? rows[at].subject}`);
+    update(at, { action });
+  };
+  useInput(keys, { isActive: active });
+  // ↵ starts the rebase, so a click only moves the cursor, even a double one.
+  useMouse(ctx, (e) => (e.wheel ? nav.scrollBy(e.wheel * 3) : nav.pick(e.y - 2)));
 
   const problem = planProblem(rows);
   const changed = rows.some((r, i) => r.action !== 'pick' || r.hash !== plan.rows[i].hash);

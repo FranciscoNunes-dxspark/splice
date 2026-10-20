@@ -5,7 +5,7 @@ import { relTime } from '../parse.js';
 import { commitDetail } from '../repo.js';
 import { codeColor, theme } from '../theme.js';
 import { fit, fitSegments, wrap } from '../text.js';
-import { useAsync, useListNav } from './hooks.js';
+import { useAsync, useListNav, useMouse } from './hooks.js';
 import { Lines, Panel, Row } from './parts.jsx';
 
 // git draws lanes two columns apart; diagonals sit between them and belong to the lane they lead to.
@@ -131,38 +131,46 @@ export function GraphView({ data, ctx, width, height, active, filter }) {
   const metaOn = innerW >= 70;
   const budget = innerW - 2 - (metaOn ? META_W : 0);
 
-  useInput(
-    (input, key) => {
-      if (!ctx.viewHasKeys()) return;
-      if (nav.handle(input, key)) {
-        if (!filter && !data.graphComplete && nav.index > rows.length - innerH - 5) ctx.loadMore();
-        return;
-      }
-      if (key.escape && filter) return ctx.find('');
-      if (input === 'J') return setDetailOffset((o) => o + 3);
-      if (input === 'K') return setDetailOffset((o) => Math.max(0, o - 3));
-      if (sel?.wip) {
-        if (key.return) ctx.setView('changes');
-        else if (input === 'R') a.claudeLook(ctx, 'review', { kind: 'changes' });
-        return;
-      }
-      if (!c) return;
-      const short = c.hash.slice(0, 7);
-      const ref = c.refs.find((r) => r.type === 'local')?.name ?? c.refs.find((r) => r.type === 'remote')?.name ?? c.hash;
-      if (key.return) ctx.showPatch(c);
-      else if (input === 'c') a.checkoutCommit(ctx, c);
-      else if (input === 'b') ctx.prefill(`/branch  ${short}`, 8);
-      else if (input === 't') ctx.prefill(`/tag  ${short}`, 5);
-      else if (input === 'm') a.merge(ctx, ref, { ask: true });
-      else if (input === 'C') a.cherryPick(ctx, c);
-      else if (input === 'v') a.revert(ctx, c);
-      else if (input === 'X') a.reset(ctx, c.hash, short);
-      // From this commit (included) up to HEAD.
-      else if (input === 'i') a.openRebase(ctx, c.parents[0] ?? null, short);
-      else if (input === 'e' || input === 'R') a.claudeLook(ctx, input === 'e' ? 'explain' : 'review', { kind: 'commit', hash: c.hash, subject: c.subject });
-    },
-    { isActive: active },
-  );
+  const keys = (input, key) => {
+    if (!ctx.viewHasKeys()) return;
+    if (nav.handle(input, key)) {
+      if (!filter && !data.graphComplete && nav.index > rows.length - innerH - 5) ctx.loadMore();
+      return;
+    }
+    if (key.escape && filter) return ctx.find('');
+    if (input === 'J') return setDetailOffset((o) => o + 3);
+    if (input === 'K') return setDetailOffset((o) => Math.max(0, o - 3));
+    if (sel?.wip) {
+      if (key.return) ctx.setView('changes');
+      else if (input === 'R') a.claudeLook(ctx, 'review', { kind: 'changes' });
+      return;
+    }
+    if (!c) return;
+    const short = c.hash.slice(0, 7);
+    const ref = c.refs.find((r) => r.type === 'local')?.name ?? c.refs.find((r) => r.type === 'remote')?.name ?? c.hash;
+    if (key.return) ctx.showPatch(c);
+    else if (input === 'c') a.checkoutCommit(ctx, c);
+    else if (input === 'b') ctx.prefill(`/branch  ${short}`, 8);
+    else if (input === 't') ctx.prefill(`/tag  ${short}`, 5);
+    else if (input === 'm') a.merge(ctx, ref, { ask: true });
+    else if (input === 'C') a.cherryPick(ctx, c);
+    else if (input === 'v') a.revert(ctx, c);
+    else if (input === 'X') a.reset(ctx, c.hash, short);
+    // From this commit (included) up to HEAD.
+    else if (input === 'i') a.openRebase(ctx, c.parents[0] ?? null, short);
+    else if (input === 'e' || input === 'R') a.claudeLook(ctx, input === 'e' ? 'explain' : 'review', { kind: 'commit', hash: c.hash, subject: c.subject });
+  };
+  useInput(keys, { isActive: active });
+  useMouse(ctx, (e) => {
+    if (split && e.x >= listW) return e.wheel && setDetailOffset((o) => Math.max(0, o + e.wheel * 3));
+    if (e.wheel) {
+      nav.scrollBy(e.wheel * 3);
+      if (e.wheel > 0 && !filter && !data.graphComplete && nav.offset + innerH > rows.length - 10) ctx.loadMore();
+      return;
+    }
+    // Rows start under the panel's top border. A double-click does what ↵ does.
+    if (nav.pick(e.y - 1) && e.double) keys('', { return: true });
+  });
 
   const visible = rows.slice(nav.offset, nav.offset + innerH);
   const commits = rows.filter((r) => r.commit).length;
