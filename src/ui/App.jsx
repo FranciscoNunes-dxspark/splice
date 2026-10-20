@@ -76,6 +76,13 @@ function Header({ data, width, loading, mood }) {
   return <Row pointer={false} width={width} segments={[...fitSegments(segs, width - pathW - 1), { text: ' ' }, { text: path, color: theme.dim }]} />;
 }
 
+/** The terminal window's title: the repo and branch, which is what tells one Tiller tab from another. */
+export function windowTitle(data) {
+  if (!data) return 'Tiller';
+  const b = data.status.branch;
+  return `${data.name} (${b.head ?? `detached at ${(b.oid ?? '').slice(0, 7)}`}) — Tiller`;
+}
+
 function Tabs({ view, data, width }) {
   const segs = [];
   VIEWS.forEach((v, i) => {
@@ -104,7 +111,7 @@ function activityRows(entries) {
   return out.slice(-6);
 }
 
-export function App({ initialPath, reopenLast = false, config: initialConfig, checkUpdate, askClaude }) {
+export function App({ initialPath, reopenLast = false, config: initialConfig, checkUpdate, askClaude, setTitle }) {
   const { exit } = useApp();
   const { columns, rows } = useTerminalSize();
   const [config, setConfigState] = useState(initialConfig);
@@ -439,6 +446,12 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
   useEffect(() => {
     if (view === 'repos') refreshRepos();
   }, [view]);
+
+  // cli.jsx passes the terminal's title setter; tests pass a stub or nothing.
+  const title = windowTitle(data);
+  useEffect(() => {
+    setTitle?.(title);
+  }, [title]);
 
   // Notice changes made outside Tiller (an editor saving, a commit from another terminal).
   useEffect(() => {

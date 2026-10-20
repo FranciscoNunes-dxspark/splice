@@ -117,6 +117,7 @@ The Worktrees view (`7`) lists the main working tree and every worktree added to
 - **Partial staging** builds a patch of just the picked lines and applies it to the index (`git apply --cached`); unstaging and discarding apply it in reverse. Part of a brand-new file works too: the file is first recorded with `git add --intent-to-add`.
 - **Merges, rebases, cherry-picks and reverts that stop on conflicts** show a banner in the header. Resolve files in Changes (`space` marks one resolved, `O`/`T` take a side), then `/continue`, or `/abort`.
 - **Outside changes show up on their own.** While open, Tiller checks the repository every 3 seconds and reloads when the status or any ref changes.
+- **The window title shows the repository and branch**, like `tiller (main) — Tiller`, so tabs running Tiller are easy to tell apart. Quitting puts the terminal's own title back.
 - **Never hangs on a prompt.** Git runs with `GIT_TERMINAL_PROMPT=0`; credentials come from your credential helper (Git Credential Manager on Windows). Esc cancels a slow fetch or push.
 - The graph loads 400 commits at a time and fetches more as you scroll to the bottom. `/find` filters the loaded commits by message, author, hash or branch name.
 
