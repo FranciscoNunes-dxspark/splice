@@ -4,10 +4,13 @@ import { basename, join, resolve } from 'node:path';
 import { samePath } from './config.js';
 import { git } from './git.js';
 import {
+  COMMIT_FORMAT,
   LOG_FORMAT,
   REF_FORMAT,
   STASH_FORMAT,
   groupChanges,
+  parseAheadBehind,
+  parseCommits,
   parseGraph,
   parseNameStatus,
   parseRefs,
@@ -226,6 +229,23 @@ export async function refLog(root, ref, n = 60) {
       const [hash, author, time, subject] = l.split('\x1f');
       return { hash, author, time: Number(time), subject };
     });
+}
+
+/**
+ * How `ref` compares with `base` (the default branch), for the Branches view: how far it is ahead and
+ * behind, the commits it has that `base` doesn't (up to `n`), and its other recent commits. Three gits,
+ * run side by side.
+ */
+export async function compareRefs(root, ref, base, n = 60) {
+  const range = `${base}...${ref}`;
+  const [counts, mine, log] = await Promise.all([
+    git(root, ['rev-list', '--left-right', '--count', range, '--']),
+    git(root, ['log', `-n${n}`, `--format=${COMMIT_FORMAT}`, `${base}..${ref}`, '--']),
+    git(root, ['log', `-n${n}`, `--format=${COMMIT_FORMAT}`, ref, '--']),
+  ]);
+  const ahead = parseCommits(mine);
+  const own = new Set(ahead.map((c) => c.full));
+  return { ...parseAheadBehind(counts), commits: ahead, history: parseCommits(log).filter((c) => !own.has(c.full)) };
 }
 
 /** Status and recent commits of one worktree, for the Worktrees view. */

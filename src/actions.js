@@ -3,7 +3,7 @@
 import { rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { READ_ONLY, cleanSubject, clip, commitPrompt, lookPrompt, parsePrDraft, prPrompt } from './claude.js';
-import { splitArgs } from './parse.js';
+import { defaultBranch, splitArgs } from './parse.js';
 import { buildPatch, coversAll, parseDiff } from './patch.js';
 import { cleanup, loadPlan, planProblem, planSummary, prepare } from './rebase.js';
 
@@ -155,6 +155,20 @@ export async function deleteRef(ctx, name) {
 
 function currentName(ctx) {
   return ctx.data.status.branch.head ?? 'HEAD';
+}
+
+/** `D` in Branches and `/compare <ref> [base]`: the full diff of what `ref` adds to `base` (the default branch if none given). */
+export function compare(ctx, text) {
+  if (!needRepo(ctx)) return;
+  const [ref, given] = splitArgs(text ?? '');
+  if (!ref) return ctx.prefill('/compare ');
+  const def = defaultBranch(ctx.data.refs, ctx.data.remotes);
+  const base = given ?? def?.ref;
+  if (!base) return ctx.note(`Couldn't tell which branch is the default one. Say what to compare with: /compare ${ref} <base>`, 'error');
+  if (base === ref || (!given && ref === def.name)) {
+    return ctx.note(`${ref} is the default branch itself. To compare it with another branch: /compare ${ref} <base>`, 'error');
+  }
+  ctx.showCompare(ref, base);
 }
 
 export async function merge(ctx, ref, { ask = false } = {}) {

@@ -50,6 +50,10 @@ Branches
   n                New branch from it
   m  e             Merge it in · Rebase onto it
   d                Delete (asks before force-deleting or deleting on the remote)
+  D                Full diff of what it adds to the default branch (/compare <ref> [base])
+  o                Open its pull request in the browser (#12 GitHub, !12 Azure DevOps; coloured by review)
+  The right-hand pane: how far it is ahead of and behind the default branch, its commits the default
+  branch doesn't have, then its history
 
 Worktrees (● the one open here)
   ↵                Open it in Tiller
@@ -87,7 +91,7 @@ Slash commands
   /fetch   /pull [--rebase]   /push [--force]   /stash [msg]   /pop   /discard
   /continue   /abort   /find <text>   /open <path>   /scan <folder>   /last   /quit
   /pr <title> [--into <branch>] [--draft]   /comment <text>   /approve
-  /rebase -i <ref>   /reword <message>   /worktree <path> [ref]
+  /rebase -i <ref>   /reword <message>   /worktree <path> [ref]   /compare <ref> [base]
 
 Viewer (diffs, output, this help)
   j k  space  g G  Scroll         n N         Next, previous hunk

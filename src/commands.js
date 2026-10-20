@@ -11,6 +11,7 @@ export const COMMANDS = [
   { name: 'delete', args: '<branch|tag>', desc: 'Delete a branch (local or remote) or a tag', complete: 'refs', run: (ctx, s) => a.deleteRef(ctx, s) },
   { name: 'merge', args: '<ref>', desc: 'Merge a ref into the current branch', complete: 'refs', run: (ctx, s) => a.merge(ctx, s) },
   { name: 'rebase', args: '[-i] <ref>', desc: 'Rebase the current branch onto a ref (-i: edit the commits after it)', complete: 'refs', run: (ctx, s) => a.rebase(ctx, s) },
+  { name: 'compare', args: '<ref> [base]', desc: 'Full diff of what a branch adds to the default branch (or to base)', complete: 'refs', run: (ctx, s) => a.compare(ctx, s) },
   { name: 'fetch', args: '[remote]', desc: 'Fetch all remotes and prune deleted branches', run: (ctx, s) => a.fetch(ctx, splitArgs(s)) },
   { name: 'pull', args: '[--rebase]', desc: 'Pull the current branch', run: (ctx, s) => a.pull(ctx, splitArgs(s)) },
   { name: 'push', args: '[--force]', desc: 'Push the current branch (sets the upstream the first time)', run: (ctx, s) => a.push(ctx, splitArgs(s)) },
