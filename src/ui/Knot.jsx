@@ -21,12 +21,12 @@ export function Knot({ mood }) {
   return knotRows(shown).map((segs, i) => <Row key={i} pointer={false} width={KNOT_WIDTH} segments={segs} />);
 }
 
-/** The box shown when Tiller starts, like Claude Code's welcome. Esc or the first command clears it. */
+/** The box shown when Splice starts, like Claude Code's welcome. Esc or the first command clears it. */
 // The welcome box's line about a newer release, by how far installing it has got.
 const UPDATE_LINES = {
-  out: (v) => `Tiller ${v} is out (you have ${VERSION}). The link is below.`,
-  installing: (v) => `Tiller ${v} is out; downloading it in the background.`,
-  installed: (v) => `Tiller ${v} is installed and starts the next time you open Tiller.`,
+  out: (v) => `Splice ${v} is out (you have ${VERSION}). The link is below.`,
+  installing: (v) => `Splice ${v} is out; downloading it in the background.`,
+  installed: (v) => `Splice ${v} is installed and starts the next time you open Splice.`,
 };
 
 export function Welcome({ mood, data, width, update }) {
@@ -38,7 +38,7 @@ export function Welcome({ mood, data, width, update }) {
       </Box>
       <Box flexDirection="column" marginLeft={2} width={textW}>
         <Text wrap="truncate">
-          <Text bold>Welcome to Tiller</Text>
+          <Text bold>Welcome to Splice</Text>
           <Text color={theme.dim}>{`  v${VERSION}`}</Text>
         </Text>
         <Text color={theme.dim} wrap="truncate">

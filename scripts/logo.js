@@ -193,7 +193,7 @@ function svg({ background = true } = {}) {
     }),
   );
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${cells[0].length} ${cells.length}" shape-rendering="crispEdges">
-<title>Knot, the Tiller otter</title>
+<title>Knot, the Splice otter</title>
 ${background ? `<rect width="40" height="40" rx="7.2" fill="${BG}"/>\n` : ''}${rects.join('\n')}
 </svg>
 `;

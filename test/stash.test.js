@@ -15,7 +15,7 @@ const KEYS = { enter: '\r', esc: '\x1b' };
 
 let base;
 let dir;
-// Checks run while Tiller's own git commands do: they mustn't take the index lock (git status would) from under them.
+// Checks run while Splice's own git commands do: they mustn't take the index lock (git status would) from under them.
 const git = (...args) => execFileSync('git', args, { cwd: dir, encoding: 'utf8', env: { ...process.env, GIT_OPTIONAL_LOCKS: '0' } }).trim();
 // On Windows, reading a file while git replaces it can fail; that's "not yet".
 const read = (name) => {
@@ -27,10 +27,10 @@ const read = (name) => {
 };
 
 before(() => {
-  base = mkdtempSync(join(tmpdir(), 'tiller-stash-'));
+  base = mkdtempSync(join(tmpdir(), 'splice-stash-'));
   dir = join(base, 'repo');
   mkdirSync(dir);
-  process.env.TILLER_HOME = join(base, 'home');
+  process.env.SPLICE_HOME = join(base, 'home');
   git('init', '-q', '-b', 'main');
   git('config', 'core.autocrlf', 'false');
   git('config', 'user.name', 'Test');
@@ -42,7 +42,7 @@ before(() => {
   git('commit', '-q', '-m', 'First commit');
 });
 
-// On Windows a git process Tiller started just before unmounting can still hold the folder for a moment.
+// On Windows a git process Splice started just before unmounting can still hold the folder for a moment.
 after(() => removeTemp(base));
 
 let lastApp = null;

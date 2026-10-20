@@ -3,7 +3,7 @@ import '../src/register.js';
 
 // React's development build is several times slower and only adds warnings. React picks its build
 // when first imported, so NODE_ENV is set for these imports only and then put back: git hooks run
-// from Tiller (an npm script in a pre-commit hook, say) shouldn't inherit it.
+// from Splice (an npm script in a pre-commit hook, say) shouldn't inherit it.
 const nodeEnv = process.env.NODE_ENV;
 if (nodeEnv === undefined) process.env.NODE_ENV = 'production';
 await import('react');

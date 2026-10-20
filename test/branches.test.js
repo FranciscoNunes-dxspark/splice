@@ -86,10 +86,10 @@ let dir;
 const git = (...args) => execFileSync('git', args, { cwd: dir, encoding: 'utf8' }).trim();
 
 before(() => {
-  base = mkdtempSync(join(tmpdir(), 'tiller-branches-'));
+  base = mkdtempSync(join(tmpdir(), 'splice-branches-'));
   dir = join(base, 'repo');
   mkdirSync(dir);
-  process.env.TILLER_HOME = join(base, 'home');
+  process.env.SPLICE_HOME = join(base, 'home');
   git('init', '-q', '-b', 'main');
   git('config', 'core.autocrlf', 'false');
   git('config', 'user.name', 'Test');

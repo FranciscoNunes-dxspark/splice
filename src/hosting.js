@@ -1,6 +1,6 @@
 // Pull requests on the server a repository's remote points at: GitHub (through the gh CLI)
 // or Azure DevOps (through the az CLI and its azure-devops extension). Both CLIs use the
-// sign-in you already have, so Tiller never sees or stores a token.
+// sign-in you already have, so Splice never sees or stores a token.
 import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
@@ -49,7 +49,7 @@ const GH_REVIEW = {
   REVIEW_REQUIRED: { text: 'Review required', tone: 'wait' },
 };
 
-/** One GitHub PR from `gh pr list --json`, in Tiller's shape. */
+/** One GitHub PR from `gh pr list --json`, in Splice's shape. */
 export function githubPr(p, me) {
   return {
     id: p.number,
@@ -84,7 +84,7 @@ export function azureReview(reviewers) {
   return { text: 'No votes yet', tone: 'none' };
 }
 
-/** One Azure DevOps PR from `az repos pr list`, in Tiller's shape. */
+/** One Azure DevOps PR from `az repos pr list`, in Splice's shape. */
 export function azurePr(p, me, remote) {
   const reviewers = (p.reviewers ?? []).map((r) => ({
     name: r.displayName,
@@ -271,7 +271,7 @@ function azure(root, remote, remoteName) {
     approve: (pr, signal) => az(['repos', 'pr', 'set-vote', '--id', String(pr.id), '--vote', 'approve'], { signal }),
     async comment(pr, text, signal) {
       // Posting a thread needs a JSON body, which `az devops invoke` only takes from a file.
-      const dir = await mkdtemp(join(tmpdir(), 'tiller-'));
+      const dir = await mkdtemp(join(tmpdir(), 'splice-'));
       const file = join(dir, 'thread.json');
       try {
         await writeFile(file, JSON.stringify({ comments: [{ parentCommentId: 0, content: text, commentType: 1 }], status: 1 }));
@@ -295,7 +295,7 @@ function azure(root, remote, remoteName) {
   };
 }
 
-/** The PR host for a loaded repository: origin first, else the first remote Tiller recognises. */
+/** The PR host for a loaded repository: origin first, else the first remote Splice recognises. */
 export function hostFor(data) {
   if (!data?.remoteUrls) return null;
   const names = Object.keys(data.remoteUrls).sort((a, b) => (a === 'origin' ? -1 : b === 'origin' ? 1 : 0));

@@ -1,4 +1,4 @@
-// Interactive rebase without an editor: Tiller writes git's todo list itself and hands it over
+// Interactive rebase without an editor: Splice writes git's todo list itself and hands it over
 // through GIT_SEQUENCE_EDITOR. Rewording runs `git commit --amend -F <file>` right after the pick.
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -56,7 +56,7 @@ export function buildTodo(rows, messageFile) {
 
 /** Writes the todo and message files under .git and returns the env that makes `git rebase -i` use them. */
 export async function prepare(gitDir, rows) {
-  const dir = join(gitDir, 'tiller-rebase');
+  const dir = join(gitDir, 'splice-rebase');
   await rm(dir, { recursive: true, force: true });
   await mkdir(dir, { recursive: true });
   const { todo, messages } = buildTodo(rows, (i) => join(dir, `message-${i}.txt`));
@@ -69,7 +69,7 @@ export async function prepare(gitDir, rows) {
 
 /** Removes the files once no rebase needs them (a stopped rebase still runs its exec lines later). */
 export function cleanup(gitDir) {
-  return rm(join(gitDir, 'tiller-rebase'), { recursive: true, force: true });
+  return rm(join(gitDir, 'splice-rebase'), { recursive: true, force: true });
 }
 
 // Fixups: `git commit --fixup=<hash>`, then an autosquash rebase folds the fixup! commit into its target.

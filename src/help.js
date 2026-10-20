@@ -75,7 +75,7 @@ Branches
   C                Clean up: delete branches with nothing unpushed or unmerged, and clean worktrees (/cleanup)
 
 Worktrees (● the one open here)
-  ↵                Open it in Tiller
+  ↵                Open it in Splice
   n                New worktree (/worktree <path> [ref]; the path is relative to the repository)
   x                Remove it (asks first; the branch stays), or prune one whose folder is gone
   C                Clean up: remove worktrees without changes, and branches with nothing unpushed (/cleanup)

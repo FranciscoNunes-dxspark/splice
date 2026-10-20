@@ -284,7 +284,7 @@ export function stashPatch(root, ref) {
 export async function stashFiles(root, ref) {
   const [tracked, untracked] = await Promise.all([
     git(root, ['diff', '--name-status', '-z', '--no-renames', `${ref}^1`, ref]),
-    // Only a stash made with --include-untracked (as Tiller's are) has a third parent.
+    // Only a stash made with --include-untracked (as Splice's are) has a third parent.
     git(root, ['ls-tree', '-r', '-z', '--name-only', `${ref}^3`]).catch(() => ''),
   ]);
   return parseStashFiles(tracked, untracked);

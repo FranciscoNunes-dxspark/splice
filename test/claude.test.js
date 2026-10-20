@@ -45,11 +45,11 @@ test('prompts carry the repository style, and big inputs are cut with a note', (
 });
 
 test('through the UI: Claude writes the commit message, then explains and reviews', async () => {
-  const base = mkdtempSync(join(tmpdir(), 'tiller-claude-'));
+  const base = mkdtempSync(join(tmpdir(), 'splice-claude-'));
   const dir = join(base, 'repo');
   mkdirSync(dir);
-  const prevHome = process.env.TILLER_HOME;
-  process.env.TILLER_HOME = join(base, 'home');
+  const prevHome = process.env.SPLICE_HOME;
+  process.env.SPLICE_HOME = join(base, 'home');
   const git = (...args) => execFileSync('git', args, { cwd: dir, encoding: 'utf8' }).trim();
   git('init', '-q', '-b', 'main');
   git('config', 'user.name', 'T');
@@ -111,8 +111,8 @@ test('through the UI: Claude writes the commit message, then explains and review
     assert.equal(asked.length, 2);
   } finally {
     app.unmount();
-    if (prevHome === undefined) delete process.env.TILLER_HOME;
-    else process.env.TILLER_HOME = prevHome;
+    if (prevHome === undefined) delete process.env.SPLICE_HOME;
+    else process.env.SPLICE_HOME = prevHome;
     // On Windows a git still finishing for the unmounted app keeps the folder busy for a moment.
     await removeTemp(base);
   }

@@ -58,7 +58,7 @@ export const COMMANDS = [
   { name: 'last', desc: 'Show the full output of the last command', run: (ctx) => ctx.showLast() },
   { name: 'refresh', desc: 'Reload the repository', run: (ctx) => ctx.refresh() },
   { name: 'help', desc: 'Keyboard shortcuts', run: (ctx) => ctx.showHelp() },
-  { name: 'quit', desc: 'Exit Tiller', run: (ctx) => ctx.quit() },
+  { name: 'quit', desc: 'Exit Splice', run: (ctx) => ctx.quit() },
 ];
 
 /** Exact name, or an unambiguous prefix of one. */

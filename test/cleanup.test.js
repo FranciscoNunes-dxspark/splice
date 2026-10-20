@@ -180,7 +180,7 @@ test('the list says what goes, why, and what stays, with paths relative to the r
 // End to end: a repository with a bare "origin", branches and worktrees of every kind, cleaned up through the UI.
 
 const KEYS = { enter: '\r', esc: '\x1b' };
-const base = mkdtempSync(join(tmpdir(), 'tiller-cleanup-'));
+const base = mkdtempSync(join(tmpdir(), 'splice-cleanup-'));
 // On Windows a git still finishing for an unmounted app keeps the folder busy for a moment.
 after(() => removeTemp(base));
 
@@ -261,12 +261,12 @@ test('/cleanup removes clean worktrees and deletes branches with nothing only he
     try {
       return git('worktree', 'list', '--porcelain').split('\n').filter((l) => l.startsWith('worktree ')).map((l) => l.slice(9).split('/').pop()).sort();
     } catch {
-      return null; // read while Tiller is deleting files: "not yet"
+      return null; // read while Splice is deleting files: "not yet"
     }
   };
   const all = branches();
 
-  process.env.TILLER_HOME = join(base, 'home');
+  process.env.SPLICE_HOME = join(base, 'home');
   lastApp = render(React.createElement(App, { initialPath: dir, config: { recent: [], roots: [], history: [] } }));
   const app = lastApp;
   const frame = () => app.lastFrame() ?? '';

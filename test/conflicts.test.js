@@ -93,8 +93,8 @@ const KEYS = { enter: '\r', esc: '\x1b' };
 let base;
 
 before(() => {
-  base = mkdtempSync(join(tmpdir(), 'tiller-conflicts-'));
-  process.env.TILLER_HOME = join(base, 'home');
+  base = mkdtempSync(join(tmpdir(), 'splice-conflicts-'));
+  process.env.SPLICE_HOME = join(base, 'home');
 });
 
 after(() => removeTemp(base));

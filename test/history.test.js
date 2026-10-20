@@ -18,10 +18,10 @@ const git = (...args) => execFileSync('git', args, { cwd: dir, encoding: 'utf8' 
 const commit = (message) => git('commit', '-q', '-m', message);
 
 before(() => {
-  base = mkdtempSync(join(tmpdir(), 'tiller-history-'));
+  base = mkdtempSync(join(tmpdir(), 'splice-history-'));
   dir = join(base, 'repo');
   mkdirSync(dir);
-  process.env.TILLER_HOME = join(base, 'home');
+  process.env.SPLICE_HOME = join(base, 'home');
   git('init', '-q', '-b', 'main');
   git('config', 'core.autocrlf', 'false');
   git('config', 'user.name', 'Test');
