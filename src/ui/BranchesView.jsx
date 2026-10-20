@@ -107,10 +107,15 @@ export function BranchesView({ data, ctx, width, height, active, prVersion }) {
     if (!ctx.viewHasKeys()) return;
     if (nav.handle(input, key)) return;
     if (input === 'C') return a.cleanUp(ctx);
+    if (input === 'M') return a.remote(ctx, '');
     if (!sel?.ref) return;
     const { name } = sel.ref;
     if (sel.type === 'tag' && input === 'u') return a.pushTag(ctx, name);
     if (sel.type === 'tag' && input === 'R') return a.createRelease(ctx, name);
+    if (sel.type === 'local' && input === 'U') {
+      const remote = data.remotes.includes('origin') ? 'origin' : data.remotes[0];
+      return ctx.prefill(`/upstream ${name} ${sel.ref.upstream ?? (remote ? `${remote}/${name}` : '')}`);
+    }
     if (key.return) a.checkout(ctx, name);
     else if (input === 'y') ctx.copy(name);
     else if (input === 'n') ctx.prefill(`/branch  ${name}`, 8);

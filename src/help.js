@@ -79,6 +79,9 @@ Branches
   The right-hand pane: how far it is ahead of and behind the default branch, its commits the default
   branch doesn't have, then its history
   C                Clean up: delete branches with nothing unpushed or unmerged, and clean worktrees (/cleanup)
+  U                On a local branch: set what it tracks (/upstream [branch] <remote/branch>, --unset to stop)
+  M                The remotes (/remote): n add · R rename · x remove · u change its URL · f fetch
+                   · p push the current branch to it (/push <remote>)
   On a tag (Tags, at the bottom of the list):
   u                Push it (/tag-push <tag> [remote])
   d                Delete it: here, on the remote, or both (asks first)
@@ -136,7 +139,7 @@ Prompt
 Slash commands
   /commit <msg>   /amend [msg]   /checkout <ref>   /branch <name> [start]
   /delete <ref>   /merge <ref>   /rebase <ref>     /reset <ref>   /tag <name> [ref]
-  /fetch   /pull [--rebase]   /push [--force]   /stash [msg]   /pop   /discard
+  /fetch   /pull [--rebase]   /push [--force] [remote]   /stash [msg]   /pop   /discard
   /undo   /reflog
   /bisect <good|bad|skip|reset> [ref]
   /continue   /abort   /find <text>   /open <path>   /scan <folder>   /last   /quit
@@ -145,6 +148,8 @@ Slash commands
                                      or changing lines that match the regex
   /pr <title> [--into <branch>] [--draft]   /comment <text>   /approve   /reply <text>
   /merge-pr [squash|merge|rebase] [--delete-branch] [--auto]   /ci
+  /remote [add <name> <url> | rename <old> <new> | remove <name> | set-url <name> <url>]
+  /upstream [branch] <remote/branch>   /upstream --unset [branch]
   /tag-push <tag> [remote]   /release <tag> [--draft] [title]
   /reviewer <name>   /draft   /ready   /title <text>   /body [--file <path> | text]
   /rebase -i <ref>   /reword <message>   /fixup [ref]   /worktree <path> [ref]   /compare <ref> [base]

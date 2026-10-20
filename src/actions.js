@@ -9,7 +9,7 @@ import { configFile } from './config.js';
 import { matchLineEndings, parseConflicts, takeSide, unifiedDiff } from './conflict.js';
 import { blamePicker, historyPicker, repoPath } from './history.js';
 import { MERGE_LABELS, bodyArgs, mergePrArgs, releaseArgs } from './hosting.js';
-import { defaultBranch, findArgs, firstBadCommit, parseGraph, parseStatus, relTime, searchArgs, splitArgs } from './parse.js';
+import { defaultBranch, findArgs, firstBadCommit, parseGraph, parseStatus, relTime, remoteArgs, searchArgs, splitArgs, upstreamArgs } from './parse.js';
 import { buildPatch, coversAll, parseDiff } from './patch.js';
 import {
   COMMIT_LIST_FORMAT,
@@ -83,9 +83,24 @@ export async function push(ctx, args = []) {
   const { branch } = ctx.data.status;
   if (!branch.head) return ctx.note('HEAD is detached. Check out a branch to push it.', 'error');
   // --force-with-lease refuses to overwrite commits you haven't seen, which plain --force would destroy.
-  const flags = args.map((a) => (a === '--force' || a === '-f' ? '--force-with-lease' : a));
+  const { remotes } = ctx.data;
+  // A remote named among the arguments (/push upstream): the branch goes there, under its own name.
+  const named = args.find((a) => remotes.includes(a));
+  const flags = args.filter((a) => a !== named).map((a) => (a === '--force' || a === '-f' ? '--force-with-lease' : a));
+  if (named && !(branch.upstream ?? '').startsWith(`${named}/`)) {
+    if (flags.includes('--force-with-lease')) {
+      const ok = await ctx.confirm({
+        title: `Force-push ${branch.head} to ${named}?`,
+        detail: `Replaces ${named}'s ${branch.head} with yours. Uses --force-with-lease, so it stops if someone else pushed.`,
+        options: YES_NO('Yes, force-push'),
+        danger: true,
+      });
+      if (!ok) return;
+    }
+    // Only a branch without an upstream starts tracking the remote it was pushed to.
+    return ctx.exec(['push', ...flags, ...(branch.upstream ? [] : ['-u']), named, branch.head], { label: 'Pushing' });
+  }
   if (!branch.upstream) {
-    const { remotes } = ctx.data;
     const remote = remotes.includes('origin') ? 'origin' : remotes[0];
     if (!remote) return ctx.note('This repository has no remote. Add one with: !remote add origin <url>', 'error');
     return ctx.exec(['push', ...flags, '-u', remote, branch.head], { label: 'Pushing' });
@@ -100,6 +115,79 @@ export async function push(ctx, args = []) {
     if (!ok) return;
   }
   return ctx.exec(['push', ...flags], { label: 'Pushing' });
+}
+
+/**
+ * /remote: with nothing after it, the remotes in a picker (n add, R rename, x remove, p push the current branch
+ * to one, f fetch it). /remote add <name> <url>, rename <old> <new>, remove <name>, set-url <name> <url>.
+ */
+export async function remote(ctx, text) {
+  if (!needRepo(ctx)) return;
+  const r = remoteArgs(text);
+  if (r.error) return ctx.note(r.error, 'error');
+  if (!r.args) return showRemotes(ctx);
+  if (r.args[1] !== 'add' && !ctx.data.remotes.includes(r.name)) return ctx.note(`No remote called ${r.name}.`, 'error');
+  if (r.remove) {
+    const ok = await ctx.confirm({
+      title: `Remove the remote ${r.name}?`,
+      detail: `Forgets ${ctx.data.remoteUrls[r.name]} and its remote branches here; nothing changes on the server. Branches tracking it lose their upstream.`,
+      options: YES_NO('Yes, remove it'),
+      danger: true,
+    });
+    if (!ok) return;
+  }
+  const done = await ctx.exec(r.args, { label: 'Changing remotes' });
+  if (done.ok) redrawRemotes(ctx);
+  return done;
+}
+
+// Redraws the remotes picker after a change, if it's what's on screen.
+function redrawRemotes(ctx) {
+  if (ctx.overlay()?.remotes) showRemotes(ctx, { replace: true });
+}
+
+function showRemotes(ctx, { replace = false } = {}) {
+  const { branch } = ctx.data.status;
+  ctx.showPicker(
+    {
+      title: 'Remotes',
+      hint: `n add · R rename · x remove · u set URL · f fetch${branch.head ? ` · p push ${branch.head} to it` : ''}`,
+      empty: 'No remotes. n adds one.',
+      remotes: true,
+      items: () =>
+        ctx.data.remotes.map((name) => ({
+          name,
+          segments: [{ text: name, color: theme.remote, bold: true, strong: true }, { text: `  ${ctx.data.remoteUrls[name] ?? ''}`, color: theme.dim }],
+        })),
+      keys: {
+        R: (it) => ctx.prefill(`/remote rename ${it.name} `),
+        x: (it) => remote(ctx, `remove ${it.name}`),
+        u: (it) => ctx.prefill(`/remote set-url ${it.name} ${ctx.data.remoteUrls[it.name] ?? ''}`),
+        f: (it) => fetch(ctx, [it.name, '--prune']),
+        p: (it) => push(ctx, [it.name]),
+        y: (it) => ctx.copy(ctx.data.remoteUrls[it.name] ?? '', `the URL of ${it.name}`),
+      },
+      actions: { n: () => ctx.prefill('/remote add ') },
+    },
+    { replace },
+  );
+}
+
+/** U on a local branch in Branches, /upstream [branch] <remote/branch>, /upstream --unset [branch]. */
+export function upstream(ctx, text) {
+  if (!needRepo(ctx)) return;
+  if (!(text ?? '').trim()) {
+    const head = ctx.data.status.branch.head;
+    const remote = ctx.data.remotes.includes('origin') ? 'origin' : ctx.data.remotes[0];
+    return ctx.prefill(head && remote ? `/upstream ${head} ${remote}/${head}` : '/upstream ');
+  }
+  const u = upstreamArgs(text, ctx.data.status.branch.head);
+  if (u.error) return ctx.note(u.error, 'error');
+  if (!ctx.data.refs.local.some((b) => b.name === u.branch)) return ctx.note(`No local branch called ${u.branch}.`, 'error');
+  if (u.upstream && !ctx.data.refs.remote.some((b) => b.name === u.upstream) && !ctx.data.refs.local.some((b) => b.name === u.upstream)) {
+    return ctx.note(`There's no branch ${u.upstream} here. Fetch first (f), or push the branch there: /push <remote>`, 'error');
+  }
+  return ctx.exec(u.args, { label: 'Setting the upstream' });
 }
 
 export async function commit(ctx, message, { amend = false } = {}) {

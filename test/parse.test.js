@@ -209,3 +209,19 @@ test('worktrees: main, branch, detached, locked and missing ones, paths with spa
   assert.deepEqual(parseWorktrees(['worktree /srv/repo.git', 'bare', '', ''].join('\0')).map((w) => [w.bare, w.main]), [[true, true]]);
   assert.deepEqual(parseWorktrees(''), []);
 });
+
+test('/remote and /upstream arguments', async () => {
+  const { remoteArgs, upstreamArgs } = await import('../src/parse.js');
+  assert.deepEqual(remoteArgs(''), {});
+  assert.deepEqual(remoteArgs('add fork git@x:y.git'), { args: ['remote', 'add', 'fork', 'git@x:y.git'], name: 'fork', remove: false });
+  assert.deepEqual(remoteArgs('rm fork'), { args: ['remote', 'remove', 'fork'], name: 'fork', remove: true });
+  assert.deepEqual(remoteArgs('rename a "b c"').args, ['remote', 'rename', 'a', 'b c']);
+  assert.match(remoteArgs('add fork').error, /\/remote add <name> <url>/);
+  assert.match(remoteArgs('prune').error, /Unknown/);
+  assert.deepEqual(upstreamArgs('origin/main', 'main'), { args: ['branch', '--set-upstream-to=origin/main', 'main'], branch: 'main', upstream: 'origin/main' });
+  assert.deepEqual(upstreamArgs('topic up/topic', 'main').args, ['branch', '--set-upstream-to=up/topic', 'topic']);
+  assert.deepEqual(upstreamArgs('--unset', 'main').args, ['branch', '--unset-upstream', 'main']);
+  assert.deepEqual(upstreamArgs('--unset topic', null).args, ['branch', '--unset-upstream', 'topic']);
+  assert.match(upstreamArgs('origin/main', null).error, /detached/);
+  assert.match(upstreamArgs('', 'main').error, /Use:/);
+});

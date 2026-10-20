@@ -449,3 +449,37 @@ export function relTime(sec, now = Date.now() / 1000) {
   if (d < 86400 * 365) return `${Math.floor(d / (86400 * 30))}mo`;
   return `${Math.floor(d / (86400 * 365))}y`;
 }
+
+/**
+ * "/remote add <name> <url>", "rename <old> <new>", "remove <name>" (or rm), "set-url <name> <url>" as the
+ * `git remote` arguments, with `name` (the remote it's about) and `remove` set for a removal; `error` says
+ * what's missing. Nothing typed gives {} (the list of remotes).
+ */
+export function remoteArgs(text) {
+  const [op, ...rest] = splitArgs(text ?? '');
+  if (!op) return {};
+  const need = { add: ['<name>', '<url>'], rename: ['<old>', '<new>'], remove: ['<name>'], rm: ['<name>'], 'set-url': ['<name>', '<url>'] }[op];
+  if (!need) return { error: `Unknown: /remote ${op}. Use add, rename, remove or set-url.` };
+  if (rest.length !== need.length) return { error: `Use: /remote ${op} ${need.join(' ')}` };
+  const verb = op === 'rm' ? 'remove' : op;
+  return { args: ['remote', verb, ...rest], name: rest[0], remove: verb === 'remove' };
+}
+
+/**
+ * "/upstream [branch] <remote/branch>" and "/upstream --unset [branch]" as `git branch` arguments; the branch
+ * is `current` unless named. `error` when there's no telling which branch, or what to track.
+ */
+export function upstreamArgs(text, current) {
+  const words = splitArgs(text ?? '');
+  const unset = words.includes('--unset');
+  const rest = words.filter((w) => w !== '--unset');
+  if (unset) {
+    const branch = rest[0] ?? current;
+    if (!branch) return { error: 'HEAD is detached: name the branch, /upstream --unset <branch>' };
+    return { args: ['branch', '--unset-upstream', branch], branch };
+  }
+  if (!rest.length || rest.length > 2) return { error: 'Use: /upstream [branch] <remote/branch>, or /upstream --unset [branch]' };
+  const [branch, up] = rest.length === 2 ? rest : [current, rest[0]];
+  if (!branch) return { error: 'HEAD is detached: name the branch, /upstream <branch> <remote/branch>' };
+  return { args: ['branch', `--set-upstream-to=${up}`, branch], branch, upstream: up };
+}
