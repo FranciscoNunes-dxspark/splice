@@ -1,6 +1,6 @@
 # Mouse support (future feature)
 
-Status: **not started**. A design shared by the three Ink terminal apps: **Tiller** (git), **Trawl** (SQL Server) and **Keel** (Azure DevOps). They're built the same way (Ink 6.8, React 19, plain JS, Bun-compiled executables, a `ui/` folder with `hooks.js`, `parts.jsx` and an `App.jsx` that builds `ctx`), so one implementation can be copied between them. Paths below are relative to each app's UI root: `src/` in Tiller and Trawl, `cli/` in Keel.
+Status: **not started**. A design shared by the three Ink terminal apps: **Splice** (git), **Trawl** (SQL Server) and **Keel** (Azure DevOps). They're built the same way (Ink 6.8, React 19, plain JS, Bun-compiled executables, a `ui/` folder with `hooks.js`, `parts.jsx` and an `App.jsx` that builds `ctx`), so one implementation can be copied between them. Paths below are relative to each app's UI root: `src/` in Splice and Trawl, `cli/` in Keel.
 
 ## The goal
 
@@ -98,7 +98,7 @@ Ink calls `setEncoding('utf8')`, so chunks are strings, and an empty string afte
 
 ### 4. Views
 
-Each view knows its own geometry (`split`, `listW`, rows start one line under the panel's top border, plus any header rows such as Tiller's Repos "Scanning…" line):
+Each view knows its own geometry (`split`, `listW`, rows start one line under the panel's top border, plus any header rows such as Splice's Repos "Scanning…" line):
 
 ```js
 const keys = (input, key) => { /* the existing useInput handler, now named */ };
@@ -110,13 +110,13 @@ useMouse((e) => {
 });
 ```
 
-Naming the `useInput` handler `keys` is what lets a double-click reuse `↵` without duplicating its logic. Where `↵` starts something big (Tiller's rebase editor), clicks only select.
+Naming the `useInput` handler `keys` is what lets a double-click reuse `↵` without duplicating its logic. Where `↵` starts something big (Splice's rebase editor), clicks only select.
 
 Per app:
 
 | App | Main candidates |
 | --- | --- |
-| Tiller (`src/ui`) | Tabs; Graph, Changes (files and diff panes; click in the diff focuses it), Branches, Worktrees, Stash, PRs, Repos lists; wheel in the viewer and the commit detail pane. |
+| Splice (`src/ui`) | Tabs; Graph, Changes (files and diff panes; click in the diff focuses it), Branches, Worktrees, Stash, PRs, Repos lists; wheel in the viewer and the commit detail pane. |
 | Trawl (`src/ui`) | Tabs; Connections, Explorer and History lists; Results grid (click a cell, wheel scrolls rows, shift+wheel scrolls columns); Query editor (click places the cursor, which needs the editor's text-to-screen mapping). |
 | Keel (`cli/ui`) | Tabs; Inbox, PRs and Pipelines lists; double-click opens like `↵`. |
 
@@ -164,4 +164,4 @@ Mirror Claude Code:
 4. Selection and copy.
 5. Port to the other two apps: copy `mouse.js` as is, then wire each app's `App.jsx`, `hooks.js` and views per the table above.
 
-A first version of pieces 1 to 4 was written for Tiller and then dropped before testing (Tiller session, 2026-10-20); the code above is that version, cleaned up.
+A first version of pieces 1 to 4 was written for Splice (then still called Tiller) and dropped before testing (2026-10-20); the code above is that version, cleaned up.
