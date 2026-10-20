@@ -3,6 +3,7 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import React from 'react';
@@ -37,7 +38,8 @@ before(() => {
   writeFileSync(join(dir, 'new.txt'), 'brand new\n');
 });
 
-after(() => rmSync(base, { recursive: true, force: true }));
+// On Windows a git still finishing for an unmounted app keeps the folder busy for a moment.
+after(() => rm(base, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 }));
 
 let lastApp = null;
 
@@ -214,7 +216,9 @@ test('discarding asks first, and "No" leaves the file alone', async () => {
 test('/discard throws away every change, keeping untracked files if asked', async () => {
   const other = join(base, 'discard-repo');
   mkdirSync(other);
-  const g = (...args) => execFileSync('git', args, { cwd: other, encoding: 'utf8' }).trim();
+  // The status checks polled below mustn't take the index lock from under Tiller's own git.
+  const env = { ...process.env, GIT_OPTIONAL_LOCKS: '0' };
+  const g = (...args) => execFileSync('git', args, { cwd: other, encoding: 'utf8', env }).trim();
   g('init', '-q', '-b', 'main');
   g('config', 'core.autocrlf', 'false');
   g('config', 'user.name', 'T');
@@ -293,16 +297,16 @@ test('worktrees: listed, opened, pruned when missing, and removed after asking',
   };
   try {
     await until(() => frame().includes('Start'), 'the graph');
-    app.stdin.write('7');
+    app.stdin.write('4');
     await until(() => frame().includes('wt-repo-feat') && frame().includes('missing'), 'the Worktrees view');
     assert.match(frame(), /● wt-repo\s+main/);
-    assert.match(frame(), /7 Worktrees 4/);
+    assert.match(frame(), /4 Worktrees 4/);
 
     await pick('wt-repo-feat');
     app.stdin.write(KEYS.enter);
     await until(() => frame().includes('⎇ feat'), 'the feat worktree to open');
 
-    app.stdin.write('7');
+    app.stdin.write('4');
     await until(() => /● wt-repo-feat/.test(frame()), 'the Worktrees view, from feat');
     await pick('wt-repo-gone');
     app.stdin.write('x');

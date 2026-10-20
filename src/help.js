@@ -1,9 +1,10 @@
 export const HELP = `Anywhere
-  1-7 / tab        Graph, Changes, Branches, Stash, PRs, Repos, Worktrees (shift+tab goes back)
+  1-7 / tab        Graph, Changes, Branches, Worktrees, Stash, PRs, Repos (shift+tab goes back)
   / or :           Command prompt (slash commands, with completion)
   !                Run any git command, e.g.  !log --stat -5
   f  p  P          Fetch all · Pull · Push (sets the upstream the first time)
   r                Refresh
+  z                Undo the last commit, amend, merge, rebase, reset, switch or discard (asks first)
   esc              Cancel the running command, or clear the activity lines
   ?                This help
   q / ctrl+c       Quit
@@ -32,11 +33,15 @@ Changes
   space            Stage or unstage the file (on a conflict: mark it resolved)
   a  u             Stage all · Unstage all
   d                Discard the file's changes
+  s                Stash just this file, staged and unstaged changes (its path is the stash's message)
   c  A             Commit · Amend the last commit
+  F                Fix up an earlier commit with the staged changes (pick it; then fold it in, or keep it for later)
   W                Claude writes the commit message for the staged changes, into the prompt to edit
   R                Claude reviews the staged changes (or the unstaged ones, if nothing is staged)
-  O  T             On a conflict: take ours · take theirs
-  ↵  →  l          Step into the diff to stage hunks or single lines
+  O  T             On a conflict: take ours · take theirs, for the whole file
+  C                On a conflict: Claude proposes the resolved file, shown as a diff; asks before writing it
+  H  B             The file's history · Blame it (who last changed each line)
+  ↵  →  l          Step into the diff to stage hunks or single lines (on a conflict: into its conflict blocks)
 
 Changes, in the diff
   j k              Move between changed lines      n N  ] [    Next, previous hunk
@@ -45,15 +50,44 @@ Changes, in the diff
   d                Discard the hunk or the selected lines (asks first)
   ↵                Full-screen diff        esc  ←  h    Back to the file list
 
+Changes, in a conflict (ours, the base in diff3 style, theirs)
+  j k  n N         Next, previous conflict block   J K         Scroll
+  o  t  b          Take ours · Take theirs · Keep both (ours, then theirs) for the block; nothing is staged
+  esc  ←  h        Back to the file list, where space marks the file resolved
+
+File history (H, /history <path>: the commits that touched it, following renames)
+  ↵                The commit's diff of the file (esc comes back here)
+  B                Blame the file as it was in that commit
+
+Blame (B, /blame <path>: the working-tree file, so new lines show as not committed yet)
+  ↵                Diff of the commit that last changed the line (esc comes back here)
+  H                The file's history
+
 Branches
   ↵                Check out (a remote branch gets a local tracking branch)
   n                New branch from it
   m  e             Merge it in · Rebase onto it
   d                Delete (asks before force-deleting or deleting on the remote)
+  D                Full diff of what it adds to the default branch (/compare <ref> [base])
+  o                Open its pull request in the browser (#12 GitHub, !12 Azure DevOps; coloured by review)
+  The right-hand pane: how far it is ahead of and behind the default branch, its commits the default
+  branch doesn't have, then its history
+  C                Clean up: delete branches with nothing unpushed or unmerged, and clean worktrees (/cleanup)
+
+Worktrees (● the one open here)
+  ↵                Open it in Tiller
+  n                New worktree (/worktree <path> [ref]; the path is relative to the repository)
+  x                Remove it (asks first; the branch stays), or prune one whose folder is gone
+  C                Clean up: remove worktrees without changes, and branches with nothing unpushed (/cleanup)
 
 Stash
-  ↵                Full diff       s           Stash the current changes
+  ↵                Full diff
+  s  S             Stash the current changes · The same, typing a message first (/stash <message>)
   a  o  x          Apply · Pop · Drop
+  F                Its files. ↵ restores one into the working tree, as apply
+                   would: a change unstaged, a file the stash added staged, an untracked file
+                   untracked; a file the stash deleted, it offers to delete. Asks before overwriting
+                   uncommitted changes. d shows the file's diff in the stash.
 
 PRs (GitHub through gh, Azure DevOps through az: your existing sign-in)
   ◆ asks for your review · ● yours · others below
@@ -67,14 +101,13 @@ PRs (GitHub through gh, Azure DevOps through az: your existing sign-in)
 Claude (through the Claude Code CLI, signed in as you already are; answers take several seconds, esc cancels)
   /describe   /draft-pr [--into <branch>]   /explain [ref]   /review [ref]
 
+Reflog (/reflog: everywhere HEAD has been, newest first)
+  ↵                Full diff of the commit         c           Check it out
+  X                Reset the current branch to it (soft, mixed or hard)
+
 Repos
   ↵                Open            x           Forget (remove from recent)
   s                Add a folder to scan for repositories
-
-Worktrees (● the one open here)
-  ↵                Open it in Tiller
-  n                New worktree (/worktree <path> [ref]; the path is relative to the repository)
-  x                Remove it (asks first; the branch stays), or prune one whose folder is gone
 
 Prompt
   tab              Complete        ↑ ↓         Pick a suggestion, or walk history
@@ -85,9 +118,13 @@ Slash commands
   /commit <msg>   /amend [msg]   /checkout <ref>   /branch <name> [start]
   /delete <ref>   /merge <ref>   /rebase <ref>     /reset <ref>   /tag <name> [ref]
   /fetch   /pull [--rebase]   /push [--force]   /stash [msg]   /pop   /discard
+  /undo   /reflog
   /continue   /abort   /find <text>   /open <path>   /scan <folder>   /last   /quit
+  /find -S <text>   /find -G <regex>   Search all history for commits adding or removing the text,
+                                     or changing lines that match the regex
   /pr <title> [--into <branch>] [--draft]   /comment <text>   /approve
-  /rebase -i <ref>   /reword <message>   /worktree <path> [ref]
+  /rebase -i <ref>   /reword <message>   /fixup [ref]   /worktree <path> [ref]   /compare <ref> [base]
+  /history <path>   /blame <path>   /cleanup
 
 Viewer (diffs, output, this help)
   j k  space  g G  Scroll         n N         Next, previous hunk

@@ -1,7 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import React from 'react';
@@ -54,6 +55,9 @@ test('through the UI: Claude writes the commit message, then explains and review
   git('config', 'user.name', 'T');
   git('config', 'user.email', 't@example.com');
   git('config', 'core.autocrlf', 'false');
+  // No background maintenance after the commit, holding the folder open while the test cleans up.
+  git('config', 'maintenance.auto', 'false');
+  git('config', 'gc.auto', '0');
   writeFileSync(join(dir, 'a.txt'), 'one\n');
   git('add', '.');
   git('commit', '-q', '-m', 'Start the notes');
@@ -111,6 +115,7 @@ test('through the UI: Claude writes the commit message, then explains and review
     app.unmount();
     if (prevHome === undefined) delete process.env.TILLER_HOME;
     else process.env.TILLER_HOME = prevHome;
-    rmSync(base, { recursive: true, force: true });
+    // On Windows a git still finishing for the unmounted app keeps the folder busy for a moment.
+    await rm(base, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
   }
 });
