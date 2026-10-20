@@ -6,6 +6,7 @@ import { splitArgs } from './parse.js';
 export const COMMANDS = [
   { name: 'commit', args: '<message>', desc: 'Commit the staged changes', run: (ctx, s) => a.commit(ctx, s) },
   { name: 'amend', args: '[message]', desc: 'Amend the last commit (keeps its message if none given)', run: (ctx, s) => a.commit(ctx, s, { amend: true }) },
+  { name: 'fixup', args: '[ref]', desc: 'Make the staged changes a fix for an earlier commit (picked from a list), then fold it in', complete: 'refs', run: (ctx, s) => a.fixup(ctx, s) },
   { name: 'checkout', args: '<branch|tag|hash>', desc: 'Switch to a branch, tag or commit', complete: 'refs', run: (ctx, s) => a.checkout(ctx, s) },
   { name: 'branch', args: '<name> [start]', desc: 'Create a branch and switch to it', run: (ctx, s) => a.createBranch(ctx, s) },
   { name: 'delete', args: '<branch|tag>', desc: 'Delete a branch (local or remote) or a tag', complete: 'refs', run: (ctx, s) => a.deleteRef(ctx, s) },
@@ -35,7 +36,17 @@ export const COMMANDS = [
   },
   { name: 'continue', desc: 'Continue the merge, rebase, cherry-pick or revert', run: (ctx) => a.continueOp(ctx) },
   { name: 'abort', desc: 'Abort the merge, rebase, cherry-pick or revert', run: (ctx) => a.abortOp(ctx) },
-  { name: 'find', args: '<text>', desc: 'Filter the graph by message, author or hash', run: (ctx, s) => ctx.find(s) },
+  {
+    name: 'find',
+    args: '<text>',
+    desc: 'Filter the graph by message, author or hash; -S <text> or -G <regex> search all history for code changes',
+    complete: 'flags',
+    flags: [
+      { flag: '-S', hint: '<text>', desc: 'Commits anywhere in history that add or remove the text' },
+      { flag: '-G', hint: '<regex>', desc: 'Commits anywhere in history whose changed lines match the regex' },
+    ],
+    run: (ctx, s) => a.find(ctx, s),
+  },
   { name: 'open', args: '<path>', desc: 'Open a repository', complete: 'repos', run: (ctx, s) => (s ? ctx.openRepo(s) : ctx.prefill('/open ')) },
   { name: 'scan', args: '<folder>', desc: 'Add a folder to scan for repositories', run: (ctx, s) => ctx.addRoot(s) },
   { name: 'last', desc: 'Show the full output of the last command', run: (ctx) => ctx.showLast() },
@@ -86,6 +97,12 @@ export function suggestionsFor(value, { data, repos = [] }) {
   const cmd = findCommand(value.slice(1, space));
   const rest = value.slice(space + 1);
   if (!cmd?.complete || rest.includes(' ')) return [];
+  // Flags the command takes before its text: offered until something else is typed.
+  if (cmd.complete === 'flags') {
+    return cmd.flags
+      .filter((f) => f.flag.startsWith(rest) && f.flag !== rest)
+      .map((f) => ({ label: f.flag, hint: f.hint, desc: f.desc, insert: `/${cmd.name} ${f.flag} ` }));
+  }
   const names = ranked(completions(cmd.complete, data, repos), rest);
   if (names.length === 1 && names[0] === rest) return [];
   return names.slice(0, 7).map((n) => ({ label: n, insert: `/${cmd.name} ${n}`, run: true }));

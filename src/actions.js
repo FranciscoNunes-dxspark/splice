@@ -3,9 +3,22 @@
 import { rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { READ_ONLY, cleanSubject, clip, commitPrompt, lookPrompt, parsePrDraft, prPrompt } from './claude.js';
-import { splitArgs } from './parse.js';
+import { findArgs, parseGraph, relTime, searchArgs, splitArgs } from './parse.js';
 import { buildPatch, coversAll, parseDiff } from './patch.js';
-import { cleanup, loadPlan, planProblem, planSummary, prepare } from './rebase.js';
+import {
+  COMMIT_LIST_FORMAT,
+  cleanup,
+  fixupExclusions,
+  fixupLogArgs,
+  foldArgs,
+  loadPlan,
+  parseCommitList,
+  planProblem,
+  planSummary,
+  prepare,
+} from './rebase.js';
+import { fit } from './text.js';
+import { theme } from './theme.js';
 
 const short = (hash) => hash.slice(0, 7);
 const YES_NO = (yes) => [
@@ -469,6 +482,137 @@ export async function runRebase(ctx, base, rows) {
   else if (ctx.data.changes.conflicts.length) afterConflicts(ctx);
   else ctx.note('Stopped for editing. Change what you need, amend (A in Changes), then /continue.');
   return true;
+}
+
+/**
+ * F in Changes, /fixup [ref]: the staged changes become a fixup! commit for an earlier commit,
+ * then (if you say so) an autosquash rebase folds it in. Without a ref, a picker offers the branch's commits.
+ */
+export async function fixup(ctx, ref) {
+  if (!needRepo(ctx)) return;
+  const { state } = ctx.data;
+  if (state) return ctx.note(`A ${OP[state]} is in progress. Finish it first (/continue or /abort), then make the fixup.`, 'error');
+  const { branch } = ctx.data.status;
+  if (isInitial(ctx)) return ctx.note('There are no commits yet to fix up.', 'error');
+  if (!branch.head) return ctx.note('HEAD is detached. Folding a fixup in rewrites a branch, so check one out first.', 'error');
+  const { staged, unstaged, conflicts } = ctx.data.changes;
+  if (conflicts.length) return ctx.note('Resolve the conflicts first (space marks a file resolved).', 'error');
+  let stageAll = false;
+  if (!staged.length) {
+    if (!unstaged.length) return ctx.note('Nothing to fix up with: the working tree is clean.', 'error');
+    const ok = await ctx.confirm({
+      title: 'Nothing is staged. Stage all changes for the fixup?',
+      options: YES_NO('Yes, stage everything'),
+    });
+    if (!ok) return;
+    stageAll = true;
+  }
+  if (ref) {
+    let target;
+    try {
+      [target] = parseCommitList(await ctx.git(['log', '-1', `--format=${COMMIT_LIST_FORMAT}`, ref, '--']));
+    } catch {
+      // Not a commit; said below.
+    }
+    if (!target) return ctx.note(`No commit called ${ref}.`, 'error');
+    const ours = await ctx.git(['merge-base', '--is-ancestor', target.hash, 'HEAD']).then(() => true, () => false);
+    if (!ours) return ctx.note(`${ref} isn't part of ${branch.head}'s history, so a fixup couldn't be folded into it.`, 'error');
+    return fixupInto(ctx, target, { stageAll });
+  }
+  ctx.showPicker({
+    title: `Fix up which commit on ${branch.head}?`,
+    hint: '↵ fix it up with the staged changes',
+    empty: 'No commits to fix up.',
+    load: () => fixupCandidates(ctx),
+    onPick: (c) => {
+      ctx.closeOverlay();
+      return fixupInto(ctx, c, { stageAll });
+    },
+  });
+}
+
+/** The branch's commits that aren't on its upstream or the default branch yet; failing that, the latest 30. */
+async function fixupCandidates(ctx) {
+  const { status, refs, remotes } = ctx.data;
+  const { branch } = status;
+  const remote = refs.remote.find((b) => b.name === branch.upstream)?.remote ?? (remotes.includes('origin') ? 'origin' : remotes[0]);
+  const remoteHead = remote ? (await ctx.git(['symbolic-ref', '-q', '--short', `refs/remotes/${remote}/HEAD`]).catch(() => '')).trim() : '';
+  const exclude = fixupExclusions({
+    head: branch.head,
+    upstream: branch.upstream,
+    local: refs.local.map((b) => b.name),
+    remote: refs.remote.map((b) => b.name),
+    remoteHead: remoteHead || null,
+  });
+  let list = exclude.length ? parseCommitList(await ctx.git(fixupLogArgs(exclude))) : [];
+  if (!list.length) list = parseCommitList(await ctx.git(fixupLogArgs([])));
+  return list.map((c) => ({
+    ...c,
+    segments: [
+      { text: c.hash.slice(0, 7), color: theme.warn },
+      { text: ` ${fit(relTime(c.time), 4, 'right')}  `, color: theme.dim },
+      { text: c.subject, strong: true },
+    ],
+  }));
+}
+
+async function fixupInto(ctx, target, { stageAll }) {
+  if (stageAll && !(await ctx.exec(['add', '-A'], { refresh: false, quiet: true })).ok) return;
+  const made = await ctx.exec(['commit', `--fixup=${target.hash}`], { label: 'Committing the fixup' });
+  if (!made.ok) return made;
+  const later = `Kept "fixup! ${target.subject}" as its own commit for now.\nTo fold it in later: i on ${short(target.hash)} in the graph, J to move the fixup! commit just above it, f to fix up, ↵.`;
+  // Without --rebase-merges a rebase flattens merges, and with it a merge can conflict all over again.
+  const merges = Number((await ctx.git(['rev-list', '--count', '--min-parents=2', `${target.hash}..HEAD`]).catch(() => '0')).trim());
+  if (merges) return ctx.note(`There are merge commits after "${target.subject}", which folding the fixup in would flatten.\n${later}`);
+  // Already on a remote branch means folding rewrites history others may have.
+  const onRemotes = (await ctx.git(['for-each-ref', '--contains', target.hash, '--format=%(refname:short)', 'refs/remotes']).catch(() => ''))
+    .split('\n')
+    .filter((r) => r && !r.endsWith('/HEAD'));
+  const { upstream } = ctx.data.status.branch;
+  const pushedTo = onRemotes.includes(upstream) ? upstream : onRemotes[0];
+  // Other changes to tracked files would stop the rebase; set aside, they come back when it's done.
+  const autostash = ctx.data.status.files.some((f) => f.kind !== 'untracked');
+  const fold = await ctx.confirm({
+    title: `Fold it into "${target.subject}" now?`,
+    detail: pushedTo
+      ? `${short(target.hash)} is already on ${pushedTo}: folding rewrites pushed history, so you'd need /push --force afterwards.`
+      : `Rewrites the commits since ${short(target.hash)} (an autosquash rebase)${autostash ? '; other changes are stashed meanwhile' : ''}.`,
+    options: [
+      { label: 'Yes, fold it in', value: true },
+      { label: 'No, keep the fixup! commit for later', value: false },
+    ],
+    danger: Boolean(pushedTo),
+  });
+  if (!fold) return ctx.note(later);
+  // GIT_EDITOR is already `true`; this also beats a sequence.editor in the user's config. The todo is taken as autosquash ordered it.
+  const r = await ctx.exec(foldArgs(target, { autostash }), { label: 'Folding the fixup in', env: { GIT_SEQUENCE_EDITOR: 'true' } });
+  if (ctx.data.state) {
+    if (ctx.data.changes.conflicts.length) afterConflicts(ctx);
+    else ctx.note('The rebase stopped. /continue carries on, /abort puts everything back.', 'error');
+  }
+  return r;
+}
+
+/**
+ * /find: plain text filters the loaded commits; -S <text> and -G <regex> search the whole history
+ * for commits whose changes add or remove the text, or have lines matching the regex.
+ */
+export async function find(ctx, text) {
+  const { mode, query } = findArgs(text);
+  if (mode === 'text') return ctx.find(query);
+  if (!needRepo(ctx)) return;
+  if (!query) return ctx.prefill(`/find -${mode} `);
+  let rows = [];
+  const r = await ctx.task(
+    `git log -${mode} ${JSON.stringify(query)} --all`,
+    async (signal) => {
+      rows = parseGraph(await ctx.git(searchArgs(mode, query), { signal })).filter((row) => row.commit);
+      return { stdout: rows.length ? `${rows.length} commit${rows.length === 1 ? '' : 's'}` : 'No commits', stderr: '' };
+    },
+    { label: 'Searching the history', refresh: false },
+  );
+  if (r.ok) ctx.find({ mode, query, rows });
+  return r;
 }
 
 function needHost(ctx) {

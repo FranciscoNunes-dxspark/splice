@@ -72,6 +72,52 @@ export function cleanup(gitDir) {
   return rm(join(gitDir, 'tiller-rebase'), { recursive: true, force: true });
 }
 
+// Fixups: `git commit --fixup=<hash>`, then an autosquash rebase folds the fixup! commit into its target.
+
+export const COMMIT_LIST_FORMAT = '%H%x1f%P%x1f%at%x1f%s';
+
+/** Parses `git log --format=COMMIT_LIST_FORMAT`. */
+export function parseCommitList(raw) {
+  return raw
+    .split('\n')
+    .filter((l) => l.includes('\x1f'))
+    .map((l) => {
+      const [hash, parents, time, subject] = l.split('\x1f');
+      return { hash, parents: parents ? parents.split(' ') : [], time: Number(time), subject: subject ?? '' };
+    });
+}
+
+/**
+ * The refs whose commits a fixup shouldn't offer as targets: the branch's upstream and the default
+ * branch (local and on the remote), unless that is the branch itself. `remoteHead` is what
+ * refs/remotes/<remote>/HEAD points at ("origin/main"), when known; otherwise main or master.
+ */
+export function fixupExclusions({ head, upstream, local = [], remote = [], remoteHead = null }) {
+  const out = [];
+  const add = (r) => r && !out.includes(r) && out.push(r);
+  add(upstream);
+  let remoteName = remote.some((r) => r.startsWith('origin/')) ? 'origin' : remote[0]?.split('/')[0];
+  let name = ['main', 'master'].find((n) => local.includes(n) || remote.includes(`${remoteName}/${n}`));
+  if (remoteHead?.includes('/')) {
+    remoteName = remoteHead.slice(0, remoteHead.indexOf('/'));
+    name = remoteHead.slice(remoteName.length + 1);
+  }
+  if (!name || name === head) return out;
+  if (local.includes(name)) add(name);
+  if (remote.includes(`${remoteName}/${name}`)) add(`${remoteName}/${name}`);
+  return out;
+}
+
+/** Log arguments for the commits a fixup can target: the branch's own commits, or (`exclude` empty) the latest ones. */
+export function fixupLogArgs(exclude, n = exclude.length ? 200 : 30) {
+  return ['log', `-n${n}`, '--no-merges', `--format=${COMMIT_LIST_FORMAT}`, 'HEAD', ...(exclude.length ? ['--not', ...exclude] : []), '--'];
+}
+
+/** The rebase that folds fixup! commits into `target` ({ parents }): from its parent, or from the root. */
+export function foldArgs(target, { autostash = false } = {}) {
+  return ['rebase', '-i', '--autosquash', ...(autostash ? ['--autostash'] : []), target.parents[0] ?? '--root'];
+}
+
 /** "2 squashed, 1 dropped, 1 reworded" */
 export function planSummary(rows) {
   const counts = {};

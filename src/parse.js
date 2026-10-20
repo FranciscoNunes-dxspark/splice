@@ -231,6 +231,25 @@ export function splitArgs(s) {
   return out;
 }
 
+/**
+ * Reads "/find" arguments: `-S <text>` (commits that add or remove the text), `-G <regex>` (commits
+ * whose changed lines match), or plain text (filters the loaded commits). The text is kept as typed,
+ * spaces included; quotes around all of it are dropped.
+ */
+export function findArgs(text) {
+  const s = (text ?? '').trim();
+  const m = s.match(/^-([SG])(?:\s+|(?=\S)|$)([\s\S]*)$/);
+  if (!m) return { mode: 'text', query: s };
+  let query = m[2].trim();
+  if (/^(["']).*\1$/.test(query) && query.length > 1) query = query.slice(1, -1);
+  return { mode: m[1], query };
+}
+
+/** `git log` over the whole history (every branch and tag) for a -S or -G search, in LOG_FORMAT. */
+export function searchArgs(mode, query) {
+  return ['log', '--date-order', '--decorate=full', `-${mode}${query}`, `--format=${LOG_FORMAT}`, '--exclude=refs/stash', '--all'];
+}
+
 /** Short relative age: "now", "5m", "3h", "2d", "4mo", "1y". */
 export function relTime(sec, now = Date.now() / 1000) {
   const d = Math.max(0, now - sec);

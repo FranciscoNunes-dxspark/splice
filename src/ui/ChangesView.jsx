@@ -96,6 +96,7 @@ export function ChangesView({ data, ctx, width, height, active }) {
     if (nav.handle(input, key)) return;
     if (input === 'J') return dnav.handle('', { pageDown: true });
     if (input === 'K') return dnav.handle('', { pageUp: true });
+    if (input === 'F') return a.fixup(ctx);
     if (!f) return;
     if (input === ' ') return f.area === 'staged' ? a.unstage(ctx, f) : a.stage(ctx, f);
     if ((key.return || key.rightArrow || input === 'l') && canPick) return setPane('diff');

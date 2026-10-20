@@ -40,7 +40,7 @@ const VIEWS = [
 
 const HINTS = {
   graph: '↵ diff · c checkout · b branch · m merge · i rebase from here · C cherry-pick · v revert · X reset · e/R Claude explains/reviews',
-  changes: 'space stage · ↵ hunks/lines · a all · u unstage all · d discard · c commit · A amend · W Claude writes it · R review',
+  changes: 'space stage · ↵ hunks/lines · a all · u unstage all · d discard · c commit · A amend · F fix up · W Claude writes it · R review',
   branches: '↵ checkout · n new · m merge · e rebase · d delete',
   stash: '↵ diff · s stash · a apply · o pop · x drop',
   prs: '↵ diff · c checkout · a approve · C comment · o open in browser · n new PR · W Claude drafts one · e/R explain/review',
@@ -120,7 +120,7 @@ export function App({ initialPath, config: initialConfig, checkUpdate, askClaude
   const [entries, setEntries] = useState([]);
   const [busy, setBusy] = useState(null);
   const [repos, setRepos] = useState([]);
-  const [filter, setFilter] = useState('');
+  const [filter, setFilter] = useState(null);
   const [welcome, setWelcome] = useState(true);
   const [update, setUpdate] = useState(null);
   // Knot looks happy (or worried) for a few seconds after a result; re-render when that wears off.
@@ -294,7 +294,7 @@ export function App({ initialPath, config: initialConfig, checkUpdate, askClaude
     repoRef.current = repo;
     dataRef.current = null;
     setData(null);
-    setFilter('');
+    setFilter(null);
     setOverlay(null);
     setLoading(true);
     await reload();
@@ -319,8 +319,8 @@ export function App({ initialPath, config: initialConfig, checkUpdate, askClaude
   Object.assign(ctx, {
     exec,
     task,
-    // A read that doesn't show in the activity lines or block other commands.
-    git: (args) => git(repoRef.current.root, args),
+    // A read that doesn't show in the activity lines or block other commands. `opts.signal` cancels it.
+    git: (args, opts) => git(repoRef.current.root, args, opts),
     // The PR host (GitHub or Azure DevOps) of the open repository, kept while the remotes don't change.
     host: () => {
       const d = dataRef.current;
@@ -352,8 +352,9 @@ export function App({ initialPath, config: initialConfig, checkUpdate, askClaude
       loadingMore.current = true;
       reload({ graphLimit: d.graphLimit + 400 }).finally(() => (loadingMore.current = false));
     },
-    find: (text) => {
-      setFilter(text.trim());
+    // The graph's filter: text matches the loaded commits; { mode: 'S' | 'G', query, rows } holds a history search's results.
+    find: (f) => {
+      setFilter(typeof f === 'string' ? (f.trim() ? { mode: 'text', query: f.trim() } : null) : f);
       setView('graph');
     },
     addRoot: (dir) => {

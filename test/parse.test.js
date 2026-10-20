@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  findArgs,
   groupChanges,
   parseDecorations,
   parseGraph,
@@ -10,6 +11,7 @@ import {
   parseTrack,
   parseWorktrees,
   relTime,
+  searchArgs,
   splitArgs,
 } from '../src/parse.js';
 import { suggestionsFor, findCommand } from '../src/commands.js';
@@ -162,6 +164,27 @@ test('slash suggestions: command names, then ref completion', () => {
   assert.equal(suggestionsFor('/commit ', { data }).length, 0);
   assert.equal(findCommand('co'), null, 'ambiguous: commit, continue, checkout');
   assert.equal(findCommand('chec').name, 'checkout');
+});
+
+test('/find: plain text, -S and -G, with their flags offered while typing', () => {
+  assert.deepEqual(findArgs('Fix login'), { mode: 'text', query: 'Fix login' });
+  assert.deepEqual(findArgs(''), { mode: 'text', query: '' });
+  assert.deepEqual(findArgs('-S needle'), { mode: 'S', query: 'needle' });
+  assert.deepEqual(findArgs('-S two words '), { mode: 'S', query: 'two words' });
+  assert.deepEqual(findArgs('-S"quoted text"'), { mode: 'S', query: 'quoted text' });
+  assert.deepEqual(findArgs("-G 'fo+\\(bar'"), { mode: 'G', query: 'fo+\\(bar' });
+  assert.deepEqual(findArgs('-S'), { mode: 'S', query: '' });
+  assert.deepEqual(findArgs('-s lower'), { mode: 'text', query: '-s lower' });
+  const args = searchArgs('S', '-x y');
+  assert.ok(args.includes('-S-x y'), 'the text is one argument, glued to its flag');
+  assert.ok(args.indexOf('--exclude=refs/stash') < args.indexOf('--all'), '--exclude only applies to a later --all');
+  assert.equal(searchArgs('G', 'a.c')[3], '-Ga.c');
+
+  const flags = suggestionsFor('/find ', { data: null });
+  assert.deepEqual(flags.map((s) => s.label), ['-S', '-G']);
+  assert.equal(flags[0].insert, '/find -S ');
+  assert.deepEqual(suggestionsFor('/find -G', { data: null }), []);
+  assert.deepEqual(suggestionsFor('/find login', { data: null }), []);
 });
 
 test('worktrees: main, branch, detached, locked and missing ones, paths with spaces', () => {

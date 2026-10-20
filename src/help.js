@@ -33,7 +33,8 @@ Changes
   a  u             Stage all · Unstage all
   d                Discard the file's changes
   c  A             Commit · Amend the last commit
-  W                Claude writes the commit message for the staged changes, into the prompt to edit
+  F                Fix up an earlier commit with the staged changes (pick it; then fold it in, or keep it for later)
+  W             Claude writes the commit message for the staged changes, into the prompt to edit
   R                Claude reviews the staged changes (or the unstaged ones, if nothing is staged)
   O  T             On a conflict: take ours · take theirs
   ↵  →  l          Step into the diff to stage hunks or single lines
@@ -86,8 +87,10 @@ Slash commands
   /delete <ref>   /merge <ref>   /rebase <ref>     /reset <ref>   /tag <name> [ref]
   /fetch   /pull [--rebase]   /push [--force]   /stash [msg]   /pop   /discard
   /continue   /abort   /find <text>   /open <path>   /scan <folder>   /last   /quit
+  /find -S <text>   /find -G <regex>   Search all history for commits adding or removing the text,
+                                     or changing lines that match the regex
   /pr <title> [--into <branch>] [--draft]   /comment <text>   /approve
-  /rebase -i <ref>   /reword <message>   /worktree <path> [ref]
+  /rebase -i <ref>   /reword <message>   /fixup [ref]   /worktree <path> [ref]
 
 Viewer (diffs, output, this help)
   j k  space  g G  Scroll         n N         Next, previous hunk
