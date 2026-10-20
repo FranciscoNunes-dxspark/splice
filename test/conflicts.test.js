@@ -98,7 +98,7 @@ before(() => {
 
 after(() => {
   try {
-    rmSync(base, { recursive: true, force: true, maxRetries: 5 });
+    rmSync(base, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
   } catch {
     // Windows may still hold the folder of a git that just exited; it's only a temp folder.
   }

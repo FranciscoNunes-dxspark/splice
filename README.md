@@ -166,9 +166,18 @@ Knot keeps an eye on the repository. They're asleep `(–ω–)` when everything
 
 ### Updates
 
-Once a day at most, after it opens, the downloaded Tiller asks GitHub for the latest release, and if it's newer than yours, says so in the activity lines and the welcome box. It asks GitHub's public API first, then through [gh](https://cli.github.com) with your existing sign-in (needed while the repository is private). If neither works (offline, no gh), it says nothing and tries again next time. Running from a checkout skips the check; `git pull` updates that. The answer is kept in the config as `lastUpdateCheck`. To turn the check off:
+The downloaded Tiller keeps itself up to date. Once a day at most, after it opens, it asks GitHub for the latest release, and if it's newer than yours, downloads it in the background and puts it in place of the executable you ran; the new version starts the next time you open Tiller. The activity lines and the welcome box say how far it got.
+
+- It asks GitHub's public API first, then through [gh](https://cli.github.com) with your existing sign-in (needed while the repository is private), and downloads the same way.
+- The download must match the checksum published with the release (`SHA256SUMS.txt`), or nothing is replaced.
+- On Windows a running program can't be overwritten, only renamed, so the old executable is moved aside (`tiller.exe.old.<time>`) and deleted on a later start.
+- If Tiller can't write to the folder it's in (installed under Program Files, say), or anything else goes wrong, nothing changes: it says a new version is out, and why it couldn't install it, with the download link.
+- Offline or without gh, it says nothing and tries again next time. Running from a checkout skips all of this; `git pull` updates that.
+
+The last answer is kept in the config as `lastUpdateCheck`. To only be told about new versions, or not to check at all:
 
 ```json
+{ "autoUpdate": false }
 { "checkForUpdates": false }
 ```
 
