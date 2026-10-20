@@ -35,8 +35,9 @@ Changes
   c  A             Commit · Amend the last commit
   W                Claude writes the commit message for the staged changes, into the prompt to edit
   R                Claude reviews the staged changes (or the unstaged ones, if nothing is staged)
-  O  T             On a conflict: take ours · take theirs
-  ↵  →  l          Step into the diff to stage hunks or single lines
+  O  T             On a conflict: take ours · take theirs, for the whole file
+  C                On a conflict: Claude proposes the resolved file, shown as a diff; asks before writing it
+  ↵  →  l          Step into the diff to stage hunks or single lines (on a conflict: into its conflict blocks)
 
 Changes, in the diff
   j k              Move between changed lines      n N  ] [    Next, previous hunk
@@ -44,6 +45,11 @@ Changes, in the diff
   v                Start or end a line selection; space then stages just those lines
   d                Discard the hunk or the selected lines (asks first)
   ↵                Full-screen diff        esc  ←  h    Back to the file list
+
+Changes, in a conflict (ours, the base in diff3 style, theirs)
+  j k  n N         Next, previous conflict block   J K         Scroll
+  o  t  b          Take ours · Take theirs · Keep both (ours, then theirs) for the block; nothing is staged
+  esc  ←  h        Back to the file list, where space marks the file resolved
 
 Branches
   ↵                Check out (a remote branch gets a local tracking branch)
