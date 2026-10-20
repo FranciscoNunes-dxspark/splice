@@ -102,6 +102,9 @@ export function ChangesView({ data, ctx, width, height, active }) {
     if ((key.return || key.rightArrow || input === 'l') && canPick) return setPane('diff');
     if (key.return) return ctx.showChange(f);
     if (input === 'd' && f.area !== 'conflict') return a.discard(ctx, f);
+    // A rename not committed yet has its history under the old name.
+    if (input === 'H') return a.fileHistory(ctx, f.orig ?? f.path);
+    if (input === 'B') return a.blame(ctx, f.path);
     if (input === 'O' && f.area === 'conflict') return a.resolveWith(ctx, f, 'ours');
     if (input === 'T' && f.area === 'conflict') return a.resolveWith(ctx, f, 'theirs');
   };

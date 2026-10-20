@@ -37,6 +37,7 @@ Changes
   W             Claude writes the commit message for the staged changes, into the prompt to edit
   R                Claude reviews the staged changes (or the unstaged ones, if nothing is staged)
   O  T             On a conflict: take ours · take theirs
+  H  B             The file's history · Blame it (who last changed each line)
   ↵  →  l          Step into the diff to stage hunks or single lines
 
 Changes, in the diff
@@ -45,6 +46,14 @@ Changes, in the diff
   v                Start or end a line selection; space then stages just those lines
   d                Discard the hunk or the selected lines (asks first)
   ↵                Full-screen diff        esc  ←  h    Back to the file list
+
+File history (H, /history <path>: the commits that touched it, following renames)
+  ↵                The commit's diff of the file (esc comes back here)
+  B                Blame the file as it was in that commit
+
+Blame (B, /blame <path>: the working-tree file, so new lines show as not committed yet)
+  ↵                Diff of the commit that last changed the line (esc comes back here)
+  H                The file's history
 
 Branches
   ↵                Check out (a remote branch gets a local tracking branch)
@@ -95,6 +104,7 @@ Slash commands
                                      or changing lines that match the regex
   /pr <title> [--into <branch>] [--draft]   /comment <text>   /approve
   /rebase -i <ref>   /reword <message>   /fixup [ref]   /worktree <path> [ref]   /compare <ref> [base]
+  /history <path>   /blame <path>
 
 Viewer (diffs, output, this help)
   j k  space  g G  Scroll         n N         Next, previous hunk
