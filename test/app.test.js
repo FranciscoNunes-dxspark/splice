@@ -179,6 +179,7 @@ test('interactive rebase from the graph: fix up the last commit into the one bef
     };
     await until(folded, 'the rebase to finish');
     assert.equal(g('log', '--format=%s'), 'Beta\nAlpha');
+    await until(() => frame().includes('/range-diff shows what changed in each commit'), 'the hint about /range-diff');
   } finally {
     app.unmount();
   }
