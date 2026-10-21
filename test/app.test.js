@@ -100,7 +100,8 @@ test('graph, staging, committing and switching branches through the UI', async (
     await until(() => frame().includes('Local (2)'), 'the Branches view');
 
     app.stdin.write('?');
-    await until(() => frame().includes('Keyboard shortcuts'), 'help');
+    // It opens on the section for the view on screen.
+    await until(() => frame().includes('Keyboard shortcuts') && frame().includes('❯ Branches') && frame().includes('Rebase onto it'), 'help, on Branches');
     app.stdin.write(KEYS.esc);
     await until(() => !frame().includes('Keyboard shortcuts'), 'help to close');
   } finally {

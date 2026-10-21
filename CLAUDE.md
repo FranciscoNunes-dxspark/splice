@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-Splice is a keyboard-driven git client for the terminal, built with Ink (React for the terminal) on Node 22+. Plain JavaScript ES modules with `.jsx` for components; no TypeScript, no linter config. It shares some files with its sibling Trawl (a SQL Server client): `scripts/shared-check.js <sibling checkout>` reports how the shared files (its `SHARED` list: `text.js`, `ui/parts.jsx`, `ui/hooks.js`, `mouse.js`, `selection.js`, `clipboard.js`, `jsx-hooks.js`, `register.js`, `version.js`, `scripts/build.js` and itself) differ from Trawl's, ignoring the apps' names, and exits with 1 on drift; `--diff` shows the lines. Keep them the same: a change to one goes into the other app too, and anything only one app needs lives in its own file (Splice's `ui/diffstyle.js` and `ui/prList.js`).
+Splice is a keyboard-driven git client for the terminal, built with Ink (React for the terminal) on Node 22+. Plain JavaScript ES modules with `.jsx` for components; no TypeScript, no linter config. It shares some files with its sibling Trawl (a SQL Server client): `scripts/shared-check.js <sibling checkout>` reports how the shared files (its `SHARED` list: `text.js`, `ui/parts.jsx`, `ui/hooks.js`, `mouse.js`, `selection.js`, `clipboard.js`, `jsx-hooks.js`, `register.js`, `version.js`, `help-layout.js`, `ui/HelpView.jsx`, `scripts/build.js` and itself) differ from Trawl's, ignoring the apps' names, and exits with 1 on drift; `--diff` shows the lines. Keep them the same: a change to one goes into the other app too, and anything only one app needs lives in its own file (Splice's `ui/diffstyle.js` and `ui/prList.js`).
 
 ## Commands
 
@@ -55,4 +55,4 @@ Cross-cutting pieces:
 
 ## Keeping things in sync
 
-Adding or changing a key or command touches several places: the handler (view or `App.jsx`), `src/commands.js` for slash commands, the `?` overlay text in `src/help.js`, and the tables in `README.md`. README prose describes behaviour in plain, user-facing language. Commit messages are short sentences describing the change, without type prefixes.
+Adding or changing a key or command touches several places: the handler (view or `App.jsx`), `src/commands.js` for slash commands, the `?` window's sections in `src/help.js` (data: `[keys, what they do]` rows, drawn by the shared `src/help-layout.js` and `src/ui/HelpView.jsx`; the slash commands section comes from `commands.js` by itself), and the tables in `README.md`. README prose describes behaviour in plain, user-facing language. Commit messages are short sentences describing the change, without type prefixes.
