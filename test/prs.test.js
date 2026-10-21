@@ -190,3 +190,55 @@ test('A asks for reviewers, D makes it a draft, E retitles it and B edits its de
     app.unmount();
   }
 });
+
+test('X asks for changes: GitHub wants the text, then Splice asks before sending it', async () => {
+  const calls = [];
+  const app = start(
+    // A remote name of its own, so the PR list isn't the one the tests above left cached.
+    stubHost(calls, {
+      remoteName: 'review-gh',
+      list: async () => [{ ...PR, mine: false }],
+      requestChangesNeedsText: true,
+      requestChanges: async (pr, text) => calls.push(['requestChanges', pr.id, text]),
+    }),
+  );
+  const frame = () => app.lastFrame() ?? '';
+  try {
+    await until(() => frame().includes('First commit'), 'the graph');
+    app.stdin.write('6');
+    await until(() => /❯.*Bump b/.test(frame()), 'the PR');
+    app.stdin.write('X');
+    await until(() => frame().includes('> /request-changes'), 'the prompt');
+    app.stdin.write('\r');
+    await until(() => frame().includes('GitHub needs to be told what to change') && frame().includes('> /request-changes'), 'the text asked for');
+    await type(app.stdin, 'Tests, please');
+    app.stdin.write('\r');
+    await until(() => frame().includes('Request changes to #7 "Bump b"?') && frame().includes('saying "Tests, please"'), 'the confirmation');
+    assert.equal(calls.length, 0, 'nothing sent before the answer');
+    app.stdin.write('1');
+    await until(() => calls.length === 1, 'the review');
+    assert.deepEqual(calls[0], ['requestChanges', 7, 'Tests, please']);
+  } finally {
+    app.unmount();
+  }
+});
+
+test('/request-changes on Azure DevOps votes, with no text needed', async () => {
+  const calls = [];
+  const app = start(stubHost(calls, { kind: 'azure', name: 'Azure DevOps', remoteName: 'review-az', list: async () => [{ ...PR, mine: false, label: '!7' }], requestChanges: async (pr, text) => calls.push(['requestChanges', pr.id, text]) }));
+  const frame = () => app.lastFrame() ?? '';
+  try {
+    await until(() => frame().includes('First commit'), 'the graph');
+    app.stdin.write('6');
+    await until(() => /❯.*Bump b/.test(frame()), 'the PR');
+    app.stdin.write('/');
+    await type(app.stdin, 'request-changes');
+    app.stdin.write('\r');
+    await until(() => frame().includes('Request changes to !7 "Bump b"?') && frame().includes('On Azure DevOps, as you.'), 'the confirmation');
+    app.stdin.write('1');
+    await until(() => calls.length === 1, 'the vote');
+    assert.deepEqual(calls[0], ['requestChanges', 7, '']);
+  } finally {
+    app.unmount();
+  }
+});

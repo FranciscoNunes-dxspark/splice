@@ -1540,7 +1540,6 @@ export async function prBody(ctx, text) {
   return r;
 }
 
-/** `/pr <title> [--into <branch>] [--draft]`: opens a PR from the current branch, pushing it first if needed. */
 /** /reply <text> (r on a review comment in a pull request's diff): posts a reply to that thread, then shows it. */
 export async function replyToThread(ctx, text) {
   const target = ctx.reviewThread;
@@ -1556,6 +1555,78 @@ export async function replyToThread(ctx, text) {
   if (r.ok) await ctx.refreshThreads(pr);
 }
 
+const lineLabel = (at) => `${at.path}:${at.line}${at.side === 'old' ? ' (a removed line)' : ''}`;
+
+/**
+ * /review-comment <text> (c on a line of a pull request's diff): a new review thread on that line,
+ * shown in the diff once it's posted.
+ */
+export async function commentOnLine(ctx, text) {
+  const target = ctx.reviewLine;
+  if (!target) return ctx.note("Open a pull request's diff (↵ in PRs), then c on the line to comment on.", 'error');
+  if (!text.trim()) return ctx.prefill('/review-comment ');
+  const host = needHost(ctx);
+  if (!host) return;
+  if (!host.addThread) return ctx.note(`Splice can't comment on lines of a pull request on ${host.name}.`, 'error');
+  const { pr, at } = target;
+  const r = await hostTask(ctx, `Comment on ${lineLabel(at)}`, (signal) => host.addThread(pr, at, text.trim(), signal).then(() => 'Commented'), {
+    label: 'Commenting',
+    refresh: false,
+  });
+  if (r.ok) await ctx.refreshThreads(pr);
+  return r;
+}
+
+/**
+ * x on a review comment in a pull request's diff, /resolve and /unresolve: marks its thread resolved, or
+ * opens it again. `target` is { pr, thread }, the thread picked in the diff unless given.
+ */
+export async function resolveThread(ctx, resolved, target = ctx.reviewThread) {
+  if (!target) return ctx.note("Open a pull request's diff (↵ in PRs), then pick a review comment with t.", 'error');
+  const host = needHost(ctx);
+  if (!host) return;
+  if (!host.resolveThread) return ctx.note(`Splice can't resolve review comments on ${host.name}.`, 'error');
+  const { pr, thread } = target;
+  if (thread.resolved === resolved) return ctx.note(`That thread is ${resolved ? 'already resolved' : "open, not resolved"}.`);
+  const where = `${thread.path}${thread.line ? `:${thread.line}` : ''}`;
+  const r = await hostTask(
+    ctx,
+    `${resolved ? 'Resolve' : 'Reopen'} the comments on ${where}`,
+    (signal) => host.resolveThread(pr, thread, resolved, signal).then(() => (resolved ? 'Resolved' : 'Reopened')),
+    { label: resolved ? 'Resolving' : 'Reopening', refresh: false },
+  );
+  if (r.ok) await ctx.refreshThreads(pr);
+  return r;
+}
+
+/**
+ * X in PRs, /request-changes [text]: a review asking for changes, after asking. GitHub needs the text (the
+ * review's body); Azure DevOps votes "waiting for the author" and posts the text, if any, as a comment.
+ */
+export async function prRequestChanges(ctx, pr, text = '') {
+  const host = needHost(ctx);
+  if (!host) return;
+  if (!pr) return ctx.note('Pick a pull request in PRs (6) first.', 'error');
+  if (pr.mine) return ctx.note("That's your own pull request.", 'error');
+  if (!host.requestChanges) return ctx.note(`Splice can't request changes on ${host.name}.`, 'error');
+  const body = (text ?? '').trim();
+  if (!body && host.requestChangesNeedsText) {
+    ctx.note(`${host.name} needs to be told what to change: type it after /request-changes.`);
+    return ctx.prefill('/request-changes ');
+  }
+  const quoted = body ? `"${body.length > 60 ? `${body.slice(0, 59)}…` : body}"` : '';
+  const ok = await ctx.confirm({
+    title: `Request changes to ${pr.label} "${pr.title}"?`,
+    detail: `On ${host.name}, as you${body ? `, saying ${quoted}` : ''}.`,
+    options: YES_NO('Yes, request changes'),
+  });
+  if (!ok) return;
+  const r = await hostTask(ctx, `${cliName(host)} request changes ${pr.label}`, (signal) => host.requestChanges(pr, body, signal), { label: 'Requesting changes', refresh: false });
+  if (r.ok) ctx.prsChanged();
+  return r;
+}
+
+/** `/pr <title> [--into <branch>] [--draft]`: opens a PR from the current branch, pushing it first if needed. */
 export async function createPr(ctx, text) {
   const host = needHost(ctx);
   if (!host) return;

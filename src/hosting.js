@@ -118,10 +118,12 @@ export function azurePr(p, me, remote) {
 }
 
 /**
- * GitHub review comments (the pulls/<n>/comments API) as threads, in Splice's shape:
- * { id, path, line, side: 'new' | 'old', outdated, resolved, comments: [{ id, author, body, time }] }.
+ * GitHub review comments (the pulls/<n>/comments REST API) as threads, in Splice's shape:
+ * { id, nodeId, path, line, side: 'new' | 'old', outdated, resolved, comments: [{ id, author, body, time }] }.
  * A thread is a comment and its replies; `id` is the first comment's, which replies are posted to.
- * GitHub's API doesn't say which threads are resolved, so `resolved` is null.
+ * `nodeId` is the host's own id for the thread where it isn't `id` (resolving one goes by it), else null.
+ * The REST API doesn't say which threads are resolved, so `resolved` is null: this is the fallback for
+ * when GraphQL (githubReviewThreads) fails.
  */
 export function githubThreads(comments) {
   const threadOf = new Map();
@@ -135,12 +137,100 @@ export function githubThreads(comments) {
       continue;
     }
     // A comment on code that has since changed has no line any more, only the one it was written on.
-    const t = { id: c.id, path: c.path, line: c.line ?? null, side: c.side === 'LEFT' ? 'old' : 'new', outdated: c.line == null, resolved: null, comments: [comment] };
+    const t = { id: c.id, nodeId: null, path: c.path, line: c.line ?? null, side: c.side === 'LEFT' ? 'old' : 'new', outdated: c.line == null, resolved: null, comments: [comment] };
     threads.push(t);
     threadOf.set(c.id, t);
   }
   return threads;
 }
+
+// A pull request's review threads through GitHub's GraphQL API, which (unlike REST) says which are
+// resolved. A page at a time: `gh api graphql --paginate` fills $endCursor from pageInfo.
+export const GITHUB_THREADS_QUERY = `query($owner: String!, $repo: String!, $number: Int!, $endCursor: String) {
+  repository(owner: $owner, name: $repo) {
+    pullRequest(number: $number) {
+      reviewThreads(first: 100, after: $endCursor) {
+        pageInfo { hasNextPage endCursor }
+        nodes {
+          id isResolved isOutdated path line diffSide
+          comments(first: 100) { nodes { databaseId body createdAt author { login } } }
+        }
+      }
+    }
+  }
+}`;
+
+/** `gh api graphql` arguments for a PR's review threads, one thread per line of output. */
+export function githubThreadsArgs(remote, pr) {
+  return ['api', 'graphql', '--paginate', '-f', `query=${GITHUB_THREADS_QUERY}`, '-f', `owner=${remote.owner}`, '-f', `repo=${remote.repo}`,
+    '-F', `number=${pr.id}`, '--jq', '.data.repository.pullRequest.reviewThreads.nodes[]'];
+}
+
+/**
+ * GitHub's GraphQL reviewThreads nodes as threads, in githubThreads' shape, with `resolved` known and
+ * `nodeId` the thread's node id (which resolveReviewThread takes). Replies still go to the first comment.
+ */
+export function githubReviewThreads(nodes) {
+  const out = [];
+  for (const t of nodes ?? []) {
+    const comments = (t.comments?.nodes ?? []).map((c) => ({ id: c.databaseId, author: c.author?.login ?? '', body: c.body ?? '', time: Date.parse(c.createdAt) / 1000 }));
+    if (!comments.length) continue;
+    out.push({
+      id: comments[0].id,
+      nodeId: t.id,
+      path: t.path,
+      line: t.line ?? null,
+      side: t.diffSide === 'LEFT' ? 'old' : 'new',
+      outdated: Boolean(t.isOutdated) || t.line == null,
+      resolved: Boolean(t.isResolved),
+      comments,
+    });
+  }
+  return out;
+}
+
+/** `gh api graphql` arguments that resolve a review thread (by its node id), or reopen it. */
+export function githubResolveArgs(nodeId, resolved) {
+  const name = resolved ? 'resolveReviewThread' : 'unresolveReviewThread';
+  return ['api', 'graphql', '-f', `query=mutation($id: ID!) { ${name}(input: { threadId: $id }) { thread { id isResolved } } }`, '-f', `id=${nodeId}`];
+}
+
+/**
+ * `gh api` arguments for a new review comment on one line of a PR's diff: `at` is { path, line, side }
+ * ('new' is GitHub's RIGHT, 'old' its LEFT), `head` the commit the diff was made at. -F sends the line as a number.
+ */
+export function githubNewThreadArgs(repo, pr, head, at, text) {
+  return ['api', '-X', 'POST', `repos/${repo}/pulls/${pr.id}/comments`, '-f', `body=${text}`, '-f', `commit_id=${head}`, '-f', `path=${at.path}`,
+    '-F', `line=${at.line}`, '-f', `side=${at.side === 'old' ? 'LEFT' : 'RIGHT'}`];
+}
+
+/** `gh pr review` arguments asking for changes; GitHub won't take the review without its text. */
+export function githubRequestChangesArgs(pr, repo, text) {
+  return ['pr', 'review', String(pr.id), '-R', repo, '--request-changes', '--body', text];
+}
+
+// Azure DevOps thread statuses, as its API numbers them.
+const AZURE_STATUS = { active: 1, fixed: 2 };
+
+/**
+ * The pullRequestThreads body for a new thread on one line of a PR's diff: `at` is { path, line, side, text },
+ * the range the whole line (the right side is the source branch's file, the left the target's).
+ */
+export function azureNewThreadBody(at, text) {
+  const side = at.side === 'old' ? 'left' : 'right';
+  return {
+    comments: [{ parentCommentId: 0, content: text, commentType: 1 }],
+    status: AZURE_STATUS.active,
+    threadContext: {
+      filePath: `/${at.path.replace(/^\//, '')}`,
+      [`${side}FileStart`]: { line: at.line, offset: 1 },
+      [`${side}FileEnd`]: { line: at.line, offset: (at.text ?? '').length + 1 },
+    },
+  };
+}
+
+/** The body that marks an Azure DevOps thread fixed (resolved), or active again. */
+export const azureResolveBody = (resolved) => ({ status: resolved ? AZURE_STATUS.fixed : AZURE_STATUS.active });
 
 const DONE = new Set(['fixed', 'closed', 'byDesign', 'wontFix']);
 
@@ -159,7 +249,7 @@ export function azureThreads(value) {
     if (!comments.length) continue;
     const side = at.rightFileStart ? 'new' : 'old';
     const line = (side === 'new' ? at.rightFileStart : at.leftFileStart)?.line ?? null;
-    out.push({ id: t.id, path: at.filePath.replace(/^\//, ''), line, side, outdated: false, resolved: DONE.has(t.status), comments });
+    out.push({ id: t.id, nodeId: null, path: at.filePath.replace(/^\//, ''), line, side, outdated: false, resolved: DONE.has(t.status), comments });
   }
   return out;
 }
@@ -388,16 +478,32 @@ function github(root, remote) {
       };
     },
     diff: (pr) => gh(['pr', 'diff', String(pr.id), ...repoArg]),
-    // --jq '.[]': one comment per line, which reads the same whatever page it came on.
+    // GraphQL says which threads are resolved; the REST comments are the fallback, without that.
+    // --jq: one thread (or comment) per line, which reads the same whatever page it came on.
     async threads(pr) {
-      const out = await gh(['api', '--paginate', `repos/${remote.owner}/${remote.repo}/pulls/${pr.id}/comments`, '--jq', '.[]']);
-      return githubThreads(out.split('\n').filter(Boolean).map((l) => JSON.parse(l)));
+      const lines = (out) => out.split('\n').filter(Boolean).map((l) => JSON.parse(l));
+      try {
+        return githubReviewThreads(lines(await gh(githubThreadsArgs(remote, pr))));
+      } catch {
+        return githubThreads(lines(await gh(['api', '--paginate', `repos/${remote.owner}/${remote.repo}/pulls/${pr.id}/comments`, '--jq', '.[]'])));
+      }
     },
     // -f sends the text as it is (-F would read a file for text starting with @).
     reply: (pr, thread, text, signal) =>
       gh(['api', '-X', 'POST', `repos/${remote.owner}/${remote.repo}/pulls/${pr.id}/comments/${thread.id}/replies`, '-f', `body=${text}`], { signal }),
+    // On the PR's head as it is now, which the diff on screen was made from.
+    async addThread(pr, at, text, signal) {
+      const head = (await gh(['pr', 'view', String(pr.id), ...repoArg, '--json', 'headRefOid', '--jq', '.headRefOid'], { signal })).trim();
+      return gh(githubNewThreadArgs(`${remote.owner}/${remote.repo}`, pr, head, at, text), { signal });
+    },
+    async resolveThread(pr, thread, resolved, signal) {
+      if (!thread.nodeId) throw new Error("GitHub's GraphQL API didn't answer when the comments were loaded, so Splice doesn't know this thread's id there to resolve it.");
+      return gh(githubResolveArgs(thread.nodeId, resolved), { signal });
+    },
     checkout: (pr, signal) => gh(['pr', 'checkout', String(pr.id), ...repoArg], { signal }),
     approve: (pr, signal) => gh(['pr', 'review', String(pr.id), ...repoArg, '--approve'], { signal }),
+    requestChangesNeedsText: true,
+    requestChanges: (pr, text, signal) => gh(githubRequestChangesArgs(pr, `${remote.owner}/${remote.repo}`, text), { signal }),
     mergeMethods: MERGE_METHODS.github,
     async checks(pr) {
       return githubChecks((await json(gh(['pr', 'view', String(pr.id), ...repoArg, '--json', 'statusCheckRollup']))).statusCheckRollup);
@@ -445,16 +551,17 @@ function azure(root, remote, remoteName) {
   const threadsRoute = (pr) => ['devops', 'invoke', '--area', 'git', '--resource', 'pullRequestThreads', '--api-version', '7.0',
     '--route-parameters', `project=${remote.project}`, `repositoryId=${remote.repo}`, `pullRequestId=${pr.id}`];
   // Posting needs a JSON body, which `az devops invoke` only takes from a file.
-  const post = async (route, body, signal) => {
+  const post = async (route, body, signal, method = 'POST') => {
     const dir = await mkdtemp(join(tmpdir(), 'splice-'));
     const file = join(dir, 'body.json');
     try {
       await writeFile(file, JSON.stringify(body));
-      return await az([...route, '--http-method', 'POST', '--in-file', file], { signal });
+      return await az([...route, '--http-method', method, '--in-file', file], { signal });
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
   };
+  const comment = (pr, text, signal) => post(threadsRoute(pr), { comments: [{ parentCommentId: 0, content: text, commentType: 1 }], status: AZURE_STATUS.active }, signal);
   let me;
   const whoami = async () => (me ??= JSON.parse(await cli('az', ['account', 'show', '--query', 'user.name', '-o', 'json'])));
   return {
@@ -527,7 +634,14 @@ function azure(root, remote, remoteName) {
       return `Queued ${evals.length} polic${evals.length === 1 ? 'y' : 'ies'} again`;
     },
     merge: (pr, opts, signal) => az(azureMergeArgs(pr, opts), { signal }).then(() => (opts.auto ? `${pr.label} will complete once its policies pass` : `Completed ${pr.label}`)),
-    comment: (pr, text, signal) => post(threadsRoute(pr), { comments: [{ parentCommentId: 0, content: text, commentType: 1 }], status: 1 }, signal),
+    comment,
+    // Waiting for the author is Azure DevOps' vote for "changes needed"; the text, if any, goes as a comment.
+    async requestChanges(pr, text, signal) {
+      await az(['repos', 'pr', 'set-vote', '--id', String(pr.id), '--vote', 'wait-for-author'], { signal });
+      if (text) await comment(pr, text, signal);
+    },
+    addThread: (pr, at, text, signal) => post(threadsRoute(pr), azureNewThreadBody(at, text), signal),
+    resolveThread: (pr, thread, resolved, signal) => post([...threadsRoute(pr), `threadId=${thread.id}`], azureResolveBody(resolved), signal, 'PATCH'),
     async threads(pr) {
       return azureThreads((await json(az(threadsRoute(pr)))).value);
     },
