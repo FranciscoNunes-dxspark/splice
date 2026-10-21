@@ -85,7 +85,8 @@ Branches
   o                Open its pull request in the browser (#12 GitHub, !12 Azure DevOps; coloured by review)
   The right-hand pane: how far it is ahead of and behind the default branch, its commits the default
   branch doesn't have, then its history
-  C                Clean up: delete branches with nothing unpushed or unmerged, and clean worktrees (/cleanup)
+  C                Clean up: delete branches with nothing unpushed or unmerged, and clean worktrees, and
+                   the branches of merged pull requests on the remote (/cleanup)
   U                On a local branch: set what it tracks (/upstream [branch] <remote/branch>, --unset to stop)
   M                The remotes (/remote): n add · R rename · x remove · u change its URL · f fetch
                    · p push the current branch to it (/push <remote>)
@@ -98,7 +99,8 @@ Worktrees (● the one open here)
   ↵                Open it in Splice
   n                New worktree (/worktree <path> [ref]; the path is relative to the repository)
   x                Remove it (asks first; the branch stays), or prune one whose folder is gone
-  C                Clean up: remove worktrees without changes, and branches with nothing unpushed (/cleanup)
+  C                Clean up: remove worktrees without changes, branches with nothing unpushed, and the
+                   branches of merged pull requests on the remote (/cleanup)
 
 Stash
   ↵                Full diff

@@ -1,8 +1,10 @@
-// /cleanup: local branches and linked worktrees with nothing of yours on them. `readCleanup` asks git
-// for the facts in a handful of processes; `planCleanup` (pure) decides what can go and why.
+// /cleanup: local branches and linked worktrees with nothing of yours on them, and branches on the PR
+// host's remote whose pull request was merged. `readCleanup` asks git for the facts in a handful of
+// processes; `planCleanup` (pure) decides what can go and why.
 import { relative, resolve } from 'node:path';
 import { samePath } from './config.js';
 import { git } from './git.js';
+import { prSource } from './hosting.js';
 import { REF_FORMAT, parseRefs, parseWorktrees } from './parse.js';
 
 const lines = (s) => s.split('\n').filter(Boolean);
@@ -12,10 +14,11 @@ const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
  * Reads what `planCleanup` needs, fresh rather than from the last load, so a branch that just moved
  * isn't judged by its old tip. `mergedRefs` are the default branch's names (local, and on the remote)
  * that exist; `hasRemotes` says whether there is anywhere commits could have been pushed to.
+ * `server`, when the PR host was asked, is { remoteName, merged, open }: its merged and open PRs.
  */
-export async function readCleanup(root, { defaultBranch = null, mergedRefs = [], hasRemotes = true } = {}) {
+export async function readCleanup(root, { defaultBranch = null, mergedRefs = [], hasRemotes = true, server = null } = {}) {
   const [refs, worktreeList, localOnly, merged] = await Promise.all([
-    git(root, ['for-each-ref', `--format=${REF_FORMAT}`, 'refs/heads']),
+    git(root, ['for-each-ref', `--format=${REF_FORMAT}`, 'refs/heads', ...(server ? [`refs/remotes/${server.remoteName}`] : [])]),
     // -z needs git 2.36; before it, the same fields come a line each (paths with newlines aside).
     git(root, ['worktree', 'list', '--porcelain', '-z']).catch(async () => (await git(root, ['worktree', 'list', '--porcelain'])).replace(/\n/g, '\0')),
     // Every commit on a local branch that no remote-tracking branch has. A branch whose tip isn't
@@ -47,17 +50,63 @@ export async function readCleanup(root, { defaultBranch = null, mergedRefs = [],
   const lostHeads = heads.length
     ? new Set(lines(await git(root, ['rev-list', ...heads, '--not', '--branches', '--remotes', '--tags']).catch(() => heads.join('\n'))))
     : new Set();
-  return { branches: parseRefs(refs).local, worktrees, defaultBranch, merged, localOnly, changes, lostHeads };
+  const { local: branches, remote } = parseRefs(refs);
+  // A branch whose pull request was merged (squashed, say) has nothing only here when its tip is the
+  // PR's last commit, or one before it. Only the branches that would stay otherwise need asking.
+  const prMerged = new Map();
+  if (server) {
+    const stays = (b) => !merged.has(b.name) && (!localOnly || localOnly.has(b.oid));
+    await Promise.all(
+      branches.filter(stays).map(async (b) => {
+        const source = prSource(b, server.remoteName);
+        const prs = server.merged.filter((p) => p.source === source && p.head);
+        let pr = prs.find((p) => p.head === b.oid);
+        for (const p of prs) {
+          if (pr) break;
+          // Fails both when it isn't an ancestor and when the PR's commit was never fetched.
+          if (await git(root, ['merge-base', '--is-ancestor', b.oid, p.head]).then(() => true, () => false)) pr = p;
+        }
+        if (pr) prMerged.set(b.name, pr);
+      }),
+    );
+  }
+  return {
+    branches,
+    worktrees,
+    defaultBranch,
+    merged,
+    localOnly,
+    changes,
+    lostHeads,
+    prMerged,
+    ...(server && { remoteName: server.remoteName, remoteBranches: remote.filter((b) => b.remote === server.remoteName), prs: server.merged, openPrs: server.open }),
+  };
 }
 
 /**
  * What can go, and why. Never the main working tree or the open one, never the current or the default
  * branch, and never a branch checked out in a worktree that stays.
- * Returns { worktrees: [{ path, branch, prune, why }], branches: [{ name, why, worktree }], kept: [{ name, why, worktree, at }] }.
+ * Returns { worktrees: [{ path, branch, prune, why }], branches: [{ name, why, worktree }], remote: [{ name, remote, branch, why }],
+ * kept: [{ name, why, worktree, at }] }.
  * A branch's `worktree` is the path of the worktree that has it checked out, which has to go first.
  * In `kept`, `worktree` marks a worktree (its `name` is the path); `at` is where a kept branch is checked out.
+ * `remote` has the branches on `remoteName` whose PR was merged with the commit the branch is still at,
+ * so nothing was pushed since, and that no open PR comes from or goes into.
  */
-export function planCleanup({ branches, worktrees, defaultBranch = null, merged = new Set(), localOnly = null, changes = {}, lostHeads = new Set() }) {
+export function planCleanup({
+  branches,
+  worktrees,
+  defaultBranch = null,
+  merged = new Set(),
+  localOnly = null,
+  changes = {},
+  lostHeads = new Set(),
+  prMerged = new Map(),
+  remoteName = null,
+  remoteBranches = [],
+  prs = [],
+  openPrs = [],
+}) {
   const goWorktrees = [];
   const goBranches = [];
   const kept = [];
@@ -84,6 +133,8 @@ export function planCleanup({ branches, worktrees, defaultBranch = null, merged 
       else if (b.upstream && !b.ahead) why = `everything is on ${b.upstream}`;
       else why = 'all its commits are on a remote';
     }
+    const pr = prMerged.get(b.name);
+    if (!why && pr) why = `${pr.label} was merged into ${pr.target}`;
     const w = checkedOut.get(b.name);
     if (!why) {
       unpushed.add(b.name);
@@ -96,33 +147,51 @@ export function planCleanup({ branches, worktrees, defaultBranch = null, merged 
   for (const w of goWorktrees) {
     if (w.branch && !going.has(w.branch)) w.why += `; its branch ${w.branch} stays${unpushed.has(w.branch) ? ' (unpushed commits)' : ''}`;
   }
-  return { worktrees: goWorktrees, branches: goBranches, kept };
+  const busy = new Set(openPrs.flatMap((p) => [p.source, p.target]));
+  const goRemote = [];
+  for (const b of remoteBranches) {
+    const branch = b.name.slice(remoteName.length + 1);
+    if (branch === defaultBranch || busy.has(branch)) continue;
+    const pr = prs.find((p) => p.source === branch && p.head === b.oid);
+    if (pr) goRemote.push({ name: b.name, remote: remoteName, branch, why: `${pr.label} was merged into ${pr.target}` });
+  }
+  return { worktrees: goWorktrees, branches: goBranches, remote: goRemote, kept };
 }
 
-/** The part of `plan` that `choice` ("all", "branches" or "worktrees") covers. */
+/** The part of `plan` that `choice` ("all", "local", "branches", "worktrees" or "remote") covers. */
 export function cleanupChoice(plan, choice) {
-  if (choice === 'worktrees') return { worktrees: plan.worktrees, branches: [] };
+  const remote = plan.remote ?? [];
+  if (choice === 'remote') return { worktrees: [], branches: [], remote };
+  if (choice === 'local') return { worktrees: plan.worktrees, branches: plan.branches, remote: [] };
+  if (choice === 'worktrees') return { worktrees: plan.worktrees, branches: [], remote: [] };
   // While the worktrees stay, so do the branches they have checked out.
-  if (choice === 'branches') return { worktrees: [], branches: plan.branches.filter((b) => !b.worktree) };
-  return { worktrees: plan.worktrees, branches: plan.branches };
+  if (choice === 'branches') return { worktrees: [], branches: plan.branches.filter((b) => !b.worktree), remote: [] };
+  return { worktrees: plan.worktrees, branches: plan.branches, remote };
 }
 
-/** "3 branches and 2 worktrees" */
-export function cleanupCount({ worktrees, branches }) {
+/** "3 branches, 2 worktrees and 1 branch on origin" */
+export function cleanupCount({ worktrees, branches, remote = [] }) {
   const parts = [];
   if (branches.length) parts.push(plural(branches.length, 'branch', 'branches'));
   if (worktrees.length) parts.push(plural(worktrees.length, 'worktree'));
-  return parts.join(' and ');
+  if (remote.length) parts.push(`${plural(remote.length, 'branch', 'branches')} on ${remote[0].remote}`);
+  return parts.length > 1 ? `${parts.slice(0, -1).join(', ')} and ${parts.at(-1)}` : parts.join('');
 }
 
 /** The confirmation's choices for `plan`. */
 export function cleanupOptions(plan) {
-  if (!plan.worktrees.length || !plan.branches.length) return [{ label: `Yes, ${cleanupCount(plan)}`, value: 'all' }, { label: 'No', value: null }];
-  const branches = cleanupChoice(plan, 'branches');
+  const remote = plan.remote ?? [];
+  if ([plan.worktrees, plan.branches, remote].filter((k) => k.length).length < 2) {
+    return [{ label: `Yes, ${cleanupCount(plan)}`, value: 'all' }, { label: 'No', value: null }];
+  }
+  const only = (choice) => ({ label: `Only the ${cleanupCount(cleanupChoice(plan, choice))}`, value: choice });
+  const both = plan.worktrees.length && plan.branches.length;
   return [
     { label: `Yes, all ${cleanupCount(plan)}`, value: 'all' },
-    ...(branches.branches.length ? [{ label: `Only the ${cleanupCount(branches)}`, value: 'branches' }] : []),
-    { label: `Only the ${cleanupCount(cleanupChoice(plan, 'worktrees'))}`, value: 'worktrees' },
+    ...(remote.length ? [only('local')] : []),
+    ...(both && cleanupChoice(plan, 'branches').branches.length ? [only('branches')] : []),
+    ...(both ? [only('worktrees')] : []),
+    ...(remote.length ? [only('remote')] : []),
     { label: 'No', value: null },
   ];
 }
@@ -142,6 +211,10 @@ export function cleanupText(plan, root) {
   if (plan.branches.length) {
     const items = plan.branches.map((b) => ({ label: b.name, why: b.worktree ? `${b.why}, after its worktree ${show(b.worktree)}` : b.why }));
     out.push(`Branches to delete (${items.length})`, ...rows(items), '');
+  }
+  if (plan.remote?.length) {
+    const items = plan.remote.map((b) => ({ label: b.branch, why: b.why }));
+    out.push(`Branches to delete on ${plan.remote[0].remote} (${items.length})`, ...rows(items), '');
   }
   if (plan.kept.length) {
     const items = plan.kept.map((k) => ({ label: k.worktree ? show(k.name) : k.name, why: k.at ? `${k.why}, but checked out in ${show(k.at)}` : k.why }));

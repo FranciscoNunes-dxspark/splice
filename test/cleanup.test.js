@@ -122,7 +122,7 @@ test('worktrees: clean ones go and missing ones are pruned; changed, locked, mai
   );
 
   // Branches only: the worktrees stay, so their branches do too.
-  assert.deepEqual(cleanupChoice(plan, 'branches'), { worktrees: [], branches: [] });
+  assert.deepEqual(cleanupChoice(plan, 'branches'), { worktrees: [], branches: [], remote: [] });
   assert.deepEqual(cleanupChoice(plan, 'worktrees').branches, []);
   assert.equal(cleanupChoice(plan, 'all').branches.length, 2);
   // So there's no "only the branches" choice.
@@ -174,6 +174,45 @@ test('the list says what goes, why, and what stays, with paths relative to the r
       'Staying (1)',
       '  wip  has commits that are only here',
     ].join('\n'),
+  );
+});
+
+test('the server look: branches whose PR was merged go here, and on the remote unless they moved or an open PR uses them', () => {
+  const pr = (id, source, head, target = 'main') => ({ id, label: `#${id}`, source, target, head });
+  const remote = (name, oid = `${name}-tip`) => ({ name: `origin/${name}`, remote: 'origin', oid });
+  const plan = planCleanup(
+    facts({
+      prMerged: new Map([['squashed', pr(5, 'squashed', 'squashed-tip')]]),
+      remoteName: 'origin',
+      remoteBranches: [remote('main'), remote('done'), remote('moved'), remote('base'), remote('feature'), remote('never')],
+      prs: [pr(6, 'done', 'done-tip'), pr(7, 'moved', 'moved-old'), pr(8, 'base', 'base-tip'), pr(9, 'feature', 'feature-tip'), pr(10, 'main', 'main-tip', 'release')],
+      openPrs: [pr(11, 'feature', null, 'base')],
+    }),
+  );
+  assert.deepEqual(plan.branches.at(-1), { name: 'squashed', why: '#5 was merged into main', worktree: null });
+  assert.deepEqual(plan.kept.map((k) => k.name), ['wip', 'ahead']);
+  // moved has commits since its PR; base is an open PR's target, feature its source; main is the default branch.
+  assert.deepEqual(plan.remote, [{ name: 'origin/done', remote: 'origin', branch: 'done', why: '#6 was merged into main' }]);
+
+  assert.equal(cleanupCount(plan), '5 branches and 1 branch on origin');
+  assert.deepEqual(
+    cleanupOptions(plan).map((o) => [o.label, o.value]),
+    [
+      ['Yes, all 5 branches and 1 branch on origin', 'all'],
+      ['Only the 5 branches', 'local'],
+      ['Only the 1 branch on origin', 'remote'],
+      ['No', null],
+    ],
+  );
+  assert.deepEqual(cleanupChoice(plan, 'remote'), { worktrees: [], branches: [], remote: plan.remote });
+  assert.match(cleanupText(plan, '/r'), /Branches to delete on origin \(1\)\n {2}done {2}#6 was merged into main/);
+
+  // With worktrees too, every combination is offered.
+  const all = { ...plan, worktrees: [{ path: '/x', branch: null, prune: false, why: 'no changes' }] };
+  assert.equal(cleanupCount(all), '5 branches, 1 worktree and 1 branch on origin');
+  assert.deepEqual(
+    cleanupOptions(all).map((o) => o.value),
+    ['all', 'local', 'branches', 'worktrees', 'remote', null],
   );
 });
 
@@ -310,6 +349,89 @@ test('/cleanup removes clean worktrees and deletes branches with nothing only he
     await until(() => frame().includes('/cleanup'), 'the typed command');
     app.stdin.write(KEYS.enter);
     await until(() => frame().includes('Nothing to clean up'), 'the note that nothing is left');
+  } finally {
+    app.unmount();
+  }
+});
+
+test('/cleanup asks the PR host: squash-merged branches go here, and merged ones on the remote', async () => {
+  const dir = join(base, 'server');
+  mkdirSync(dir);
+  const git = (...args) => execFileSync('git', args, { cwd: dir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+  git('init', '-q', '-b', 'main');
+  execFileSync('git', ['init', '-q', '--bare', join(base, 'server-origin.git')]);
+
+  const stream = [];
+  let marks = 0;
+  const data = (s) => `data ${Buffer.byteLength(s)}\n${s}`;
+  const commit = (ref, name, parents = []) => {
+    const mark = `:${++marks}`;
+    stream.push(`commit ${ref}`, `mark ${mark}`, `committer T <t@example.com> ${1700000000 + marks} +0000`, data(name));
+    if (parents[0]) stream.push(`from ${parents[0]}`);
+    stream.push(`M 644 inline ${name.replace(/\W+/g, '-')}.txt`, data(`${name}\n`), '');
+    return mark;
+  };
+  const first = commit('refs/heads/main', 'base');
+  stream.push('reset refs/remotes/origin/main', `from ${first}`, '');
+  // Local, never on a remote branch. squashed: its PR's last commit. behind: one before its PR's last
+  // commit (kept by a tag here). reused: a commit after its PR was merged.
+  commit('refs/heads/squashed', 'squashed', [first]);
+  commit('refs/tags/pr-head', 'behind 2', [commit('refs/heads/behind', 'behind', [first])]);
+  commit('refs/heads/reused', 'reused 2', [commit('refs/heads/reused', 'reused', [first])]);
+  // On origin. done: its PR's last commit. moved: a commit since. base: an open PR's target. stale:
+  // deleted on the server already, but not fetched since.
+  for (const b of ['done', 'base', 'stale']) commit(`refs/remotes/origin/${b}`, b, [first]);
+  commit('refs/remotes/origin/moved', 'moved 2', [commit('refs/remotes/origin/moved', 'moved', [first])]);
+  execFileSync('git', ['fast-import', '--quiet'], { cwd: dir, input: `${stream.join('\n')}\n` });
+  appendFileSync(
+    join(dir, '.git', 'config'),
+    '[core]\n\tautocrlf = false\n[user]\n\tname = T\n\temail = t@example.com\n' +
+      '[remote "origin"]\n\turl = ../server-origin.git\n\tfetch = +refs/heads/*:refs/remotes/origin/*\n' +
+      '[branch "squashed"]\n\tremote = origin\n\tmerge = refs/heads/squashed\n',
+  );
+  git('reset', '-q', '--hard');
+  git('push', '-q', 'origin', ...['done', 'base', 'moved'].map((b) => `refs/remotes/origin/${b}:refs/heads/${b}`));
+  const [squashed, behind, reused, done, base_, stale, moved] = git('rev-parse', 'squashed', 'pr-head', 'reused~1', 'origin/done', 'origin/base', 'origin/stale', 'origin/moved~1').split('\n');
+
+  const pr = (id, source, head, target = 'main') => ({ id, label: `#${id}`, title: source, source, target, head });
+  const merged = [pr(5, 'squashed', squashed), pr(6, 'behind', behind), pr(7, 'reused', reused), pr(8, 'done', done), pr(9, 'base', base_), pr(10, 'stale', stale), pr(11, 'moved', moved)];
+  const makeHost = () => ({
+    kind: 'github',
+    name: 'GitHub',
+    signIn: 'gh auth login',
+    remoteName: 'origin',
+    list: async () => [pr(12, 'feature', null, 'base')],
+    merged: async () => merged,
+    defaultBranch: async () => 'main',
+  });
+  const onServer = () => execFileSync('git', ['for-each-ref', '--format=%(refname:short)', 'refs/heads'], { cwd: join(base, 'server-origin.git'), encoding: 'utf8' }).trim().split('\n').sort();
+  const refs = (prefix) => git('for-each-ref', '--format=%(refname:short)', prefix).split('\n').sort();
+
+  process.env.SPLICE_HOME = join(base, 'home');
+  lastApp = render(React.createElement(App, { initialPath: dir, config: { recent: [], roots: [], history: [] }, makeHost }));
+  const app = lastApp;
+  const frame = () => app.lastFrame() ?? '';
+  try {
+    await until(() => frame().includes('base'), 'the graph');
+    app.stdin.write('/');
+    await type(app.stdin, 'cleanup');
+    await until(() => frame().includes('/cleanup'), 'the typed command');
+    app.stdin.write(KEYS.enter);
+    await until(() => frame().includes('Delete 2 branches and 2 branches on origin with nothing of yours on them?'), 'the confirmation');
+    const list = frame();
+    assert.match(list, /behind\s+#6 was merged into main/);
+    assert.match(list, /squashed\s+#5 was merged into main/);
+    assert.match(list, /Branches to delete on origin \(2\)/);
+    assert.match(list, /done\s+#8 was merged into main/);
+    assert.match(list, /stale\s+#10 was merged into main/);
+    assert.match(list, /reused\s+has commits that are only here/);
+    assert.match(list, /3\. Only the 2 branches on origin/);
+    app.stdin.write('1');
+    await until(() => frame().includes('Cleaned up 2 branches and 2 branches on origin'), 'the report');
+    assert.match(frame(), /Deleted on origin: done, stale/);
+    assert.deepEqual(refs('refs/heads'), ['main', 'reused']);
+    assert.deepEqual(onServer(), ['base', 'moved']);
+    assert.deepEqual(refs('refs/remotes'), ['origin/base', 'origin/main', 'origin/moved']);
   } finally {
     app.unmount();
   }
