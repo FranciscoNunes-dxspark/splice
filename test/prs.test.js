@@ -174,6 +174,8 @@ test('A asks for reviewers, D makes it a draft, E retitles it and B edits its de
     app.stdin.write('\r');
     await until(() => calls.length === 3, 'the new title');
     assert.deepEqual(calls[2], ['edit', 7, { title: 'Bump b to 2' }]);
+    // The call is made before the command finishes, and a key pressed while it runs is ignored.
+    await until(() => /retitle "Bump b to 2"\n\s*⎿ +Done/.test(frame()), 'the retitle to finish');
 
     app.stdin.write('B');
     const file = join(dir, '.git', 'splice-pr-7.md');

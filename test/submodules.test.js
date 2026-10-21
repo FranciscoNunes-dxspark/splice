@@ -80,6 +80,8 @@ test('Changes lists submodules with their state; I initialises one and o opens i
       app.stdin.write('j');
       await new Promise((r) => setTimeout(r, 60));
     }
+    // As in until(): the view's key handler needs a moment to see the new selection.
+    await new Promise((r) => setTimeout(r, 100));
     app.stdin.write('o');
     await until(() => frame().includes('│  lib  ⎇ detached'), 'the submodule open as its own repository');
     assert.match(frame().split('\n')[0], /app[\\/]lib\s*$/);
