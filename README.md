@@ -56,7 +56,7 @@ Press `?` inside for every shortcut: the sections down the left, opening on the 
 
 | Where | Keys |
 | --- | --- |
-| Anywhere | `1`–`7` or `tab` switch views · `/` commands · `!` any git command · `f` fetch · `p` pull · `P` push · `r` refresh · `z` undo the last commit, merge, rebase, reset, switch or discard · `,` settings · `esc` cancel the running command · `q` quit · drop a folder on the terminal to open it, or a file for its history |
+| Anywhere | `1`–`7` or `tab` switch views · `/` commands · `!` any git command · `ctrl+p` the command palette · `f` fetch · `p` pull · `P` push · `r` refresh · `z` undo the last commit, merge, rebase, reset, switch or discard · `,` settings · `esc` cancel the running command · `q` quit · drop a folder on the terminal to open it, or a file for its history |
 | Lists | `j`/`k` or arrows · `g`/`G` top/bottom · `ctrl+d`/`ctrl+u` page · `J`/`K` scroll the right-hand pane · `y` copy what's under the cursor: a commit's hash, a branch name, a file's path, a stash's message, a PR's link |
 | Graph | `↵` full diff · `c` check out · `b` branch here · `t` tag here · `m` merge · `s` checks: `↵` a check's log, `R` re-run the failed ones · `A` add reviewers · `D` draft or ready · `E` retitle · `B` edit the description · `i` interactive rebase from here · `C` cherry-pick · `V` select several commits, then `C` cherry-picks them all · `v` revert · `X` reset to here · `B` bisect: mark it bad or good, or have a command test each · `e` / `R` Claude explains / reviews it |
 | Rebase editor | `p` pick · `r` reword · `e` edit · `s` squash · `f` fix up · `d` drop · `J`/`K` move · `↵` start · `esc` cancel |
@@ -82,6 +82,40 @@ The mouse works too: click a tab, a row or the prompt, double-click a row to do 
 Type `/` and the menu narrows as you type; `tab` completes, `↑`/`↓` picks, `↵` runs. Commands that take a branch complete branch, tag and remote names; `/history` and `/blame` complete the repository's tracked files.
 
 `/commit <msg> | --file [path]` `/amend [msg | --file [path]]` `/checkout <ref>` `/branch <name> [start]` `/delete <ref>` `/merge <ref>` `/rebase <ref>` `/update-branch [base] [--stack]` `/reset <ref>` `/tag <name> [ref]` `/tag-push <tag> [remote]` `/release <tag> [--draft] [--notes-file <path>] [title]` `/release <tag> [--draft] [title]` `/fetch` `/sync` `/pull [--rebase]` `/push [--force] [remote]` `/remote [add|rename|remove|set-url] …` `/upstream [branch] <remote/branch>` `/stash [-u | --no-untracked] [msg]` `/pop` `/discard` `/submodule-update [path]` `/undo` `/reflog` `/continue` `/abort` `/find <text>` `/find -S <text>` `/find -G <regex>` `/filter [--author <name>] [--path <path>] [--since <date>] [--until <date>]` `/fixup [ref]` `/open <path>` `/scan <folder>` `/last` `/settings` `/accent <#rrggbb|default>` `/refresh` `/help` `/quit` `/pr <title> [--into <branch>] [--draft]` `/comment <text>` `/review-comment <text>` `/reply <text>` `/resolve` `/unresolve` `/approve` `/request-changes [text]` `/merge-pr [squash|merge|rebase] [--delete-branch] [--auto]` `/ci` `/reviewer <name>` `/draft` `/ready` `/title <text>` `/body [--file <path>]` `/worktree <path> [ref]` `/compare <ref> [base]` `/forecast <ref> [base]` `/history <path>` `/blame <path>` `/cleanup` `/absorb` `/doctor` `/describe` `/split` `/draft-pr [--into <branch>]` `/ship [--into <branch>]` `/review-pr <number>` `/backport <pr-number> <branch>` `/changelog [since-tag] [--into-release <tag>]` `/explain [ref]` `/review [ref]`` `/review [ref]` `/cherry-pick <ref | a..b>` `/range-diff [branch | <a> <b>]` `/bisect <good|bad|skip|reset> [ref]` `/bisect run <command…>` `/ignore <pattern>`
+
+### The command palette
+
+`ctrl+p` opens a list of everything you can do from where you are: the keys of the view you're in (with what `?` says they do), your own keys and commands, and every slash command. Type to narrow it: the words can come in any order and needn't be whole (`cmt` finds `/commit`, and `branch new` finds `b` in the graph), and the best matches come first. `↑`/`↓` (or `ctrl+p`/`ctrl+n`) pick, `↵` runs the one picked, and `esc` closes it. A key runs as if you'd pressed it in the view; a command runs straight away, unless it needs something typed after it, in which case it goes into the prompt for you to finish (`/checkout ` waits for the branch). `ctrl+p` works from any view, and from the prompt, where what you'd typed becomes the filter.
+
+### Your own commands and keys
+
+Commands of your own go in the settings file (`~/.splice/config.json`), under `"commands"`:
+
+```json
+{
+  "commands": {
+    "nuke": "!clean -fdx",
+    "morning": ["/fetch", "/sync", "/cleanup"],
+    "wip": { "run": ["!add -A", "/commit WIP: $*"], "desc": "Commit everything as work in progress" }
+  }
+}
+```
+
+Each is a line as you'd type it at the prompt (a git command after `!`, or another slash command), or a list of them, run in order: a list stops at the first line that fails, or that asks a question you answer no to, and says which. `{ "run": …, "desc": … }` gives one a description for the menu; without one, the menu shows what it runs. In the line, `$1`, `$2`… are the words typed after the command (`"mk": "/branch $1"` makes `/mk topic` work; a `"quoted phrase"` counts as one word), `$*` is everything typed after it, and `$$` is a plain `$`; a command with no `$` in it gets what's typed after it at the end of its last line, so `"co": "/checkout"` makes `/co main` work. They're in the `/` menu with completion, in the palette, and in the `?` window's slash commands. A command of yours can run another of yours, but not round in a circle. One named like a built-in command (`/commit`) is left out: Splice says so in the activity lines when it starts, as it does for anything else it can't use.
+
+Keys go under `"keys"`, for every view (`"global"`) or for one (`graph`, `changes`, `branches`, `worktrees`, `stash`, `prs`, `repos`):
+
+```json
+{
+  "keys": {
+    "global": { "ctrl+s": "/commit", "F5": "/sync" },
+    "graph": { "x": "X" },
+    "changes": { "ctrl+a": "a" }
+  }
+}
+```
+
+A key can stand for another key, so the view does what that key does there (above, `x` in the graph resets to the commit, as `X` does), or for a command line, as you'd type it at the prompt. Keys are written as a character (`x`, `X`, `+`), `ctrl+` a letter, `alt+` a character, `shift+tab`, `F1` to `F12`, or `enter`, `esc`, `tab`, `space`, `backspace`, `delete`, `up`, `down`, `left`, `right`, `home`, `end`, `pageup` and `pagedown`. They only apply while a view has the keys: never while you type in the prompt, nor while a question is open or a window (help, settings, a diff, a list) is over the view. A view's own keys come before the global ones, and `ctrl+c` always quits. The `?` window lists yours under **Your keys**, and a key name or view Splice doesn't know (`ctrl+shift+x` is one terminals can't send) is said in the activity lines when it starts. Both are read when Splice starts.
 
 ### Commit messages
 

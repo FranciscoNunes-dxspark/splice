@@ -14,6 +14,7 @@ export const HELP = [
       ['z', 'Undo the last commit, amend, merge, rebase, reset, switch or discard (asks first)'],
       ['esc', 'Cancel the running command, or clear the activity lines'],
       [',', 'Settings (/settings): accent colour, theme, mouse, updates, notifications, folders to scan, recent, history'],
+      ['ctrl+p', 'Command palette: every slash command (yours too) and the keys of the view you\'re in, filtered as you type; ↵ runs one (a command that takes more goes into the prompt)'],
       ['?', 'This help'],
       ['q / ctrl+c', 'Quit'],
       ['mouse', 'Click a tab, a row or the prompt · double-click does ↵ · the wheel scrolls\ndrag to select text, copied when you let go'],
@@ -251,6 +252,17 @@ export const HELP = [
       ['↑ ↓', 'Pick a suggestion, or walk history'],
       ['esc', 'Back to the view (the text is kept)'],
       ['ctrl+u ctrl+w', 'Clear the line · Delete a word'],
+      ['ctrl+p', 'The command palette, filtered by what\'s typed'],
+    ],
+  },
+  {
+    title: 'Your own commands and keys',
+    about: 'in the settings file (config.json), read when Splice starts; what\'s wrong with them is said in the log then',
+    rows: [
+      ['"commands"', '{ "nuke": "!clean -fdx", "morning": ["/fetch", "/sync"] }: a line as typed at the prompt, or a list run in order, stopping at the first that fails (or that you answer no); { "run": …, "desc": … } gives it a description. They show in the / menu, the palette and Slash commands below'],
+      ['$1 $2  $*', 'What\'s typed after it: a word each ("quoted words" are one), or all of it; a command with no $ gets it at the end of its line'],
+      ['"keys"', '{ "global": { "ctrl+s": "/commit" }, "graph": { "x": "X" } }: a key to another key (the view does what that one does) or to a command line, anywhere or in one view (graph, changes, branches, worktrees, stash, prs, repos). They work while a view has the keys, never while typing; Your keys (above Slash commands) lists them'],
+      ['key names', 'a character (x, X, +), ctrl+s, alt+x, shift+tab, F1-F12, enter, esc, tab, space, backspace, delete, up, down, left, right, home, end, pageup, pagedown'],
     ],
   },
   {

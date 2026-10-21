@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Box, Text, useApp, useInput, useStdin } from 'ink';
 import { existsSync } from 'node:fs';
 import { basename, resolve } from 'node:path';
@@ -13,7 +13,11 @@ import { discover, eachLimited, summarize } from '../repos.js';
 import { BULLET, theme } from '../theme.js';
 import { fitSegments, stringWidth } from '../text.js';
 import { VERSION } from '../version.js';
-import { useTerminalSize } from './hooks.js';
+import { useKeyTranslation, useTerminalSize } from './hooks.js';
+import { keymapSection, parseKeymap, translateKey } from '../keymap.js';
+import { expandLines, userCommands } from '../usercommands.js';
+import { paletteItems } from '../palette.js';
+import { Palette } from './Palette.jsx';
 import { Confirm, Panel, PromptBox, Row, Spinner, Suggestions, confirmHeight } from './parts.jsx';
 import { BranchesView } from './BranchesView.jsx';
 import { ChangesView } from './ChangesView.jsx';
@@ -41,8 +45,14 @@ const VIEWS = [
   { id: 'repos', label: 'Repos' },
 ];
 
-// What ? shows: help.js's sections, then the slash commands.
-const HELP_SECTIONS = [...HELP, commandsSection(COMMANDS)];
+const VIEW_LABELS = Object.fromEntries(VIEWS.map((v) => [v.id, v.label]));
+
+// What ? shows: help.js's sections, the keys you mapped, then the slash commands, yours with them.
+const helpSections = (user, keymap) => [...HELP, ...[keymapSection(keymap, VIEW_LABELS)].filter(Boolean), commandsSection([...COMMANDS, ...user])];
+
+// ctrl+p, as the terminal sends it: the command palette.
+const CTRL_P = '\x10';
+const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
 const HINTS = {
   graph: '↵ diff · c checkout · b branch · m merge · i rebase from here · C cherry-pick · V select several · v revert · X reset · B bisect · e/R Claude explains/reviews',
@@ -169,6 +179,22 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
   const [jump, setJump] = useState(0);
   // A word in the bottom line for a moment ("Copied 3 lines"), where it moves nothing on screen.
   const [flash, setFlash] = useState(null);
+  // Errors said and questions answered no, counted so a line of your own command knows it failed.
+  const errorCount = useRef(0);
+  const declines = useRef(0);
+  // Your own commands and keys (the config's "commands" and "keys"), and what was wrong with them.
+  const custom = useMemo(() => {
+    const mine = userCommands(config.commands, COMMANDS.map((c) => c.name));
+    const commands = mine.commands.map((c) => ({ ...c, run: (_, rest) => ctx.runUserCommand(c, rest) }));
+    const keymap = parseKeymap(config.keys, VIEWS.map((v) => v.id));
+    return { commands, keymap, sections: helpSections(commands, keymap), problems: [...mine.problems.map((p) => `commands: ${p}`), ...keymap.problems.map((p) => `keys: ${p}`)] };
+  }, [config.commands, config.keys]);
+  const customRef = useRef(custom);
+  customRef.current = custom;
+  const viewRef = useRef(view);
+  viewRef.current = view;
+  // A key picked in the palette, sent to the view once it's back on screen (the effect below).
+  const pendingKey = useRef(null);
   useEffect(() => {
     if (!flash) return;
     const t = setTimeout(() => setFlash(null), 3000);
@@ -232,11 +258,15 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
   };
 
   const addEntry = (e) => {
+    if (e.status === 'error') errorCount.current++;
     const id = nextId.current++;
     setEntries((list) => [...list.slice(-19), { id, lines: [], at: Date.now(), ...e }]);
     return id;
   };
-  const updateEntry = (id, patch) => setEntries((list) => list.map((e) => (e.id === id ? { ...e, at: Date.now(), ...patch } : e)));
+  const updateEntry = (id, patch) => {
+    if (patch.status === 'error') errorCount.current++;
+    setEntries((list) => list.map((e) => (e.id === id ? { ...e, at: Date.now(), ...patch } : e)));
+  };
   const removeEntry = (id) => setEntries((list) => list.filter((e) => e.id !== id));
 
   const note = (text, status = 'info') => {
@@ -328,6 +358,7 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
     const req = confirmRef.current;
     confirmRef.current = null;
     answerKey.current = keySeq.current;
+    if (value === false || value == null) declines.current++;
     setConfirmReq(null);
     req?.done(value);
   };
@@ -548,7 +579,12 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
     },
     overlayHasKeys: () => focusRef.current === 'view' && !confirmRef.current && answerKey.current !== keySeq.current,
     // On the section for the view on screen.
-    showHelp: () => setOverlay({ kind: 'help', start: sectionFor(HELP_SECTIONS, view) }),
+    showHelp: () => setOverlay({ kind: 'help', start: sectionFor(customRef.current.sections, view) }),
+    // Your own command `cmd` (usercommands.js) with what was typed after it, and any line as typed at
+    // the prompt; both resolve false when it failed.
+    runUserCommand: (cmd, rest) => runUserCommand(cmd, rest),
+    runLine: (text) => runLine(text),
+    openPalette: () => openPalette(),
     showLast: () => (lastOutput.current ? setOverlay({ ...lastOutput.current }) : note('No command has run yet.')),
     // `paths` limits it to some files (a file's history: its path then, and the one before a rename).
     showPatch: (c, paths = []) =>
@@ -580,6 +616,53 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
     showStashFile: (s, file) => showAsync(`${file.path} in ${s.ref}`, () => stashFileDiff(dataRef.current.root, s.ref, file), { diff: true }),
   });
 
+  // One line as typed at the prompt: git after ! (or starting with git), else a slash command.
+  // Resolves false when it failed: it threw, said an error, or a question it asked was answered no
+  // (so your own commands stop there).
+  const runLine = async (text) => {
+    const [errors, declined] = [errorCount.current, declines.current];
+    try {
+      let r;
+      if (text.startsWith('!')) r = await a.raw(ctx, text.slice(1));
+      else if (/^git(\s|$)/.test(text)) r = await a.raw(ctx, text);
+      else {
+        const [, name, rest] = text.replace(/^\//, '').match(/^(\S+)\s*([\s\S]*)$/);
+        const cmd = findCommand(name, customRef.current.commands);
+        if (!cmd) {
+          note(`Unknown command: /${name}. Type / to see them all.`, 'error');
+          return false;
+        }
+        r = await cmd.run(ctx, rest.trim());
+      }
+      return r !== false && r?.ok !== false && errorCount.current === errors && declines.current === declined;
+    } catch (e) {
+      note(firstLine(e.message), 'error');
+      return false;
+    }
+  };
+
+  // One of your own commands: its lines in order, with what was typed after it filled in, stopping at
+  // the first that fails. Commands of yours may run each other, but not round in a circle.
+  const userDepth = useRef(0);
+  const runUserCommand = async (cmd, rest) => {
+    if (userDepth.current >= 5) {
+      note(`/${cmd.name}: your commands run each other round in a circle, so it stopped.`, 'error');
+      return false;
+    }
+    const lines = expandLines(cmd, rest);
+    userDepth.current++;
+    try {
+      for (const [i, line] of lines.entries()) {
+        if (await runLine(line)) continue;
+        if (i < lines.length - 1) note(`/${cmd.name} stopped at ${line}: the ${plural(lines.length - i - 1, 'line')} after it didn't run.`, 'error');
+        return false;
+      }
+      return true;
+    } finally {
+      userDepth.current--;
+    }
+  };
+
   const submit = async (raw) => {
     const text = raw.trim();
     setPrompt('');
@@ -587,21 +670,59 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
     if (!text) return;
     const history = [text, ...(configRef.current.history ?? []).filter((h) => h !== text)].slice(0, 100);
     setConfig((c) => ({ ...c, history }));
-    try {
-      if (text.startsWith('!')) return await a.raw(ctx, text.slice(1));
-      if (/^git(\s|$)/.test(text)) return await a.raw(ctx, text);
-      const [, name, rest] = text.replace(/^\//, '').match(/^(\S+)\s*([\s\S]*)$/);
-      const cmd = findCommand(name);
-      if (!cmd) return note(`Unknown command: /${name}. Type / to see them all.`, 'error');
-      await cmd.run(ctx, rest.trim());
-    } catch (e) {
-      note(firstLine(e.message), 'error');
-    }
+    await runLine(text);
   };
+
+  // ctrl+p: the palette, over the view, starting from what's typed in the prompt when it's open there.
+  const openPalette = () => {
+    const typed = focusRef.current === 'prompt' ? promptRef.current.value.trim() : '';
+    if (focusRef.current === 'prompt') setFocus('view');
+    setOverlay({ kind: 'palette', query: typed.startsWith('!') ? '' : typed.replace(/^\//, '') });
+  };
+  // What's picked in it: a key goes to the view, a command runs, or waits in the prompt for what it
+  // takes. After every handler has had the ↵ that picked it, so it isn't also the prompt's.
+  const runPicked = (it) =>
+    queueMicrotask(() => {
+      ctx.closeOverlay();
+      if (it.key) pendingKey.current = it.key.seq;
+      else if (it.ask) prefill(`${it.command} `);
+      else runLine(it.command);
+    });
+
+  // Your keys, where they come in: while a view has the keys (never while typing, in a confirm or
+  // over an overlay), a key you mapped becomes the key it stands for, for the view and App alike, or
+  // runs its command line. Then ctrl+p opens the palette, from a view or the prompt.
+  const sendKey = useKeyTranslation((input) => {
+    let out = input;
+    if (focusRef.current === 'view' && !overlayRef.current && !confirmRef.current) {
+      const b = translateKey(customRef.current.keymap, viewRef.current, input);
+      if (b?.command) {
+        queueMicrotask(() => runLine(b.command));
+        return null;
+      }
+      if (b?.key) out = b.key.seq;
+    }
+    if (out === CTRL_P && !overlayRef.current && !confirmRef.current && (focusRef.current === 'view' || focusRef.current === 'prompt')) {
+      openPalette();
+      return null;
+    }
+    return out;
+  });
+  useEffect(() => {
+    if (pendingKey.current == null || overlayRef.current) return;
+    const k = pendingKey.current;
+    pendingKey.current = null;
+    sendKey(k);
+  });
 
   // First load: the given folder if it's a repo. Otherwise, when Splice was started without a path, the
   // repository open last time (the most recent one still there); failing that, the repo picker scanning that folder.
   useEffect(() => {
+    if (custom.problems.length) {
+      const text = ['Some of your commands or keys in the config were left out:', ...custom.problems].join('\n');
+      note(text, 'error');
+      lastOutput.current = { title: 'Your commands and keys', text };
+    }
     (async () => {
       const here = await openRepo(initialPath, { silent: true });
       let reopened = null;
@@ -700,13 +821,13 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
     return () => clearInterval(t);
   }, []);
 
-  const suggestions = focus === 'prompt' && !confirmReq ? suggestionsFor(prompt.value, { data, repos, files: files ?? [] }) : [];
+  const suggestions = focus === 'prompt' && !confirmReq ? suggestionsFor(prompt.value, { data, repos, files: files ?? [], user: custom.commands }) : [];
   const sel = Math.min(sugIndex, Math.max(0, suggestions.length - 1));
 
   // Line editing in the prompt.
   const promptKeys = (input, key) => {
     const { value, cursor } = promptRef.current;
-    const items = suggestionsFor(value, { data: dataRef.current, repos, files: files ?? [] });
+    const items = suggestionsFor(value, { data: dataRef.current, repos, files: files ?? [], user: customRef.current.commands });
     const pick = items[Math.min(sugIndex, items.length - 1)];
     const edit = (v, c) => {
       setPrompt(v, c);
@@ -887,11 +1008,20 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
     tabs: tabLabels(data),
   };
 
+  // The palette's list: this view's keys, yours, then the commands.
+  const paletteList = useMemo(
+    () => paletteItems({ commands: COMMANDS, user: custom.commands, sections: HELP.filter((s) => s.title === 'Anywhere' || s.views?.includes(view)), keymap: custom.keymap, view, skip: ['ctrl+p'] }),
+    [custom, view],
+  );
+
   let main;
-  if (overlay?.kind === 'rebase') {
+  if (overlay?.kind === 'palette') {
+    // Closed once every handler has had the esc, or App's would also take it (and clear the log).
+    main = <Palette items={paletteList} query={overlay.query} ctx={ctx} width={W} height={mainH} active={focus === 'view' && !confirmReq} onPick={runPicked} onClose={() => queueMicrotask(ctx.closeOverlay)} />;
+  } else if (overlay?.kind === 'rebase') {
     main = <RebaseEditor plan={overlay.plan} ctx={ctx} width={W} height={mainH} active={focus === 'view' && !confirmReq} />;
   } else if (overlay?.kind === 'help') {
-    main = <HelpView sections={HELP_SECTIONS} start={overlay.start} ctx={ctx} width={W} height={mainH} active={focus === 'view' && !confirmReq} onClose={ctx.closeOverlay} />;
+    main = <HelpView sections={custom.sections} start={overlay.start} ctx={ctx} width={W} height={mainH} active={focus === 'view' && !confirmReq} onClose={ctx.closeOverlay} />;
   } else if (overlay?.kind === 'picker') {
     main = <Picker key={overlay.id} picker={overlay} ctx={ctx} width={W} height={mainH} active={focus === 'view' && !confirmReq} />;
   } else if (overlay) {
@@ -917,6 +1047,8 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
         ? '↵ start the rebase · esc cancel'
         : overlay?.kind === 'help'
           ? 'j/k section · space scroll · / search · esc close'
+          : overlay?.kind === 'palette'
+          ? 'type to filter · ↑↓ pick · ↵ run it (a key in the view; a command that takes more goes into the prompt) · esc close'
           : overlay?.kind === 'picker'
           ? 'j/k move · esc close'
           : overlay
