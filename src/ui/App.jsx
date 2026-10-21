@@ -320,7 +320,9 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
     const found = await discover([...cfg.roots, ...roots]);
     const paths = [];
     for (const p of [...cfg.recent, ...found]) if (!paths.some((q) => samePath(q, p))) paths.push(p);
-    const list = paths.map((p) => ({ path: p, name: basename(p) }));
+    // By name, so opening one doesn't move it: `recent` stays newest first for reopening the last one.
+    const list = paths.map((p) => ({ path: p, name: basename(p) }))
+      .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }) || a.path.localeCompare(b.path));
     setRepos(list);
     if (!summaries) return;
     eachLimited(list, 4, (r) => summarize(r.path), (r, summary) =>
