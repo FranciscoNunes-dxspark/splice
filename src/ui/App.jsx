@@ -323,7 +323,8 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
     // By name, so opening one doesn't move it: `recent` stays newest first for reopening the last one.
     const list = paths.map((p) => ({ path: p, name: basename(p) }))
       .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }) || a.path.localeCompare(b.path));
-    setRepos(list);
+    // The summaries from last time stay up while new ones come in: git status takes up to a second in a big repo.
+    setRepos((cur) => list.map((r) => ({ ...r, summary: cur.find((x) => samePath(x.path, r.path))?.summary })));
     if (!summaries) return;
     eachLimited(list, 4, (r) => summarize(r.path), (r, summary) =>
       setRepos((cur) => cur.map((x) => (x.path === r.path ? { ...x, summary } : x))),
