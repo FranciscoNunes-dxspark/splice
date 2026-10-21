@@ -64,11 +64,12 @@ export function placeThreads(lines, threads, pos = diffPositions(lines)) {
 /**
  * Where a new comment on a diff line goes: { path, line, side, text } (`text` the line without its
  * + - or space), or null for a line no comment can go on (headers, hunk headers, "\ No newline").
- * Added lines and the unchanged ones around them are on the new side, removed lines on the old.
+ * Added lines are on the new side, removed lines on the old, and the unchanged ones around them on
+ * `prefer`'s (the new side unless asked: side by side, the one the cursor is on).
  */
-export function lineTarget(pos, line) {
+export function lineTarget(pos, line, prefer = 'new') {
   if (!pos?.path) return null;
-  const side = pos.new != null ? 'new' : 'old';
+  const side = pos[prefer] != null ? prefer : prefer === 'new' ? 'old' : 'new';
   return { path: pos.path, line: pos[side], side, text: (line ?? '').slice(1) };
 }
 
