@@ -1,176 +1,236 @@
-export const HELP = `Anywhere
-  1-7 / tab        Graph, Changes, Branches, Worktrees, Stash, PRs, Repos (shift+tab goes back)
-  / or :           Command prompt (slash commands, with completion)
-  !                Run any git command, e.g.  !log --stat -5
-  f  p  P          Fetch all · Pull · Push (sets the upstream the first time)
-  r                Refresh
-  z                Undo the last commit, amend, merge, rebase, reset, switch or discard (asks first)
-  esc              Cancel the running command, or clear the activity lines
-  ,                Settings (/settings): accent colour, mouse, updates, folders to scan, recent, history
-  ?                This help
-  q / ctrl+c       Quit
-  mouse            Click a tab, a row or the prompt · double-click does ↵ · the wheel scrolls
-                   drag to select text, copied when you let go
-
-Lists
-  j k / ↑ ↓        Move            g G         Top, bottom
-  ctrl+d ctrl+u    Page down, up   J K         Scroll the right-hand pane
-  y                Copy it: a commit's hash, a branch name, a file's path, a stash's message, a PR's link
-
-Graph (the commit pane says whether the commit is signed, and if the signature is good)
-  ↵                Full diff of the commit
-  c                Check out (its branch if it has one, otherwise detached)
-  b  t             New branch here · New tag here
-  m                Merge it into the current branch
-  C  v             Cherry-pick · Revert
-  X                Reset the current branch to it (soft, mixed or hard)
-  i                Interactive rebase from it (included) up to HEAD
-  B                Bisect: mark it bad or good (or skip); git checks out the commit halfway, to try
-  e  R             Claude explains it · Claude reviews it (R on the working tree: your changes)
-
-Rebase editor (newest on top, like the graph)
-  p r e            Pick · Reword (then type the message: /reword <message>) · Edit (stop there)
-  s f              Squash · Fix up: fold into the commit below, keeping or dropping its message
-  d                Drop            J K         Move the commit down, up
-  ↵                Start (asks first)          esc         Cancel
-
-Changes
-  space            Stage or unstage the file (on a conflict: mark it resolved)
-  a  u             Stage all · Unstage all
-  d                Discard the file's changes
-  s                Stash just this file, staged and unstaged changes (its path is the stash's message)
-  v                Select several files (v, move, then s stashes them all together; esc clears it)
-  c  A             Commit · Amend the last commit
-  F                Fix up an earlier commit with the staged changes (pick it; then fold it in, or keep it for later)
-  W                Claude writes the commit message for the staged changes, into the prompt to edit
-  S                Claude splits all your changes into logical commits: each one shown as a diff,
-                   then commit it, skip it (its changes stay uncommitted) or stop (/split)
-  R                Claude reviews the staged changes (or the unstaged ones, if nothing is staged)
-  O  T             On a conflict: take ours · take theirs, for the whole file
-  C                On a conflict: Claude proposes the resolved file, shown as a diff; asks before writing it
-  H  B             The file's history · Blame it (who last changed each line)
-  ↵  →  l          Step into the diff to stage hunks or single lines (on a conflict: into its conflict blocks)
-  Submodules, listed last with their state (not initialised, out of date, changes inside, up to date):
-  I                Initialise it and check out the commit recorded here (/submodule-update [path])
-  o  ↵             Open it in Splice as its own repository
-
-Changes, in the diff
-  j k              Move between changed lines      n N  ] [    Next, previous hunk
-  space            Stage the hunk under the cursor (unstage it, for a staged file)
-  v                Start or end a line selection; space then stages just those lines
-  d                Discard the hunk or the selected lines (asks first)
-  s                Stash the hunk or the selected lines: they leave the file, and pop brings them back
-  ↵                Full-screen diff        esc  ←  h    Back to the file list
-
-Changes, in a conflict (ours, the base in diff3 style, theirs)
-  j k  n N         Next, previous conflict block   J K         Scroll
-  o  t  b          Take ours · Take theirs · Keep both (ours, then theirs) for the block; nothing is staged
-  esc  ←  h        Back to the file list, where space marks the file resolved
-
-File history (H, /history <path>: the commits that touched it, following renames)
-  ↵                The commit's diff of the file (esc comes back here)
-  B                Blame the file as it was in that commit
-
-Blame (B, /blame <path>: the working-tree file, so new lines show as not committed yet)
-  ↵                Diff of the commit that last changed the line (esc comes back here)
-  H                The file's history
-  v  L             Select lines (v, move, v) · Every commit that changed them, and how (git log -L)
-
-Branches
-  ↵                Check out (a remote branch gets a local tracking branch)
-  n                New branch from it
-  m  e             Merge it in · Rebase onto it
-  d                Delete (asks before force-deleting or deleting on the remote)
-  D                Full diff of what it adds to the default branch (/compare <ref> [base])
-  o                Open its pull request in the browser (#12 GitHub, !12 Azure DevOps; coloured by review)
-  The right-hand pane: how far it is ahead of and behind the default branch, its commits the default
-  branch doesn't have, then its history
-  C                Clean up: delete branches with nothing unpushed or unmerged, and clean worktrees, and
-                   the branches of merged pull requests on the remote (/cleanup)
-  U                On a local branch: set what it tracks (/upstream [branch] <remote/branch>, --unset to stop)
-  M                The remotes (/remote): n add · R rename · x remove · u change its URL · f fetch
-                   · p push the current branch to it (/push <remote>)
-  On a tag (Tags, at the bottom of the list):
-  u                Push it (/tag-push <tag> [remote])
-  d                Delete it: here, on the remote, or both (asks first)
-  R                Create a GitHub release for it, published or as a draft (/release <tag> [--draft] [title])
-
-Worktrees (● the one open here)
-  ↵                Open it in Splice
-  n                New worktree (/worktree <path> [ref]; the path is relative to the repository)
-  x                Remove it (asks first; the branch stays), or prune one whose folder is gone
-  C                Clean up: remove worktrees without changes, branches with nothing unpushed, and the
-                   branches of merged pull requests on the remote (/cleanup)
-
-Stash
-  ↵                Full diff
-  s  S             Stash the current changes · The same, typing a message first (/stash <message>)
-                   Untracked files go too, unless turned off in /settings; /stash -u or --no-untracked overrides
-  a  o  x          Apply · Pop · Drop
-  F                Its files. ↵ restores one into the working tree, as apply
-                   would: a change unstaged, a file the stash added staged, an untracked file
-                   untracked; a file the stash deleted, it offers to delete. Asks before overwriting
-                   uncommitted changes. d shows the file's diff in the stash.
-
-PRs (GitHub through gh, Azure DevOps through az: your existing sign-in)
-  ◆ asks for your review · ● yours · others below
-  ↵                Full diff, with review comments under their lines     c           Check out its branch
-                   In it: t T next, previous comment · r reply to it (/reply <text>)
-  a                Approve         C           Comment (/comment <text>)
-  m                Merge it: squash, merge commit or rebase; now or once checks pass (auto-merge),
-                   deleting the branch or not (/merge-pr [squash|merge|rebase] [--delete-branch] [--auto])
-  s                Its checks (/ci), failed first: ↵ the log (a failed job's failed steps), o open in
-                   the browser, R re-run the failed ones
-  A                Ask for reviewers (/reviewer <name> [name ...])
-  D                Draft, or ready for review (/draft, /ready)
-  E  B             Retitle it (/title <text>) · Edit its description: written to a file for your own
-                   editor, then /body --file <it> sends it (/body <text> sends text, \\n for a new line)
-  o                Open in the browser
-  n                New pull request from the current branch (/pr <title> [--into <branch>] [--draft])
-  W                Claude drafts one: title into the prompt, description offered when you open it
-  e  R             Claude explains it · Claude reviews it
-
-Claude (through the Claude Code CLI, signed in as you already are; answers take several seconds, esc cancels)
-  /describe   /split   /draft-pr [--into <branch>]   /explain [ref]   /review [ref]
-
-Reflog (/reflog: everywhere HEAD has been, newest first)
-  ↵                Full diff of the commit         c           Check it out
-  X                Reset the current branch to it (soft, mixed or hard)
-
-Repos
-  ↵                Open            x           Forget (remove from recent)
-  s                Add a folder to scan for repositories
-
-Prompt
-  tab              Complete        ↑ ↓         Pick a suggestion, or walk history
-  esc              Back to the view (the text is kept)
-  ctrl+u ctrl+w    Clear the line · Delete a word
-
-Slash commands
-  /commit <msg>   /amend [msg]   /checkout <ref>   /branch <name> [start]
-  /delete <ref>   /merge <ref>   /rebase <ref>     /reset <ref>   /tag <name> [ref]
-  /fetch   /pull [--rebase]   /push [--force] [remote]   /stash [-u] [msg]   /pop   /discard
-  /undo   /reflog   /submodule-update [path]
-  /bisect <good|bad|skip|reset> [ref]
-  /continue   /abort   /find <text>   /open <path>   /scan <folder>   /last   /quit
-  /settings   /accent <#rrggbb|default>   /update (look for a new version now and install it)
-  /find -S <text>   /find -G <regex>   Search all history for commits adding or removing the text,
-                                     or changing lines that match the regex
-  /filter [--author <name>] [--path <path>] [--since <date>] [--until <date>]
-                   Only the commits, on any branch, by that author, touching that path, in those dates
-                   (dates as git takes them: 2026-01-31, "2 weeks ago"); esc in the graph or /filter clears it
-  /pr <title> [--into <branch>] [--draft]   /comment <text>   /approve   /reply <text>
-  /merge-pr [squash|merge|rebase] [--delete-branch] [--auto]   /ci
-  /remote [add <name> <url> | rename <old> <new> | remove <name> | set-url <name> <url>]
-  /upstream [branch] <remote/branch>   /upstream --unset [branch]
-  /tag-push <tag> [remote]   /release <tag> [--draft] [title]
-  /reviewer <name>   /draft   /ready   /title <text>   /body [--file <path> | text]
-  /rebase -i <ref>   /reword <message>   /fixup [ref]   /worktree <path> [ref]   /compare <ref> [base]
-  /history <path>   /blame <path>   /cleanup
-
-Viewer (diffs, output, this help)
-  j k  space  g G  Scroll         n N         Next, previous hunk
-  /                Search: matches show as you type, ↵ keeps it (a capital letter makes it match case)
-  n N              With a search: next, previous match
-  esc / q          Clear the search, then close
-  Diffs pick out the words that changed within a line.`;
+// What ? shows (ui/HelpView.jsx, laid out by help-layout.js): sections of [keys, what they do]. A \n
+// in the text starts a line of its own; a string is a note; { heading } starts a part of a section.
+// `views` are the views ? opens on that section from. The slash commands come from commands.js, as
+// a section of their own after these.
+export const HELP = [
+  {
+    title: 'Anywhere',
+    rows: [
+      ['1-7 / tab', 'Graph, Changes, Branches, Worktrees, Stash, PRs, Repos (shift+tab goes back)'],
+      ['/ or :', 'Command prompt (slash commands, with completion)'],
+      ['!', 'Run any git command, e.g.  !log --stat -5'],
+      ['f  p  P', 'Fetch all · Pull · Push (sets the upstream the first time)'],
+      ['r', 'Refresh'],
+      ['z', 'Undo the last commit, amend, merge, rebase, reset, switch or discard (asks first)'],
+      ['esc', 'Cancel the running command, or clear the activity lines'],
+      [',', 'Settings (/settings): accent colour, mouse, updates, folders to scan, recent, history'],
+      ['?', 'This help'],
+      ['q / ctrl+c', 'Quit'],
+      ['mouse', 'Click a tab, a row or the prompt · double-click does ↵ · the wheel scrolls\ndrag to select text, copied when you let go'],
+    ],
+  },
+  {
+    title: 'Lists',
+    rows: [
+      ['j k / ↑ ↓', 'Move'],
+      ['g G', 'Top, bottom'],
+      ['ctrl+d ctrl+u', 'Page down, up'],
+      ['J K', 'Scroll the right-hand pane'],
+      ['y', 'Copy it: a commit\'s hash, a branch name, a file\'s path, a stash\'s message, a PR\'s link'],
+    ],
+  },
+  {
+    title: 'Graph',
+    about: 'the commit pane says whether the commit is signed, and if the signature is good',
+    views: ['graph'],
+    rows: [
+      ['↵', 'Full diff of the commit'],
+      ['c', 'Check out (its branch if it has one, otherwise detached)'],
+      ['b  t', 'New branch here · New tag here'],
+      ['m', 'Merge it into the current branch'],
+      ['C  v', 'Cherry-pick · Revert'],
+      ['X', 'Reset the current branch to it (soft, mixed or hard)'],
+      ['i', 'Interactive rebase from it (included) up to HEAD'],
+      ['B', 'Bisect: mark it bad or good (or skip); git checks out the commit halfway, to try'],
+      ['e  R', 'Claude explains it · Claude reviews it (R on the working tree: your changes)'],
+    ],
+  },
+  {
+    title: 'Searching the graph',
+    rows: [
+      ['/find -S <text>  /find -G <regex>', 'Search all history for commits adding or removing the text, or changing lines that match the regex'],
+      ['/filter [--author <name>] [--path <path>] [--since <date>] [--until <date>]', 'Only the commits, on any branch, by that author, touching that path, in those dates (dates as git takes them: 2026-01-31, "2 weeks ago"); esc in the graph or /filter clears it'],
+    ],
+  },
+  {
+    title: 'Rebase editor',
+    about: 'newest on top, like the graph',
+    rows: [
+      ['p r e', 'Pick · Reword (then type the message: /reword <message>) · Edit (stop there)'],
+      ['s f', 'Squash · Fix up: fold into the commit below, keeping or dropping its message'],
+      ['d', 'Drop'],
+      ['J K', 'Move the commit down, up'],
+      ['↵', 'Start (asks first)'],
+      ['esc', 'Cancel'],
+    ],
+  },
+  {
+    title: 'Changes',
+    views: ['changes'],
+    rows: [
+      ['space', 'Stage or unstage the file (on a conflict: mark it resolved)'],
+      ['a  u', 'Stage all · Unstage all'],
+      ['d', 'Discard the file\'s changes'],
+      ['s', 'Stash just this file, staged and unstaged changes (its path is the stash\'s message)'],
+      ['v', 'Select several files (v, move, then s stashes them all together; esc clears it)'],
+      ['c  A', 'Commit · Amend the last commit'],
+      ['F', 'Fix up an earlier commit with the staged changes (pick it; then fold it in, or keep it for later)'],
+      ['W', 'Claude writes the commit message for the staged changes, into the prompt to edit'],
+      ['S', 'Claude splits all your changes into logical commits: each one shown as a diff, then commit it, skip it (its changes stay uncommitted) or stop (/split)'],
+      ['R', 'Claude reviews the staged changes (or the unstaged ones, if nothing is staged)'],
+      ['O  T', 'On a conflict: take ours · take theirs, for the whole file'],
+      ['C', 'On a conflict: Claude proposes the resolved file, shown as a diff; asks before writing it'],
+      ['H  B', 'The file\'s history · Blame it (who last changed each line)'],
+      ['↵  →  l', 'Step into the diff to stage hunks or single lines (on a conflict: into its conflict blocks)'],
+      { heading: 'Submodules', about: 'listed last with their state: not initialised, out of date, changes inside, up to date' },
+      ['I', 'Initialise it and check out the commit recorded here (/submodule-update [path])'],
+      ['o  ↵', 'Open it in Splice as its own repository'],
+    ],
+  },
+  {
+    title: 'Changes, in the diff',
+    rows: [
+      ['j k', 'Move between changed lines'],
+      ['n N  ] [', 'Next, previous hunk'],
+      ['space', 'Stage the hunk under the cursor (unstage it, for a staged file)'],
+      ['v', 'Start or end a line selection; space then stages just those lines'],
+      ['d', 'Discard the hunk or the selected lines (asks first)'],
+      ['s', 'Stash the hunk or the selected lines: they leave the file, and pop brings them back'],
+      ['↵', 'Full-screen diff'],
+      ['esc  ←  h', 'Back to the file list'],
+    ],
+  },
+  {
+    title: 'Changes, in a conflict',
+    about: 'ours, the base in diff3 style, theirs',
+    rows: [
+      ['j k  n N', 'Next, previous conflict block'],
+      ['J K', 'Scroll'],
+      ['o  t  b', 'Take ours · Take theirs · Keep both (ours, then theirs) for the block; nothing is staged'],
+      ['esc  ←  h', 'Back to the file list, where space marks the file resolved'],
+    ],
+  },
+  {
+    title: 'File history',
+    about: 'H, /history <path>: the commits that touched it, following renames',
+    rows: [
+      ['↵', 'The commit\'s diff of the file (esc comes back here)'],
+      ['B', 'Blame the file as it was in that commit'],
+    ],
+  },
+  {
+    title: 'Blame',
+    about: 'B, /blame <path>: the working-tree file, so new lines show as not committed yet',
+    rows: [
+      ['↵', 'Diff of the commit that last changed the line (esc comes back here)'],
+      ['H', 'The file\'s history'],
+      ['v  L', 'Select lines (v, move, v) · Every commit that changed them, and how (git log -L)'],
+    ],
+  },
+  {
+    title: 'Branches',
+    views: ['branches'],
+    rows: [
+      ['↵', 'Check out (a remote branch gets a local tracking branch)'],
+      ['n', 'New branch from it'],
+      ['m  e', 'Merge it in · Rebase onto it'],
+      ['d', 'Delete (asks before force-deleting or deleting on the remote)'],
+      ['D', 'Full diff of what it adds to the default branch (/compare <ref> [base])'],
+      ['o', 'Open its pull request in the browser (#12 GitHub, !12 Azure DevOps; coloured by review)'],
+      'The right-hand pane: how far it is ahead of and behind the default branch, its commits the default branch doesn\'t have, then its history.',
+      ['C', 'Clean up: delete branches with nothing unpushed or unmerged, and clean worktrees, and the branches of merged pull requests on the remote (/cleanup)'],
+      ['U', 'On a local branch: set what it tracks (/upstream [branch] <remote/branch>, --unset to stop)'],
+      ['M', 'The remotes (/remote): n add · R rename · x remove · u change its URL · f fetch · p push the current branch to it (/push <remote>)'],
+      { heading: 'Tags', about: 'at the bottom of the list' },
+      ['u', 'Push it (/tag-push <tag> [remote])'],
+      ['d', 'Delete it: here, on the remote, or both (asks first)'],
+      ['R', 'Create a GitHub release for it, published or as a draft (/release <tag> [--draft] [title])'],
+    ],
+  },
+  {
+    title: 'Worktrees',
+    about: '● the one open here',
+    views: ['worktrees'],
+    rows: [
+      ['↵', 'Open it in Splice'],
+      ['n', 'New worktree (/worktree <path> [ref]; the path is relative to the repository)'],
+      ['x', 'Remove it (asks first; the branch stays), or prune one whose folder is gone'],
+      ['C', 'Clean up: remove worktrees without changes, branches with nothing unpushed, and the branches of merged pull requests on the remote (/cleanup)'],
+    ],
+  },
+  {
+    title: 'Stash',
+    views: ['stash'],
+    rows: [
+      ['↵', 'Full diff'],
+      ['s  S', 'Stash the current changes · The same, typing a message first (/stash <message>)\nUntracked files go too, unless turned off in /settings; /stash -u or --no-untracked overrides'],
+      ['a  o  x', 'Apply · Pop · Drop'],
+      ['F', 'Its files. ↵ restores one into the working tree, as apply would: a change unstaged, a file the stash added staged, an untracked file untracked; a file the stash deleted, it offers to delete. Asks before overwriting uncommitted changes. d shows the file\'s diff in the stash.'],
+    ],
+  },
+  {
+    title: 'PRs',
+    about: 'GitHub through gh, Azure DevOps through az: your existing sign-in',
+    views: ['prs'],
+    rows: [
+      '◆ asks for your review · ● yours · others below',
+      ['↵', 'Full diff, with review comments under their lines'],
+      ['c', 'Check out its branch\nIn it: t T next, previous comment · r reply to it (/reply <text>)'],
+      ['a', 'Approve'],
+      ['C', 'Comment (/comment <text>)'],
+      ['m', 'Merge it: squash, merge commit or rebase; now or once checks pass (auto-merge), deleting the branch or not (/merge-pr [squash|merge|rebase] [--delete-branch] [--auto])'],
+      ['s', 'Its checks (/ci), failed first: ↵ the log (a failed job\'s failed steps), o open in the browser, R re-run the failed ones'],
+      ['A', 'Ask for reviewers (/reviewer <name> [name ...])'],
+      ['D', 'Draft, or ready for review (/draft, /ready)'],
+      ['E  B', 'Retitle it (/title <text>) · Edit its description: written to a file for your own editor, then /body --file <it> sends it (/body <text> sends text, \\n for a new line)'],
+      ['o', 'Open in the browser'],
+      ['n', 'New pull request from the current branch (/pr <title> [--into <branch>] [--draft])'],
+      ['W', 'Claude drafts one: title into the prompt, description offered when you open it'],
+      ['e  R', 'Claude explains it · Claude reviews it'],
+    ],
+  },
+  {
+    title: 'Claude',
+    about: 'through the Claude Code CLI, signed in as you already are; answers take several seconds, esc cancels',
+    rows: ['W, S, R, e and C above, and /describe, /split, /draft-pr [--into <branch>], /explain [ref] and /review [ref] (in Slash commands).'],
+  },
+  {
+    title: 'Reflog',
+    about: '/reflog: everywhere HEAD has been, newest first',
+    rows: [
+      ['↵', 'Full diff of the commit'],
+      ['c', 'Check it out'],
+      ['X', 'Reset the current branch to it (soft, mixed or hard)'],
+    ],
+  },
+  {
+    title: 'Repos',
+    views: ['repos'],
+    rows: [
+      ['↵', 'Open'],
+      ['x', 'Forget (remove from recent)'],
+      ['s', 'Add a folder to scan for repositories'],
+    ],
+  },
+  {
+    title: 'Prompt',
+    rows: [
+      ['tab', 'Complete'],
+      ['↑ ↓', 'Pick a suggestion, or walk history'],
+      ['esc', 'Back to the view (the text is kept)'],
+      ['ctrl+u ctrl+w', 'Clear the line · Delete a word'],
+    ],
+  },
+  {
+    title: 'Viewer',
+    about: 'diffs, output',
+    rows: [
+      ['j k  space  g G', 'Scroll'],
+      ['n N', 'Next, previous hunk'],
+      ['/', 'Search: matches show as you type, ↵ keeps it (a capital letter makes it match case)'],
+      ['n N', 'With a search: next, previous match'],
+      ['esc / q', 'Clear the search, then close'],
+      'Diffs pick out the words that changed within a line.',
+    ],
+  },
+];

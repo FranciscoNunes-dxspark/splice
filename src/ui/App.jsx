@@ -3,10 +3,11 @@ import { Box, Text, useApp, useInput, useStdin } from 'ink';
 import { existsSync } from 'node:fs';
 import { basename, resolve } from 'node:path';
 import * as a from '../actions.js';
-import { completionKind, findCommand, suggestionsFor } from '../commands.js';
+import { COMMANDS, completionKind, findCommand, suggestionsFor } from '../commands.js';
 import { samePath, saveConfig, withRecent } from '../config.js';
 import { git, run } from '../git.js';
 import { HELP } from '../help.js';
+import { commandsSection, sectionFor } from '../help-layout.js';
 import { changeDiff, commitPatch, findRepo, loadRepo, snapshot, stashFileDiff, stashPatch } from '../repo.js';
 import { discover, eachLimited, summarize } from '../repos.js';
 import { BULLET, theme } from '../theme.js';
@@ -22,6 +23,7 @@ import { StashView } from './StashView.jsx';
 import { WorktreesView } from './WorktreesView.jsx';
 import { PrView } from './PrView.jsx';
 import { hostFor, openUrl } from '../hosting.js';
+import { HelpView } from './HelpView.jsx';
 import { TextViewer } from './TextViewer.jsx';
 import { Picker } from './Picker.jsx';
 import { RebaseEditor } from './RebaseEditor.jsx';
@@ -37,6 +39,9 @@ const VIEWS = [
   { id: 'prs', label: 'PRs' },
   { id: 'repos', label: 'Repos' },
 ];
+
+// What ? shows: help.js's sections, then the slash commands.
+const HELP_SECTIONS = [...HELP, commandsSection(COMMANDS)];
 
 const HINTS = {
   graph: '↵ diff · c checkout · b branch · m merge · i rebase from here · C cherry-pick · v revert · X reset · B bisect · e/R Claude explains/reviews',
@@ -482,7 +487,8 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
       closing?.onClosed?.();
     },
     overlayHasKeys: () => focusRef.current === 'view' && !confirmRef.current && answerKey.current !== keySeq.current,
-    showHelp: () => setOverlay({ title: 'Keyboard shortcuts', text: HELP }),
+    // On the section for the view on screen.
+    showHelp: () => setOverlay({ kind: 'help', start: sectionFor(HELP_SECTIONS, view) }),
     showLast: () => (lastOutput.current ? setOverlay({ ...lastOutput.current }) : note('No command has run yet.')),
     // `paths` limits it to some files (a file's history: its path then, and the one before a rename).
     showPatch: (c, paths = []) =>
@@ -822,6 +828,8 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
   let main;
   if (overlay?.kind === 'rebase') {
     main = <RebaseEditor plan={overlay.plan} ctx={ctx} width={W} height={mainH} active={focus === 'view' && !confirmReq} />;
+  } else if (overlay?.kind === 'help') {
+    main = <HelpView sections={HELP_SECTIONS} start={overlay.start} ctx={ctx} width={W} height={mainH} active={focus === 'view' && !confirmReq} onClose={ctx.closeOverlay} />;
   } else if (overlay?.kind === 'picker') {
     main = <Picker key={overlay.id} picker={overlay} ctx={ctx} width={W} height={mainH} active={focus === 'view' && !confirmReq} />;
   } else if (overlay) {
@@ -845,7 +853,9 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
       ? 'enter run · tab complete · ↑↓ pick or history · esc back'
       : overlay?.kind === 'rebase'
         ? '↵ start the rebase · esc cancel'
-        : overlay?.kind === 'picker'
+        : overlay?.kind === 'help'
+          ? 'j/k section · space scroll · / search · esc close'
+          : overlay?.kind === 'picker'
           ? 'j/k move · esc close'
           : overlay
           ? 'j/k scroll · space page · n/N hunk · / search · esc close'
