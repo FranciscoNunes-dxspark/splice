@@ -1,11 +1,12 @@
 // Every git operation the UI offers, written once. Keys and slash commands both call these.
 // `ctx` is the app's handle: data, exec, confirm, note, prefill, and so on (see App.jsx).
-import { existsSync } from 'node:fs';
+import { existsSync, realpathSync, statSync } from 'node:fs';
 import { readFile, rm, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { READ_ONLY, cleanSubject, clip, commitPrompt, lookPrompt, parsePrDraft, parseResolution, parseSplit, prPrompt, resolveInput, resolvePrompt, splitInput, splitPrompt } from './claude.js';
 import { cleanupChoice, cleanupCount, cleanupOptions, cleanupText, planCleanup, readCleanup } from './cleanup.js';
 import { configFile } from './config.js';
+import { droppedPaths, insideRepo } from './drop.js';
 import { matchLineEndings, parseConflicts, takeSide, unifiedDiff } from './conflict.js';
 import { blamePicker, historyPicker, repoPath } from './history.js';
 import { MERGE_LABELS, bodyArgs, mergePrArgs, releaseArgs } from './hosting.js';
@@ -1996,6 +1997,46 @@ export function fileHistory(ctx, typed) {
   const path = repoPath(ctx.data.root, typed);
   if (!path) return ctx.prefill('/history ');
   ctx.showPicker(historyPicker(ctx, path));
+}
+
+const real = (p) => {
+  try {
+    return realpathSync.native(p);
+  } catch {
+    return p;
+  }
+};
+
+/**
+ * A folder or file dropped on the terminal, which types its path. A folder opens as /open would, or,
+ * when it isn't in a repository, the Repos view lists the repositories inside it (as `splice <folder>`
+ * does); a file in the open repository shows its history. False when `text` isn't the path of something
+ * that's there, so it's taken as typing.
+ */
+export function openDropped(ctx, text) {
+  const paths = droppedPaths(text);
+  const kinds = paths?.map((p) => {
+    try {
+      return statSync(p).isDirectory() ? 'folder' : 'file';
+    } catch {
+      return null;
+    }
+  });
+  if (!kinds || kinds.some((k) => !k)) return false;
+  if (paths.length > 1) {
+    ctx.note(`Drop one folder or file at a time (that was ${paths.length}).`, 'error');
+    return true;
+  }
+  const [path] = paths;
+  if (kinds[0] === 'folder') {
+    ctx.openRepo(path, { silent: true }).then((opened) => opened || ctx.showReposIn(path));
+    return true;
+  }
+  const root = ctx.data?.root;
+  const rel = root && insideRepo(real(root), real(path));
+  if (rel) fileHistory(ctx, rel);
+  else ctx.note(`${basename(path)} isn't in ${root ? basename(root) : 'an open repository'}. Drop a file of the open repository to see its history, or a folder to open it.`, 'error');
+  return true;
 }
 
 /** B on a file, or /blame <path>: who last changed each line of the working-tree version. */

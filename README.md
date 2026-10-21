@@ -56,7 +56,7 @@ Press `?` inside for every shortcut: the sections down the left, opening on the 
 
 | Where | Keys |
 | --- | --- |
-| Anywhere | `1`–`7` or `tab` switch views · `/` commands · `!` any git command · `f` fetch · `p` pull · `P` push · `r` refresh · `z` undo the last commit, merge, rebase, reset, switch or discard · `,` settings · `esc` cancel the running command · `q` quit |
+| Anywhere | `1`–`7` or `tab` switch views · `/` commands · `!` any git command · `f` fetch · `p` pull · `P` push · `r` refresh · `z` undo the last commit, merge, rebase, reset, switch or discard · `,` settings · `esc` cancel the running command · `q` quit · drop a folder on the terminal to open it, or a file for its history |
 | Lists | `j`/`k` or arrows · `g`/`G` top/bottom · `ctrl+d`/`ctrl+u` page · `J`/`K` scroll the right-hand pane · `y` copy what's under the cursor: a commit's hash, a branch name, a file's path, a stash's message, a PR's link |
 | Graph | `↵` full diff · `c` check out · `b` branch here · `t` tag here · `m` merge · `s` checks: `↵` a check's log, `R` re-run the failed ones · `A` add reviewers · `D` draft or ready · `E` retitle · `B` edit the description · `i` interactive rebase from here · `C` cherry-pick · `v` revert · `X` reset to here · `B` bisect: mark it bad or good · `e` / `R` Claude explains / reviews it |
 | Rebase editor | `p` pick · `r` reword · `e` edit · `s` squash · `f` fix up · `d` drop · `J`/`K` move · `↵` start · `esc` cancel |
@@ -74,6 +74,8 @@ Press `?` inside for every shortcut: the sections down the left, opening on the 
 | Viewer (diffs, output, help, Claude's answers) | `j`/`k` scroll · `space` page · `n`/`N` next or previous hunk · `/` search: matches show as you type, `↵` keeps the search, then `n`/`N` go from match to match · `esc` clears the search, then closes |
 
 The mouse works too: click a tab, a row or the prompt, double-click a row to do what `↵` does, and scroll the list or pane under the pointer with the wheel. In Changes, clicking a `+` or `-` line puts the cursor in the diff, ready to stage that hunk with `space`. Drag to select text as you would in the terminal: it's copied when you let go (to the system clipboard, or through the terminal over SSH), and stays highlighted until the next key or click. With the mouse turned off in the settings, the terminal does its own selecting again. On Windows the downloaded Splice handles the mouse itself; run from a checkout, it needs Node 22.17 or later.
+
+**Dropping a folder** on the terminal (from Explorer, Finder or a file manager) opens it, as `/open` does; a folder that isn't a repository shows the Repos view with the ones found inside it, as `splice <folder>` does. Dropping a file of the open repository shows its history, as `/history` does. The terminal types a dropped path, so Splice takes it as a drop when what arrives at once is nothing but the path of something that's there (quoted or not, Windows paths and `file://` links too), anywhere but the prompt, where it's just text.
 
 ### Slash commands
 

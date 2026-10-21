@@ -496,6 +496,14 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
         cur.map((x) => (path === null ? { ...x, fetch: undefined } : samePath(x.path, path) ? { ...x, fetch, ...(summary ? { summary } : {}) } : x)),
       ),
     setFetchProgress,
+    // A dropped folder that isn't a repository: the Repos view, with the ones inside it (as `splice <folder>`).
+    showReposIn: (dir) => {
+      const full = resolve(dir);
+      extraRoots.current = [...extraRoots.current.filter((r) => !samePath(r, full)), full];
+      note(`${full} isn't a git repository. Repos lists the ones inside it.`);
+      if (view === 'repos') refreshRepos();
+      else setView('repos');
+    },
     forgetRepo: (path) => {
       setConfig((c) => ({ ...c, recent: c.recent.filter((r) => !samePath(r, path)) }));
       refreshRepos();
@@ -734,6 +742,8 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
       }
       return;
     }
+    // A folder or file dropped on the terminal (which types its path): a repository to open, or a file's history.
+    if (input.length > 1 && a.openDropped(ctx, input)) return;
     if (input === '/' || input === ':') return prefill('/');
     if (input === '!') return prefill('!');
     if (input === '?') return ctx.showHelp();

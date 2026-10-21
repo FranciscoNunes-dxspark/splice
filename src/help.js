@@ -17,6 +17,7 @@ export const HELP = [
       ['?', 'This help'],
       ['q / ctrl+c', 'Quit'],
       ['mouse', 'Click a tab, a row or the prompt · double-click does ↵ · the wheel scrolls\ndrag to select text, copied when you let go'],
+      ['drop', 'Drop a folder on the terminal to open it (a folder of repositories lists them in Repos)\ndrop a file of the open repository to see its history'],
     ],
   },
   {
