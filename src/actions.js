@@ -4,6 +4,7 @@ import { existsSync, realpathSync, statSync } from 'node:fs';
 import { readFile, rm, writeFile } from 'node:fs/promises';
 import { basename, join, resolve } from 'node:path';
 import { READ_ONLY, blameInput, blamePrompt, clip, commitPrompt, lookPrompt, parseCommitMessage, parsePrDraft, parseResolution, parseSplit, prPrompt, resolveInput, resolvePrompt, splitInput, splitPrompt } from './claude.js';
+import { absorbFiles, absorbSummary, absorbText, blameMap, blameTargets, groupPatch, lineRanges, planAbsorb } from './absorb.js';
 import { cleanupChoice, cleanupCount, cleanupOptions, cleanupText, planCleanup, readCleanup } from './cleanup.js';
 import { configFile } from './config.js';
 import { droppedPaths, insideRepo } from './drop.js';
@@ -11,7 +12,7 @@ import { matchLineEndings, parseConflicts, takeSide, unifiedDiff } from './confl
 import { blamePicker, historyPicker, lineLogArgs, linesRange, repoPath } from './history.js';
 import { commentChar, messageFileText, readMessage } from './message.js';
 import { MERGE_LABELS, bodyArgs, mergePrArgs, releaseArgs } from './hosting.js';
-import { defaultBranch, filterArgs, filterLabel, filterLogArgs, findArgs, firstBadCommit, parseLog, parseNameStatus, parseStatus, relTime, remoteArgs, searchArgs, splitArgs, stashArgs, upstreamArgs } from './parse.js';
+import { defaultBranch, filterArgs, parseBlame, filterLabel, filterLogArgs, findArgs, firstBadCommit, parseLog, parseNameStatus, parseStatus, relTime, remoteArgs, searchArgs, splitArgs, stashArgs, upstreamArgs } from './parse.js';
 import { buildPatch, coversAll, parseDiff, picksBySignature, splitUnits } from './patch.js';
 import {
   COMMIT_LIST_FORMAT,
@@ -1312,8 +1313,11 @@ export async function fixup(ctx, ref) {
   });
 }
 
-/** The branch's commits that aren't on its upstream or the default branch yet; failing that, the latest 30. */
-async function fixupCandidates(ctx) {
+/**
+ * The branch's commits that aren't on its upstream or the default branch yet, newest first; failing that,
+ * the latest 30 (`own` false).
+ */
+async function branchCommits(ctx, signal) {
   const { status, refs, remotes } = ctx.data;
   const { branch } = status;
   const exclude = fixupExclusions({
@@ -1322,9 +1326,13 @@ async function fixupCandidates(ctx) {
     def: defaultBranch(refs, remotes),
     local: refs.local.map((b) => b.name),
   });
-  let list = exclude.length ? parseCommitList(await ctx.git(fixupLogArgs(exclude))) : [];
-  if (!list.length) list = parseCommitList(await ctx.git(fixupLogArgs([])));
-  return list.map((c) => ({
+  const list = exclude.length ? parseCommitList(await ctx.git(fixupLogArgs(exclude), { signal })) : [];
+  if (list.length) return { list, own: true };
+  return { list: parseCommitList(await ctx.git(fixupLogArgs([]), { signal })), own: false };
+}
+
+async function fixupCandidates(ctx) {
+  return (await branchCommits(ctx)).list.map((c) => ({
     ...c,
     segments: [
       { text: c.hash.slice(0, 7), color: theme.warn },
@@ -1339,12 +1347,25 @@ async function fixupInto(ctx, target, { stageAll }) {
   if (stageAll && !(await ctx.exec(['add', '-A'], { refresh: false, quiet: true })).ok) return;
   const made = await ctx.exec(['commit', `--fixup=${target.hash}`], { label: 'Committing the fixup' });
   if (!made.ok) return made;
-  const later = `Kept "fixup! ${target.subject}" as its own commit for now.\nTo fold it in later: i on ${short(target.hash)} in the graph, J to move the fixup! commit just above it, f to fix up, ↵.`;
+  return offerFold(ctx, target, {
+    title: `Fold it into "${target.subject}" now?`,
+    kept: `Kept "fixup! ${target.subject}" as its own commit for now.`,
+    later: `To fold it in later: i on ${short(target.hash)} in the graph, J to move the fixup! commit just above it, f to fix up, ↵.`,
+  });
+}
+
+/**
+ * After fixup! commits are made: asks whether to fold them in with an autosquash rebase from `oldest` (the
+ * oldest commit given one), warning when that commit is already pushed. Merge commits after it would be
+ * flattened, so then it only says how to fold them in later.
+ */
+async function offerFold(ctx, oldest, { title, kept, later, many = false }) {
+  const keep = `${kept}\n${later}`;
   // Without --rebase-merges a rebase flattens merges, and with it a merge can conflict all over again.
-  const merges = Number((await ctx.git(['rev-list', '--count', '--min-parents=2', `${target.hash}..HEAD`]).catch(() => '0')).trim());
-  if (merges) return ctx.note(`There are merge commits after "${target.subject}", which folding the fixup in would flatten.\n${later}`);
+  const merges = Number((await ctx.git(['rev-list', '--count', '--min-parents=2', `${oldest.hash}..HEAD`]).catch(() => '0')).trim());
+  if (merges) return ctx.note(`There are merge commits after "${oldest.subject}", which folding ${many ? 'them' : 'the fixup'} in would flatten.\n${keep}`);
   // Already on a remote branch means folding rewrites history others may have.
-  const onRemotes = (await ctx.git(['for-each-ref', '--contains', target.hash, '--format=%(refname:short)', 'refs/remotes']).catch(() => ''))
+  const onRemotes = (await ctx.git(['for-each-ref', '--contains', oldest.hash, '--format=%(refname:short)', 'refs/remotes']).catch(() => ''))
     .split('\n')
     .filter((r) => r && !r.endsWith('/HEAD'));
   const { upstream } = ctx.data.status.branch;
@@ -1352,24 +1373,122 @@ async function fixupInto(ctx, target, { stageAll }) {
   // Other changes to tracked files would stop the rebase; set aside, they come back when it's done.
   const autostash = ctx.data.status.files.some((f) => f.kind !== 'untracked');
   const fold = await ctx.confirm({
-    title: `Fold it into "${target.subject}" now?`,
+    title,
     detail: pushedTo
-      ? `${short(target.hash)} is already on ${pushedTo}: folding rewrites pushed history, so you'd need /push --force afterwards.`
-      : `Rewrites the commits since ${short(target.hash)} (an autosquash rebase)${autostash ? '; other changes are stashed meanwhile' : ''}.`,
+      ? `${short(oldest.hash)} is already on ${pushedTo}: folding rewrites pushed history, so you'd need /push --force afterwards.`
+      : `Rewrites the commits since ${short(oldest.hash)} (an autosquash rebase)${autostash ? '; other changes are stashed meanwhile' : ''}.`,
     options: [
-      { label: 'Yes, fold it in', value: true },
-      { label: 'No, keep the fixup! commit for later', value: false },
+      { label: `Yes, fold ${many ? 'them' : 'it'} in`, value: true },
+      { label: `No, keep the fixup! commit${many ? 's' : ''} for later`, value: false },
     ],
     danger: Boolean(pushedTo),
   });
-  if (!fold) return ctx.note(later);
+  if (!fold) return ctx.note(keep);
   // GIT_EDITOR is already `true`; this also beats a sequence.editor in the user's config. The todo is taken as autosquash ordered it.
-  const r = await ctx.exec(foldArgs(target, { autostash }), { label: 'Folding the fixup in', env: { GIT_SEQUENCE_EDITOR: 'true' } });
+  const r = await ctx.exec(foldArgs(oldest, { autostash }), { label: `Folding the fixup${many ? 's' : ''} in`, env: { GIT_SEQUENCE_EDITOR: 'true' } });
   if (ctx.data.state) {
     if (ctx.data.changes.conflicts.length) afterConflicts(ctx);
     else ctx.note('The rebase stopped. /continue carries on, /abort puts everything back.', 'error');
   }
   return r;
+}
+
+/**
+ * Z in Changes, /absorb: each staged hunk becomes a fixup! commit for the branch's commit that last changed
+ * its lines (by blaming them at HEAD), as git-absorb does; hunks with no one such commit stay staged. Shows the
+ * plan and asks, commits each group in a separate index (so what stays is never touched), then offers to fold
+ * them in as F does.
+ */
+export async function absorb(ctx) {
+  if (!needRepo(ctx)) return;
+  const { state } = ctx.data;
+  if (state) return ctx.note(`A ${OP[state]} is in progress. Finish it first (/continue or /abort), then absorb.`, 'error');
+  if (isInitial(ctx)) return ctx.note('There are no commits yet to absorb changes into.', 'error');
+  const { branch } = ctx.data.status;
+  if (!branch.head) return ctx.note('HEAD is detached. Folding fixups in rewrites a branch, so check one out first.', 'error');
+  const { staged, conflicts } = ctx.data.changes;
+  if (conflicts.length) return ctx.note('Resolve the conflicts first (space marks a file resolved).', 'error');
+  if (!staged.length) return ctx.note('Nothing is staged. Stage the changes to absorb first (space, or a for all).', 'error');
+  let files;
+  let plan;
+  let own = true;
+  const read = await ctx.task(
+    'Finding the commits the staged changes belong to',
+    async (signal) => {
+      const [diffText, commits] = await Promise.all([ctx.git(['diff', '--cached', '--no-ext-diff', '-U3'], { signal }), branchCommits(ctx, signal)]);
+      own = commits.own;
+      files = absorbFiles(diffText);
+      const blames = new Map();
+      // One blame per file, of just the lines its hunks need, as of HEAD.
+      await eachLimited(
+        files.filter((f) => !f.problem),
+        4,
+        async (f) => {
+          const ranges = lineRanges(f.diff.hunks.flatMap(blameTargets));
+          if (!ranges.length) return null;
+          const raw = await ctx.git(['blame', '--porcelain', ...ranges.flatMap(([a, b]) => ['-L', `${a},${b}`]), 'HEAD', '--', f.path], { signal }).catch((e) => {
+            if (e.cancelled) throw e;
+            return null;
+          });
+          return raw == null ? null : blameMap(parseBlame(raw));
+        },
+        (f, map) => map && blames.set(f.path, map),
+      );
+      plan = planAbsorb(files, blames, commits.list);
+      return { stdout: '', stderr: '' };
+    },
+    { label: 'Looking at the staged changes', refresh: false, quiet: true },
+  );
+  if (!read.ok) return read;
+  const text = absorbText(plan, { own });
+  if (!plan.groups.length) {
+    ctx.showText('Absorb: nothing goes into an earlier commit', text);
+    return ctx.note("Nothing to absorb: no staged hunk's lines come from just one of the branch's commits. They stay staged.", 'error');
+  }
+  ctx.showText(`Absorb: ${absorbSummary(plan)}`, text);
+  const n = plan.groups.length;
+  const ok = await ctx.confirm({
+    title: `Make ${n === 1 ? 'a fixup! commit' : `${n} fixup! commits`} of ${absorbSummary(plan).split(' into ')[0]}?`,
+    detail: `Listed above: each goes to the commit that last changed its lines.${plan.stays.length ? ' The rest stay staged.' : ''}`,
+    options: YES_NO(`Yes, make the fixup! commit${n === 1 ? '' : 's'}`),
+  });
+  ctx.closeOverlay();
+  if (!ok) return;
+  if ((await readySigning(ctx)) === false) return;
+  // The commits are made from an index of their own, started from HEAD: the real one keeps everything staged,
+  // and once they're made, what's left staged against the new HEAD is just what stayed.
+  const index = join(ctx.data.gitDir, 'splice-absorb-index');
+  const env = { GIT_INDEX_FILE: index };
+  let made = 0;
+  let problem = null;
+  try {
+    const start = await ctx.exec(['read-tree', 'HEAD'], { env, quiet: true, refresh: false, label: 'Absorbing' });
+    if (!start.ok) return start;
+    for (const g of plan.groups) {
+      const staging = await apply(ctx, groupPatch(files, g), ['--cached'], 'Absorbing', { env, refresh: false, quietError: true });
+      if (!staging.ok) {
+        problem = staging.error.cancelled ? null : `The hunks for "${g.commit.subject}" didn't apply: ${firstLine(staging.error.message)}`;
+        break;
+      }
+      const r = await ctx.exec(['commit', '--quiet', `--fixup=${g.commit.hash}`], { env, label: 'Committing the fixups', refresh: false });
+      if (!r.ok) break;
+      made++;
+    }
+  } finally {
+    await rm(index, { force: true }).catch(() => {});
+    await ctx.reload();
+  }
+  if (made < n) {
+    const head = made ? `Made ${made} of the ${n} fixup! commits` : 'No fixup! commits were made';
+    return ctx.note([head, problem, 'What wasn\'t absorbed is still staged.'].filter(Boolean).join('\n'), 'error');
+  }
+  const oldest = plan.oldest;
+  return offerFold(ctx, oldest, {
+    title: n === 1 ? `Fold it into "${oldest.subject}" now?` : `Fold them into their ${n} commits now?`,
+    kept: n === 1 ? `Kept "fixup! ${oldest.subject}" as its own commit for now.` : `Kept the ${n} fixup! commits as they are for now.`,
+    later: `To fold ${n === 1 ? 'it' : 'them'} in later: i on ${short(oldest.hash)} in the graph, J/K to move each fixup! commit just above its commit, f to fix up, ↵.`,
+    many: n > 1,
+  });
 }
 
 /**

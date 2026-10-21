@@ -159,6 +159,7 @@ export function ChangesView({ data, ctx, width, height, active }) {
     if (input === 'J') return target === 'conflict' ? cf.page(1) : dnav.handle('', { pageDown: true });
     if (input === 'K') return target === 'conflict' ? cf.page(-1) : dnav.handle('', { pageUp: true });
     if (input === 'F') return a.fixup(ctx);
+    if (input === 'Z') return a.absorb(ctx);
     if (sub) {
       if (input === 'I') return a.updateSubmodules(ctx, sub.path);
       if (input === 'o' || key.return) return a.openSubmodule(ctx, sub);

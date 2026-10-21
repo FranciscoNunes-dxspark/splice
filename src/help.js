@@ -77,6 +77,7 @@ export const HELP = [
       ['c  A', 'Commit · Amend the last commit (/commit <message>, \\n for a new line)'],
       ['M', 'Write the message in your own editor: a file in .git, started from what follows /commit (or /amend: the commit\'s message) in the prompt and listing what\'s staged; then /commit --file <it> commits it'],
       ['F', 'Fix up an earlier commit with the staged changes (pick it; then fold it in, or keep it for later)'],
+      ['Z', 'Absorb the staged changes: each hunk becomes a fixup! commit for the branch\'s commit that last changed its lines; shows where each goes (and what stays staged), asks, then offers to fold them in (/absorb)'],
       ['W', 'Claude writes the commit message for the staged changes: a subject into the prompt to edit, or with a body, into the message file (as M) to edit or just commit'],
       ['S', 'Claude splits all your changes into logical commits: each one shown as a diff, then commit it, skip it (its changes stay uncommitted) or stop (/split)'],
       ['R', 'Claude reviews the staged changes (or the unstaged ones, if nothing is staged)'],

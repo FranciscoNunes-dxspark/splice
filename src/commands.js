@@ -7,6 +7,7 @@ export const COMMANDS = [
   { name: 'commit', args: '<message> | --file [path]', desc: 'Commit the staged changes (\\n for a new line); --file: the message from a file, alone: written to one for your editor', run: (ctx, s) => a.commit(ctx, s) },
   { name: 'amend', args: '[message | --file [path]]', desc: 'Amend the last commit (keeps its message if none given); --file alone: its message in a file for your editor', run: (ctx, s) => a.commit(ctx, s, { amend: true }) },
   { name: 'fixup', args: '[ref]', desc: 'Make the staged changes a fix for an earlier commit (picked from a list), then fold it in', complete: 'refs', run: (ctx, s) => a.fixup(ctx, s) },
+  { name: 'absorb', desc: "Each staged hunk becomes a fixup! for the branch's commit that last changed its lines (shows where, asks), then folds them in", run: (ctx) => a.absorb(ctx) },
   { name: 'checkout', args: '<branch|tag|hash>', desc: 'Switch to a branch, tag or commit', complete: 'refs', run: (ctx, s) => a.checkout(ctx, s) },
   { name: 'branch', args: '<name> [start]', desc: 'Create a branch and switch to it', run: (ctx, s) => a.createBranch(ctx, s) },
   { name: 'delete', args: '<branch|tag>', desc: 'Delete a branch (local or remote) or a tag', complete: 'refs', run: (ctx, s) => a.deleteRef(ctx, s) },
