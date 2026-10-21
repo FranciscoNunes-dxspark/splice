@@ -13,11 +13,12 @@ import { App } from '../src/ui/App.jsx';
 test('the settings list: values, plurals, and what ↵ does', () => {
   const rows = settingRows({ recent: [], roots: [], history: [] }, { file: '/home/me/.splice/config.json' });
   const by = Object.fromEntries(rows.map((r) => [r.id, r]));
-  assert.deepEqual(rows.map((r) => r.id), ['accent', 'mouse', 'checkForUpdates', 'autoUpdate', 'roots', 'recent', 'history', 'file']);
+  assert.deepEqual(rows.map((r) => r.id), ['accent', 'mouse', 'checkForUpdates', 'autoUpdate', 'stashUntracked', 'roots', 'recent', 'history', 'file']);
   assert.equal(by.accent.value, `${DEFAULT_ACCENT} (default)`);
   assert.equal(by.mouse.value, 'on');
   assert.equal(by.checkForUpdates.value, 'on');
   assert.equal(by.autoUpdate.value, 'on');
+  assert.equal(by.stashUntracked.value, 'on');
   assert.equal(by.roots.value, 'none');
   // Nothing to clear: ↵ does nothing.
   assert.equal(by.recent.action, 'none');
@@ -96,6 +97,11 @@ test('settings change in place, are saved as they change, and the accent repaint
     app.stdin.write('\r');
     await until(() => /Install them by itself\s+off/.test(frame()) && saved().autoUpdate === false, 'auto-update off, saved');
     assert.match(frame(), /❯ Install them by itself/, 'the cursor stays on the row it changed');
+
+    // Stashing untracked files: on by default, ↵ turns it off.
+    await down('Stash untracked files');
+    app.stdin.write('\r');
+    await until(() => /Stash untracked files\s+off/.test(frame()) && saved().stashUntracked === false, 'untracked stashing off, saved');
 
     // The folders: x stops scanning one, and the count in the list follows.
     await down('Folders to scan');

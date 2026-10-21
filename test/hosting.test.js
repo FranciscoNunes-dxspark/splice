@@ -70,3 +70,71 @@ test('GitHub: review decision, checks, and sorting', () => {
 test('wrap keeps paragraphs apart', () => {
   assert.deepEqual(wrap('one two three\r\n\r\nfour', 8), ['one two', 'three', '', 'four']);
 });
+
+test('merging a pull request: the arguments for /merge-pr, gh and az', async () => {
+  const { mergePrArgs, githubMergeArgs, azureMergeArgs } = await import('../src/hosting.js');
+  assert.deepEqual(mergePrArgs(''), { method: null, deleteBranch: null, auto: null });
+  assert.deepEqual(mergePrArgs('squash -d --auto'), { method: 'squash', deleteBranch: true, auto: true });
+  assert.deepEqual(mergePrArgs('--rebase --keep-branch'), { method: 'rebase', deleteBranch: false, auto: null });
+  assert.match(mergePrArgs('octopus').error, /Unknown option: octopus/);
+  const pr = { id: 12 };
+  assert.deepEqual(githubMergeArgs(pr, 'o/r', { method: 'squash', deleteBranch: true, auto: false }), ['pr', 'merge', '12', '-R', 'o/r', '--squash', '--delete-branch']);
+  assert.deepEqual(githubMergeArgs(pr, 'o/r', { method: 'merge', deleteBranch: false, auto: true }), ['pr', 'merge', '12', '-R', 'o/r', '--merge', '--auto']);
+  assert.deepEqual(azureMergeArgs(pr, { method: 'squash', deleteBranch: true, auto: false }), [
+    'repos', 'pr', 'update', '--id', '12', '--status', 'completed', '--squash', 'true', '--delete-source-branch', 'true',
+  ]);
+  assert.deepEqual(azureMergeArgs(pr, { method: 'merge', deleteBranch: false, auto: true }), [
+    'repos', 'pr', 'update', '--id', '12', '--auto-complete', 'true', '--squash', 'false', '--delete-source-branch', 'false',
+  ]);
+});
+
+test("checks: GitHub's rollup with Actions run and job ids, Azure DevOps policies, a build's failed logs", async () => {
+  const { githubChecks, azureChecks, failedLogs } = await import('../src/hosting.js');
+  assert.deepEqual(
+    githubChecks([
+      { __typename: 'CheckRun', name: 'test', workflowName: 'CI', status: 'COMPLETED', conclusion: 'FAILURE', detailsUrl: 'https://github.com/o/r/actions/runs/111/job/222' },
+      { __typename: 'StatusContext', context: 'ci/ext', state: 'PENDING', targetUrl: 'https://ci.example/9' },
+    ]),
+    [
+      { name: 'test', workflow: 'CI', state: 'fail', url: 'https://github.com/o/r/actions/runs/111/job/222', runId: '111', jobId: '222' },
+      { name: 'ci/ext', workflow: '', state: 'pending', url: 'https://ci.example/9', runId: null, jobId: null },
+    ],
+  );
+  const remote = { orgUrl: 'https://dev.azure.com/o', project: 'P 1', repo: 'R' };
+  assert.deepEqual(
+    azureChecks(
+      [
+        { status: 'rejected', evaluationId: 'e1', context: { buildId: 55 }, configuration: { settings: { displayName: 'PR build' } } },
+        { status: 'approved', evaluationId: 'e2', configuration: { type: { displayName: 'Minimum reviewers' } } },
+        { status: 'notApplicable', evaluationId: 'e3' },
+      ],
+      remote,
+    ),
+    [
+      { name: 'PR build', workflow: 'Build', state: 'fail', url: 'https://dev.azure.com/o/P%201/_build/results?buildId=55', evaluationId: 'e1', buildId: 55 },
+      { name: 'Minimum reviewers', workflow: '', state: 'pass', url: null, evaluationId: 'e2', buildId: null },
+    ],
+  );
+  assert.deepEqual(
+    failedLogs({ records: [{ name: 'b', result: 'failed', order: 2, log: { id: 9 } }, { name: 'a', result: 'failed', order: 1, log: { id: 4 } }, { name: 'ok', result: 'succeeded', log: { id: 1 } }, { name: 'job', result: 'failed' }] }),
+    [{ id: 4, name: 'a' }, { id: 9, name: 'b' }],
+  );
+});
+
+test('/body: a file, text with \\n for line breaks, or nothing', async () => {
+  const { bodyArgs } = await import('../src/hosting.js');
+  assert.deepEqual(bodyArgs(''), {});
+  assert.deepEqual(bodyArgs('--file'), { file: null });
+  assert.deepEqual(bodyArgs('--file "C:\\My Docs\\pr.md"'), { file: 'C:\\My Docs\\pr.md' });
+  assert.deepEqual(bodyArgs('--file /tmp/a b.md'), { file: '/tmp/a b.md' });
+  assert.deepEqual(bodyArgs('Fixes it.\\nAlso tests.'), { text: 'Fixes it.\nAlso tests.' });
+});
+
+test('/release: the tag, --draft and a title; and the gh release arguments', async () => {
+  const { releaseArgs, githubReleaseArgs } = await import('../src/hosting.js');
+  assert.deepEqual(releaseArgs('v1.2 --draft The big one'), { tag: 'v1.2', title: 'The big one', draft: true });
+  assert.deepEqual(releaseArgs('v1.2'), { tag: 'v1.2', title: '', draft: false });
+  assert.deepEqual(releaseArgs(''), { tag: null, title: '', draft: false });
+  assert.deepEqual(githubReleaseArgs('o/r', { tag: 'v1', title: 'One', draft: true }), ['release', 'create', 'v1', '-R', 'o/r', '--verify-tag', '--generate-notes', '--title', 'One', '--draft']);
+  assert.deepEqual(githubReleaseArgs('o/r', { tag: 'v1', title: '', draft: false }), ['release', 'create', 'v1', '-R', 'o/r', '--verify-tag', '--generate-notes']);
+});

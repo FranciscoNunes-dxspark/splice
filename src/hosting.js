@@ -162,6 +162,120 @@ export function azureThreads(value) {
   return out;
 }
 
+/**
+ * A GitHub PR's checks, from statusCheckRollup (check runs and commit statuses), in Splice's shape:
+ * { name, workflow, state: 'pass' | 'fail' | 'pending', url, runId, jobId }. A GitHub Actions job
+ * carries its run and job ids (from its link), which its log and re-running need.
+ */
+export function githubChecks(rollup = []) {
+  return (rollup ?? []).map((c) => {
+    const url = c.detailsUrl || c.targetUrl || null;
+    const m = /\/actions\/runs\/(\d+)\/job\/(\d+)/.exec(url ?? '');
+    const sum = checkSummary([c]);
+    return {
+      name: c.name || c.context || 'Check',
+      workflow: c.workflowName || '',
+      state: sum.failed ? 'fail' : sum.passed ? 'pass' : 'pending',
+      url,
+      runId: m ? m[1] : null,
+      jobId: m ? m[2] : null,
+    };
+  });
+}
+
+const POLICY_STATE = { approved: 'pass', rejected: 'fail', running: 'pending', queued: 'pending', broken: 'fail' };
+
+/**
+ * An Azure DevOps PR's policy evaluations (`az repos pr policy list`) as checks, in githubChecks' shape plus
+ * `evaluationId` (to queue it again) and `buildId` for build policies, whose results page is the link.
+ */
+export function azureChecks(policies, remote) {
+  return (policies ?? [])
+    .filter((p) => p.status !== 'notApplicable')
+    .map((p) => {
+      const buildId = p.context?.buildId ?? null;
+      return {
+        name: p.configuration?.settings?.displayName || p.configuration?.type?.displayName || 'Policy',
+        workflow: buildId ? 'Build' : '',
+        state: POLICY_STATE[p.status] ?? 'pending',
+        url: buildId ? `${remote.orgUrl}/${encodeURIComponent(remote.project)}/_build/results?buildId=${buildId}` : null,
+        evaluationId: p.evaluationId ?? null,
+        buildId,
+      };
+    });
+}
+
+/** The log ids of a build's failed steps, from its timeline (records with result "failed" and a log). */
+export function failedLogs(timeline) {
+  return (timeline?.records ?? [])
+    .filter((r) => r.result === 'failed' && r.log?.id != null)
+    .sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
+    .map((r) => ({ id: r.log.id, name: r.name ?? '' }));
+}
+
+// How a pull request can be merged, in the order offered. Azure DevOps' CLI only chooses between squashing or not.
+export const MERGE_METHODS = { github: ['squash', 'merge', 'rebase'], azure: ['squash', 'merge'] };
+export const MERGE_LABELS = { squash: 'Squash and merge', merge: 'Create a merge commit', rebase: 'Rebase and merge' };
+
+/**
+ * Reads "/merge-pr" arguments: a method (squash, merge or rebase), --delete-branch (-d) and --auto.
+ * Leaves out what isn't given (null), so the rest can be asked.
+ */
+export function mergePrArgs(text) {
+  const out = { method: null, deleteBranch: null, auto: null };
+  for (const w of (text ?? '').split(/\s+/).filter(Boolean)) {
+    if (MERGE_LABELS[w.replace(/^--/, '')]) out.method = w.replace(/^--/, '');
+    else if (w === '--delete-branch' || w === '-d') out.deleteBranch = true;
+    else if (w === '--keep-branch') out.deleteBranch = false;
+    else if (w === '--auto') out.auto = true;
+    else return { ...out, error: `Unknown option: ${w}. Use squash, merge or rebase, --delete-branch, --keep-branch, --auto.` };
+  }
+  return out;
+}
+
+/**
+ * Reads "/body" arguments: `--file <path>` (the description is that file), text (with \n for a line
+ * break), or nothing, which asks for the file to be made.
+ */
+export function bodyArgs(text) {
+  const s = (text ?? '').trim();
+  const file = /^--file(?:\s+([\s\S]*))?$/.exec(s);
+  if (file) return { file: (file[1] ?? '').trim().replace(/^(["'])(.*)\1$/, '$2') || null };
+  if (!s) return {};
+  return { text: s.replace(/\\n/g, '\n') };
+}
+
+/** Reads "/release <tag> [--draft] [title]": the title is the rest, kept as typed. */
+export function releaseArgs(text) {
+  let draft = false;
+  const rest = (text ?? '').replace(/(^|\s)--draft(?=\s|$)/g, (_, space) => {
+    draft = true;
+    return space;
+  });
+  const m = /^\s*(\S+)\s*([\s\S]*)$/.exec(rest);
+  return { tag: m ? m[1] : null, title: m ? m[2].replace(/\s+/g, ' ').trim() : '', draft };
+}
+
+/** `gh release create` arguments: only for a tag the server already has, with notes GitHub writes. */
+export function githubReleaseArgs(repo, { tag, title, draft }) {
+  return ['release', 'create', tag, '-R', repo, '--verify-tag', '--generate-notes', ...(title ? ['--title', title] : []), ...(draft ? ['--draft'] : [])];
+}
+
+/** `gh pr merge` arguments. --auto merges once the required checks and reviews pass. */
+export function githubMergeArgs(pr, repo, { method, deleteBranch, auto }) {
+  return ['pr', 'merge', String(pr.id), '-R', repo, `--${method}`, ...(deleteBranch ? ['--delete-branch'] : []), ...(auto ? ['--auto'] : [])];
+}
+
+/** `az repos pr update` arguments: completed now, or set to complete itself (auto-complete) once its policies pass. */
+export function azureMergeArgs(pr, { method, deleteBranch, auto }) {
+  return [
+    'repos', 'pr', 'update', '--id', String(pr.id),
+    ...(auto ? ['--auto-complete', 'true'] : ['--status', 'completed']),
+    '--squash', method === 'squash' ? 'true' : 'false',
+    '--delete-source-branch', deleteBranch ? 'true' : 'false',
+  ];
+}
+
 /** Your review requests first, then your own PRs, then the rest; newest first within each. */
 export function sortPrs(prs) {
   const rank = (p) => (p.reviewMe ? 0 : p.mine ? 1 : 2);
@@ -251,7 +365,7 @@ function github(root, remote) {
         .filter((r) => !voted.some((v) => v.name === r.name));
       return {
         reviewers: [...voted, ...waiting],
-        checks: (d.statusCheckRollup ?? []).map((c) => ({ name: c.name || c.context, state: checkSummary([c]).failed ? 'fail' : checkSummary([c]).passed ? 'pass' : 'pending' })),
+        checks: githubChecks(d.statusCheckRollup),
         comments: (d.comments ?? []).map((c) => ({ author: c.author?.login, text: c.body, time: Date.parse(c.createdAt) / 1000 })),
         conflicts: d.mergeable === 'CONFLICTING',
       };
@@ -267,6 +381,36 @@ function github(root, remote) {
       gh(['api', '-X', 'POST', `repos/${remote.owner}/${remote.repo}/pulls/${pr.id}/comments/${thread.id}/replies`, '-f', `body=${text}`], { signal }),
     checkout: (pr, signal) => gh(['pr', 'checkout', String(pr.id), ...repoArg], { signal }),
     approve: (pr, signal) => gh(['pr', 'review', String(pr.id), ...repoArg, '--approve'], { signal }),
+    mergeMethods: MERGE_METHODS.github,
+    async checks(pr) {
+      return githubChecks((await json(gh(['pr', 'view', String(pr.id), ...repoArg, '--json', 'statusCheckRollup']))).statusCheckRollup);
+    },
+    // A GitHub Actions job's log: just its failed steps when it failed, else all of it.
+    async checkLog(check, signal) {
+      if (!check.jobId) throw new Error(`${check.name} isn't a GitHub Actions job, so its log is on its own site: o opens it.`);
+      const log = (failed) => gh(['run', 'view', '--job', check.jobId, ...repoArg, failed ? '--log-failed' : '--log'], { signal });
+      const out = check.state === 'fail' ? await log(true).catch(() => '') : '';
+      return out.trim() ? out : log(false);
+    },
+    async createRelease(opts, signal) {
+      return (await gh(githubReleaseArgs(`${remote.owner}/${remote.repo}`, opts), { signal })).trim().split('\n').at(-1);
+    },
+    addReviewers: (pr, names, signal) => gh(['pr', 'edit', String(pr.id), ...repoArg, '--add-reviewer', names.join(',')], { signal }),
+    setDraft: (pr, draft, signal) => gh(['pr', 'ready', String(pr.id), ...repoArg, ...(draft ? ['--undo'] : [])], { signal }),
+    // The body goes on stdin (--body-file -): it can be long, and is taken as it is.
+    edit: (pr, { title, body }, signal) =>
+      gh(['pr', 'edit', String(pr.id), ...repoArg, ...(title != null ? ['--title', title] : []), ...(body != null ? ['--body-file', '-'] : [])], {
+        signal,
+        input: body ?? undefined,
+      }),
+    canRerun: true,
+    async rerun(pr, checks, signal) {
+      const runs = [...new Set(checks.filter((c) => c.state === 'fail' && c.runId).map((c) => c.runId))];
+      if (!runs.length) throw new Error('None of the failed checks is a GitHub Actions run, so there is nothing to re-run from here.');
+      for (const run of runs) await gh(['run', 'rerun', run, '--failed', ...repoArg], { signal });
+      return `Re-running the failed jobs of ${runs.length} workflow run${runs.length === 1 ? '' : 's'}`;
+    },
+    merge: (pr, opts, signal) => gh(githubMergeArgs(pr, `${remote.owner}/${remote.repo}`, opts), { signal }),
     comment: (pr, text, signal) => gh(['pr', 'comment', String(pr.id), ...repoArg, '--body', text], { signal }),
     async create({ title, body = '', source, target, draft }, signal) {
       const url = await gh(['pr', 'create', ...repoArg, '--title', title, '--body', body, '--base', target, '--head', source, ...(draft ? ['--draft'] : [])], { signal });
@@ -321,11 +465,7 @@ function azure(root, remote, remoteName) {
         }
       }
       comments.sort((a, b) => a.time - b.time);
-      const STATE = { approved: 'pass', rejected: 'fail', running: 'pending', queued: 'pending', broken: 'fail' };
-      const checks = policies
-        .filter((p) => p.status !== 'notApplicable')
-        .map((p) => ({ name: p.configuration?.settings?.displayName || p.configuration?.type?.displayName || 'Policy', state: STATE[p.status] ?? 'pending' }));
-      return { reviewers: pr.reviewers, checks, comments, conflicts: pr.conflicts };
+      return { reviewers: pr.reviewers, checks: azureChecks(policies, remote), comments, conflicts: pr.conflicts };
     },
     // Azure DevOps has no "pr diff" command, so diff the two branches locally (three dots: what the PR adds).
     async diff(pr) {
@@ -335,6 +475,36 @@ function azure(root, remote, remoteName) {
     },
     checkout: null, // done with plain git: fetch, then switch to a tracking branch
     approve: (pr, signal) => az(['repos', 'pr', 'set-vote', '--id', String(pr.id), '--vote', 'approve'], { signal }),
+    mergeMethods: MERGE_METHODS.azure,
+    async checks(pr) {
+      return azureChecks(await json(az(['repos', 'pr', 'policy', 'list', '--id', String(pr.id)])), remote);
+    },
+    // A build policy's log: the failed steps' logs, from the build's timeline (each log comes as its lines).
+    async checkLog(check, signal) {
+      if (!check.buildId) throw new Error(`${check.name} isn't a build, so it has no log.`);
+      const build = (resource, ...params) =>
+        json(az(['devops', 'invoke', '--area', 'build', '--resource', resource, '--api-version', '7.0', '--route-parameters',
+          `project=${remote.project}`, `buildId=${check.buildId}`, ...params], { signal }));
+      const logs = failedLogs(await build('timeline'));
+      if (!logs.length) throw new Error(`No failed step in build ${check.buildId} has a log: o opens the build in the browser.`);
+      const parts = [];
+      for (const l of logs) parts.push(`##[section] ${l.name}`, ...((await build('logs', `logId=${l.id}`)).value ?? []), '');
+      return parts.join('\n');
+    },
+    createRelease: null, // Azure DevOps has no releases made from tags
+    addReviewers: (pr, names, signal) => az(['repos', 'pr', 'reviewer', 'add', '--id', String(pr.id), '--reviewers', ...names], { signal }),
+    setDraft: (pr, draft, signal) => az(['repos', 'pr', 'update', '--id', String(pr.id), '--draft', String(draft)], { signal }),
+    // az takes the description as one value per line, as in create.
+    edit: (pr, { title, body }, signal) =>
+      az(['repos', 'pr', 'update', '--id', String(pr.id), ...(title != null ? ['--title', title] : []), ...(body != null ? ['--description', ...(body ? body.split('\n') : [''])] : [])], { signal }),
+    canRerun: true,
+    async rerun(pr, checks, signal) {
+      const evals = checks.filter((c) => c.state === 'fail' && c.evaluationId);
+      if (!evals.length) throw new Error('None of the failed policies can be queued again.');
+      for (const c of evals) await az(['repos', 'pr', 'policy', 'queue', '--id', String(pr.id), '--evaluation-id', c.evaluationId], { signal });
+      return `Queued ${evals.length} polic${evals.length === 1 ? 'y' : 'ies'} again`;
+    },
+    merge: (pr, opts, signal) => az(azureMergeArgs(pr, opts), { signal }).then(() => (opts.auto ? `${pr.label} will complete once its policies pass` : `Completed ${pr.label}`)),
     comment: (pr, text, signal) => post(threadsRoute(pr), { comments: [{ parentCommentId: 0, content: text, commentType: 1 }], status: 1 }, signal),
     async threads(pr) {
       return azureThreads((await json(az(threadsRoute(pr)))).value);

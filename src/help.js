@@ -17,7 +17,7 @@ Lists
   ctrl+d ctrl+u    Page down, up   J K         Scroll the right-hand pane
   y                Copy it: a commit's hash, a branch name, a file's path, a stash's message, a PR's link
 
-Graph
+Graph (the commit pane says whether the commit is signed, and if the signature is good)
   ↵                Full diff of the commit
   c                Check out (its branch if it has one, otherwise detached)
   b  t             New branch here · New tag here
@@ -39,20 +39,27 @@ Changes
   a  u             Stage all · Unstage all
   d                Discard the file's changes
   s                Stash just this file, staged and unstaged changes (its path is the stash's message)
+  v                Select several files (v, move, then s stashes them all together; esc clears it)
   c  A             Commit · Amend the last commit
   F                Fix up an earlier commit with the staged changes (pick it; then fold it in, or keep it for later)
   W                Claude writes the commit message for the staged changes, into the prompt to edit
+  S                Claude splits all your changes into logical commits: each one shown as a diff,
+                   then commit it, skip it (its changes stay uncommitted) or stop (/split)
   R                Claude reviews the staged changes (or the unstaged ones, if nothing is staged)
   O  T             On a conflict: take ours · take theirs, for the whole file
   C                On a conflict: Claude proposes the resolved file, shown as a diff; asks before writing it
   H  B             The file's history · Blame it (who last changed each line)
   ↵  →  l          Step into the diff to stage hunks or single lines (on a conflict: into its conflict blocks)
+  Submodules, listed last with their state (not initialised, out of date, changes inside, up to date):
+  I                Initialise it and check out the commit recorded here (/submodule-update [path])
+  o  ↵             Open it in Splice as its own repository
 
 Changes, in the diff
   j k              Move between changed lines      n N  ] [    Next, previous hunk
   space            Stage the hunk under the cursor (unstage it, for a staged file)
   v                Start or end a line selection; space then stages just those lines
   d                Discard the hunk or the selected lines (asks first)
+  s                Stash the hunk or the selected lines: they leave the file, and pop brings them back
   ↵                Full-screen diff        esc  ←  h    Back to the file list
 
 Changes, in a conflict (ours, the base in diff3 style, theirs)
@@ -79,6 +86,13 @@ Branches
   The right-hand pane: how far it is ahead of and behind the default branch, its commits the default
   branch doesn't have, then its history
   C                Clean up: delete branches with nothing unpushed or unmerged, and clean worktrees (/cleanup)
+  U                On a local branch: set what it tracks (/upstream [branch] <remote/branch>, --unset to stop)
+  M                The remotes (/remote): n add · R rename · x remove · u change its URL · f fetch
+                   · p push the current branch to it (/push <remote>)
+  On a tag (Tags, at the bottom of the list):
+  u                Push it (/tag-push <tag> [remote])
+  d                Delete it: here, on the remote, or both (asks first)
+  R                Create a GitHub release for it, published or as a draft (/release <tag> [--draft] [title])
 
 Worktrees (● the one open here)
   ↵                Open it in Splice
@@ -89,6 +103,7 @@ Worktrees (● the one open here)
 Stash
   ↵                Full diff
   s  S             Stash the current changes · The same, typing a message first (/stash <message>)
+                   Untracked files go too, unless turned off in /settings; /stash -u or --no-untracked overrides
   a  o  x          Apply · Pop · Drop
   F                Its files. ↵ restores one into the working tree, as apply
                    would: a change unstaged, a file the stash added staged, an untracked file
@@ -100,13 +115,21 @@ PRs (GitHub through gh, Azure DevOps through az: your existing sign-in)
   ↵                Full diff, with review comments under their lines     c           Check out its branch
                    In it: t T next, previous comment · r reply to it (/reply <text>)
   a                Approve         C           Comment (/comment <text>)
+  m                Merge it: squash, merge commit or rebase; now or once checks pass (auto-merge),
+                   deleting the branch or not (/merge-pr [squash|merge|rebase] [--delete-branch] [--auto])
+  s                Its checks (/ci), failed first: ↵ the log (a failed job's failed steps), o open in
+                   the browser, R re-run the failed ones
+  A                Ask for reviewers (/reviewer <name> [name ...])
+  D                Draft, or ready for review (/draft, /ready)
+  E  B             Retitle it (/title <text>) · Edit its description: written to a file for your own
+                   editor, then /body --file <it> sends it (/body <text> sends text, \\n for a new line)
   o                Open in the browser
   n                New pull request from the current branch (/pr <title> [--into <branch>] [--draft])
   W                Claude drafts one: title into the prompt, description offered when you open it
   e  R             Claude explains it · Claude reviews it
 
 Claude (through the Claude Code CLI, signed in as you already are; answers take several seconds, esc cancels)
-  /describe   /draft-pr [--into <branch>]   /explain [ref]   /review [ref]
+  /describe   /split   /draft-pr [--into <branch>]   /explain [ref]   /review [ref]
 
 Reflog (/reflog: everywhere HEAD has been, newest first)
   ↵                Full diff of the commit         c           Check it out
@@ -124,14 +147,22 @@ Prompt
 Slash commands
   /commit <msg>   /amend [msg]   /checkout <ref>   /branch <name> [start]
   /delete <ref>   /merge <ref>   /rebase <ref>     /reset <ref>   /tag <name> [ref]
-  /fetch   /pull [--rebase]   /push [--force]   /stash [msg]   /pop   /discard
-  /undo   /reflog
+  /fetch   /pull [--rebase]   /push [--force] [remote]   /stash [-u] [msg]   /pop   /discard
+  /undo   /reflog   /submodule-update [path]
   /bisect <good|bad|skip|reset> [ref]
   /continue   /abort   /find <text>   /open <path>   /scan <folder>   /last   /quit
   /settings   /accent <#rrggbb|default>   /update (look for a new version now and install it)
   /find -S <text>   /find -G <regex>   Search all history for commits adding or removing the text,
                                      or changing lines that match the regex
+  /filter [--author <name>] [--path <path>] [--since <date>] [--until <date>]
+                   Only the commits, on any branch, by that author, touching that path, in those dates
+                   (dates as git takes them: 2026-01-31, "2 weeks ago"); esc in the graph or /filter clears it
   /pr <title> [--into <branch>] [--draft]   /comment <text>   /approve   /reply <text>
+  /merge-pr [squash|merge|rebase] [--delete-branch] [--auto]   /ci
+  /remote [add <name> <url> | rename <old> <new> | remove <name> | set-url <name> <url>]
+  /upstream [branch] <remote/branch>   /upstream --unset [branch]
+  /tag-push <tag> [remote]   /release <tag> [--draft] [title]
+  /reviewer <name>   /draft   /ready   /title <text>   /body [--file <path> | text]
   /rebase -i <ref>   /reword <message>   /fixup [ref]   /worktree <path> [ref]   /compare <ref> [base]
   /history <path>   /blame <path>   /cleanup
 

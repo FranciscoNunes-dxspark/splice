@@ -3,13 +3,14 @@
 import { existsSync } from 'node:fs';
 import { readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { READ_ONLY, cleanSubject, clip, commitPrompt, lookPrompt, parsePrDraft, parseResolution, prPrompt, resolveInput, resolvePrompt } from './claude.js';
+import { READ_ONLY, cleanSubject, clip, commitPrompt, lookPrompt, parsePrDraft, parseResolution, parseSplit, prPrompt, resolveInput, resolvePrompt, splitInput, splitPrompt } from './claude.js';
 import { cleanupChoice, cleanupCount, cleanupOptions, cleanupText, planCleanup, readCleanup } from './cleanup.js';
 import { configFile } from './config.js';
 import { matchLineEndings, parseConflicts, takeSide, unifiedDiff } from './conflict.js';
 import { blamePicker, historyPicker, repoPath } from './history.js';
-import { defaultBranch, findArgs, firstBadCommit, parseGraph, parseStatus, relTime, searchArgs, splitArgs } from './parse.js';
-import { buildPatch, coversAll, parseDiff } from './patch.js';
+import { MERGE_LABELS, bodyArgs, mergePrArgs, releaseArgs } from './hosting.js';
+import { defaultBranch, filterArgs, filterLabel, filterLogArgs, findArgs, firstBadCommit, parseGraph, parseStatus, relTime, remoteArgs, searchArgs, splitArgs, stashArgs, upstreamArgs } from './parse.js';
+import { buildPatch, coversAll, parseDiff, picksBySignature, splitUnits } from './patch.js';
 import {
   COMMIT_LIST_FORMAT,
   cleanup,
@@ -23,6 +24,7 @@ import {
   prepare,
 } from './rebase.js';
 import { settingRows, settingSegments } from './settings.js';
+import { SIGNING_KEYS, checkGpgKey, explainSigning, needsPinentryCheck, signingConfig } from './signing.js';
 import { fit } from './text.js';
 import { DEFAULT_ACCENT, isColour, setAccent, theme } from './theme.js';
 import {
@@ -82,9 +84,24 @@ export async function push(ctx, args = []) {
   const { branch } = ctx.data.status;
   if (!branch.head) return ctx.note('HEAD is detached. Check out a branch to push it.', 'error');
   // --force-with-lease refuses to overwrite commits you haven't seen, which plain --force would destroy.
-  const flags = args.map((a) => (a === '--force' || a === '-f' ? '--force-with-lease' : a));
+  const { remotes } = ctx.data;
+  // A remote named among the arguments (/push upstream): the branch goes there, under its own name.
+  const named = args.find((a) => remotes.includes(a));
+  const flags = args.filter((a) => a !== named).map((a) => (a === '--force' || a === '-f' ? '--force-with-lease' : a));
+  if (named && !(branch.upstream ?? '').startsWith(`${named}/`)) {
+    if (flags.includes('--force-with-lease')) {
+      const ok = await ctx.confirm({
+        title: `Force-push ${branch.head} to ${named}?`,
+        detail: `Replaces ${named}'s ${branch.head} with yours. Uses --force-with-lease, so it stops if someone else pushed.`,
+        options: YES_NO('Yes, force-push'),
+        danger: true,
+      });
+      if (!ok) return;
+    }
+    // Only a branch without an upstream starts tracking the remote it was pushed to.
+    return ctx.exec(['push', ...flags, ...(branch.upstream ? [] : ['-u']), named, branch.head], { label: 'Pushing' });
+  }
   if (!branch.upstream) {
-    const { remotes } = ctx.data;
     const remote = remotes.includes('origin') ? 'origin' : remotes[0];
     if (!remote) return ctx.note('This repository has no remote. Add one with: !remote add origin <url>', 'error');
     return ctx.exec(['push', ...flags, '-u', remote, branch.head], { label: 'Pushing' });
@@ -101,6 +118,79 @@ export async function push(ctx, args = []) {
   return ctx.exec(['push', ...flags], { label: 'Pushing' });
 }
 
+/**
+ * /remote: with nothing after it, the remotes in a picker (n add, R rename, x remove, p push the current branch
+ * to one, f fetch it). /remote add <name> <url>, rename <old> <new>, remove <name>, set-url <name> <url>.
+ */
+export async function remote(ctx, text) {
+  if (!needRepo(ctx)) return;
+  const r = remoteArgs(text);
+  if (r.error) return ctx.note(r.error, 'error');
+  if (!r.args) return showRemotes(ctx);
+  if (r.args[1] !== 'add' && !ctx.data.remotes.includes(r.name)) return ctx.note(`No remote called ${r.name}.`, 'error');
+  if (r.remove) {
+    const ok = await ctx.confirm({
+      title: `Remove the remote ${r.name}?`,
+      detail: `Forgets ${ctx.data.remoteUrls[r.name]} and its remote branches here; nothing changes on the server. Branches tracking it lose their upstream.`,
+      options: YES_NO('Yes, remove it'),
+      danger: true,
+    });
+    if (!ok) return;
+  }
+  const done = await ctx.exec(r.args, { label: 'Changing remotes' });
+  if (done.ok) redrawRemotes(ctx);
+  return done;
+}
+
+// Redraws the remotes picker after a change, if it's what's on screen.
+function redrawRemotes(ctx) {
+  if (ctx.overlay()?.remotes) showRemotes(ctx, { replace: true });
+}
+
+function showRemotes(ctx, { replace = false } = {}) {
+  const { branch } = ctx.data.status;
+  ctx.showPicker(
+    {
+      title: 'Remotes',
+      hint: `n add · R rename · x remove · u set URL · f fetch${branch.head ? ` · p push ${branch.head} to it` : ''}`,
+      empty: 'No remotes. n adds one.',
+      remotes: true,
+      items: () =>
+        ctx.data.remotes.map((name) => ({
+          name,
+          segments: [{ text: name, color: theme.remote, bold: true, strong: true }, { text: `  ${ctx.data.remoteUrls[name] ?? ''}`, color: theme.dim }],
+        })),
+      keys: {
+        R: (it) => ctx.prefill(`/remote rename ${it.name} `),
+        x: (it) => remote(ctx, `remove ${it.name}`),
+        u: (it) => ctx.prefill(`/remote set-url ${it.name} ${ctx.data.remoteUrls[it.name] ?? ''}`),
+        f: (it) => fetch(ctx, [it.name, '--prune']),
+        p: (it) => push(ctx, [it.name]),
+        y: (it) => ctx.copy(ctx.data.remoteUrls[it.name] ?? '', `the URL of ${it.name}`),
+      },
+      actions: { n: () => ctx.prefill('/remote add ') },
+    },
+    { replace },
+  );
+}
+
+/** U on a local branch in Branches, /upstream [branch] <remote/branch>, /upstream --unset [branch]. */
+export function upstream(ctx, text) {
+  if (!needRepo(ctx)) return;
+  if (!(text ?? '').trim()) {
+    const head = ctx.data.status.branch.head;
+    const remote = ctx.data.remotes.includes('origin') ? 'origin' : ctx.data.remotes[0];
+    return ctx.prefill(head && remote ? `/upstream ${head} ${remote}/${head}` : '/upstream ');
+  }
+  const u = upstreamArgs(text, ctx.data.status.branch.head);
+  if (u.error) return ctx.note(u.error, 'error');
+  if (!ctx.data.refs.local.some((b) => b.name === u.branch)) return ctx.note(`No local branch called ${u.branch}.`, 'error');
+  if (u.upstream && !ctx.data.refs.remote.some((b) => b.name === u.upstream) && !ctx.data.refs.local.some((b) => b.name === u.upstream)) {
+    return ctx.note(`There's no branch ${u.upstream} here. Fetch first (f), or push the branch there: /push <remote>`, 'error');
+  }
+  return ctx.exec(u.args, { label: 'Setting the upstream' });
+}
+
 export async function commit(ctx, message, { amend = false } = {}) {
   if (!needRepo(ctx)) return;
   if (!message && !amend) return ctx.prefill('/commit ');
@@ -115,8 +205,27 @@ export async function commit(ctx, message, { amend = false } = {}) {
     if (!ok) return;
     if (!(await ctx.exec(['add', '-A'], { refresh: false, quiet: true })).ok) return;
   }
+  const signing = await readySigning(ctx);
+  if (signing === false) return;
   const args = ['commit', ...(amend ? ['--amend'] : []), ...(message ? ['-m', message] : ['--no-edit'])];
-  return ctx.exec(args, { label: amend ? 'Amending' : 'Committing' });
+  return ctx.exec(args, { label: `${signing ? 'Signing and ' : ''}${amend ? 'amending' : 'committing'}`.replace(/^./, (c) => c.toUpperCase()) });
+}
+
+/**
+ * Before a commit: the signing settings when commit.gpgsign is on (null when it's off), or false when the key
+ * can't be used without typing its passphrase into a terminal, which git doesn't have here (said in a note).
+ */
+async function readySigning(ctx) {
+  const cfg = signingConfig(await ctx.git(['config', '--get-regexp', SIGNING_KEYS]).catch(() => ''));
+  if (!cfg.commits) return null;
+  if (!needsPinentryCheck(cfg)) return cfg;
+  try {
+    await checkGpgKey(cfg, { cwd: ctx.data.root });
+    return cfg;
+  } catch (e) {
+    ctx.note(`${explainSigning('gpg failed to sign the data')}\n${firstLine(e.message)}`, 'error');
+    return false;
+  }
 }
 
 /** Switches to a local branch, a remote branch (creating the tracking branch), or anything else detached. */
@@ -184,8 +293,85 @@ export async function deleteRef(ctx, name) {
     if (ok) return ctx.exec(['push', rb.remote, '--delete', branch], { label: 'Deleting remote branch' });
     return;
   }
-  if (tags.some((t) => t.name === name)) return ctx.exec(['tag', '-d', name], { label: 'Deleting tag' });
+  if (tags.some((t) => t.name === name)) return deleteTag(ctx, name);
   ctx.note(`No branch or tag called ${name}.`, 'error');
+}
+
+/** The remote tags are pushed to: origin, else the first one. */
+function mainRemote(ctx) {
+  const { remotes } = ctx.data;
+  return remotes.includes('origin') ? 'origin' : (remotes[0] ?? null);
+}
+
+/** Deletes a tag here, on the main remote, or both, as asked. */
+async function deleteTag(ctx, name) {
+  const remote = mainRemote(ctx);
+  const where = await ctx.confirm({
+    title: `Delete the tag ${name}?`,
+    detail: remote ? `Deleting it on ${remote} removes it for everyone; their copies stay until they prune.` : 'The commit it points at stays.',
+    options: [
+      { label: 'Delete it here', value: 'local' },
+      ...(remote
+        ? [
+            { label: `Delete it here and on ${remote}`, value: 'both' },
+            { label: `Delete it only on ${remote}`, value: 'remote' },
+          ]
+        : []),
+      { label: 'No', value: null },
+    ],
+    danger: true,
+  });
+  if (!where) return;
+  let r;
+  if (where !== 'local') {
+    r = await ctx.exec(['push', remote, '--delete', `refs/tags/${name}`], { label: 'Deleting the tag on the remote', refresh: where === 'remote' });
+    if (!r.ok) return r;
+  }
+  if (where !== 'remote') r = await ctx.exec(['tag', '-d', name], { label: 'Deleting tag' });
+  return r;
+}
+
+/** u on a tag in Branches, /tag-push <tag> [remote]: sends the tag to the remote (origin unless named). */
+export function pushTag(ctx, text) {
+  if (!needRepo(ctx)) return;
+  const [name, given] = splitArgs(text ?? '');
+  if (!name) return ctx.prefill('/tag-push ');
+  if (!ctx.data.refs.tags.some((t) => t.name === name)) return ctx.note(`No tag called ${name}.`, 'error');
+  const remote = given ?? mainRemote(ctx);
+  if (!remote) return ctx.note('This repository has no remote. Add one with: /remote add origin <url>', 'error');
+  return ctx.exec(['push', remote, `refs/tags/${name}`], { label: 'Pushing tag' });
+}
+
+/**
+ * R on a tag in Branches, /release <tag> [--draft] [title]: a GitHub release for the tag, with notes GitHub
+ * writes from what was merged since the last one. Pushes the tag first, since the release needs the server to have it.
+ */
+export async function createRelease(ctx, text) {
+  if (!needRepo(ctx)) return;
+  const { tag, title, draft } = releaseArgs(text);
+  if (!tag) return ctx.prefill('/release ');
+  const host = needHost(ctx);
+  if (!host) return;
+  if (!host.createRelease) return ctx.note(`${host.name} has no releases made from tags: Splice only creates them on GitHub. u pushes the tag.`, 'error');
+  if (!ctx.data.refs.tags.some((t) => t.name === tag)) return ctx.note(`No tag called ${tag}. t on a commit in the graph makes one.`, 'error');
+  const asDraft =
+    draft ||
+    (await ctx.confirm({
+      title: `Create a GitHub release for ${tag}${title ? ` called "${title}"` : ''}?`,
+      detail: `Pushes ${tag} to ${host.remoteName} first. GitHub writes the notes from what was merged since the last release.`,
+      options: [
+        { label: 'Yes, publish it', value: 'publish' },
+        { label: 'Save it as a draft', value: true },
+        { label: 'No', value: null },
+      ],
+    }));
+  if (!asDraft) return;
+  const pushed = await ctx.exec(['push', host.remoteName, `refs/tags/${tag}`], { label: 'Pushing tag', refresh: false });
+  if (!pushed.ok) return pushed;
+  return hostTask(ctx, `gh release create ${tag}${asDraft === true ? ' --draft' : ''}`, (signal) => host.createRelease({ tag, title, draft: asDraft === true }, signal), {
+    label: 'Creating the release',
+    refresh: false,
+  });
 }
 
 function currentName(ctx) {
@@ -304,22 +490,98 @@ export async function bisect(ctx, how, ref) {
   if (found) ctx.note(`Found it: ${short(found)} is the first bad commit (↵ on it shows its diff). /abort ends the bisect and goes back to where you were.`);
 }
 
-export function stash(ctx, message) {
+/**
+ * s in Stash, /stash [-u | --no-untracked] [message]: stashes every change. Untracked files go too while the
+ * "Stash untracked files" setting is on (it is unless turned off); -u and --no-untracked override it.
+ */
+export function stash(ctx, text) {
   if (!needRepo(ctx)) return;
-  if (!ctx.data.status.files.length) return ctx.note('No changes to stash.', 'error');
-  return ctx.exec(['stash', 'push', '--include-untracked', ...(message ? ['-m', message] : [])], { label: 'Stashing' });
+  const { files } = ctx.data.status;
+  if (!files.length) return ctx.note('No changes to stash.', 'error');
+  const { args, untracked } = stashArgs(text, { untracked: ctx.config.stashUntracked !== false });
+  if (!untracked && files.every((f) => f.kind === 'untracked')) return ctx.note('Only untracked files have changed. /stash -u takes them too.', 'error');
+  return ctx.exec(args, { label: 'Stashing' });
+}
+
+/** Why a file from Changes can't be stashed on its own, or null when it can. */
+function cantStash(f) {
+  if (f.area === 'conflict') return `${f.path} has conflicts, which can't be stashed. Resolve it first (space marks it resolved).`;
+  // With a path, git stash can't find a file that only the last commit has: the old side of a rename, a staged deletion.
+  if (f.kind === 'renamed' || (f.area === 'staged' && f.x === 'D')) {
+    return `git can't stash a staged ${f.kind === 'renamed' ? 'rename' : 'deletion'} (${f.path}) on its own. Unstage it first (space), then stash it.`;
+  }
+  return null;
 }
 
 /** Stashes one file from Changes, staged and unstaged changes alike, with its path as the message. */
 export function stashFile(ctx, f) {
+  return stashFiles(ctx, [f]);
+}
+
+/**
+ * s in Changes, on a file or on files selected with v: stashes just those, staged and unstaged changes alike.
+ * The message is the path (or the first path and how many more).
+ */
+export function stashFiles(ctx, list) {
   if (!needRepo(ctx)) return;
-  if (f.area === 'conflict') return ctx.note(`${f.path} has conflicts, which can't be stashed. Resolve it first (space marks it resolved).`, 'error');
-  // With a path, git stash can't find a file that only the last commit has: the old side of a rename, a staged deletion.
-  if (f.kind === 'renamed' || (f.area === 'staged' && f.x === 'D')) {
-    return ctx.note(`git can't stash a staged ${f.kind === 'renamed' ? 'rename' : 'deletion'} on its own. Unstage it first (space), then stash it.`, 'error');
+  const problem = list.map(cantStash).find(Boolean);
+  if (problem) return ctx.note(problem, 'error');
+  const paths = [...new Set(list.map((f) => f.path))];
+  if (!paths.length) return ctx.note('Nothing selected to stash.', 'error');
+  const untracked = list.some((f) => f.kind === 'untracked') ? ['--include-untracked'] : [];
+  const message = paths.length === 1 ? paths[0] : `${paths[0]} and ${paths.length - 1} more`;
+  return ctx.exec(['stash', 'push', ...untracked, '-m', message, '--', ...paths], { label: 'Stashing' });
+}
+
+/**
+ * s in a file's diff in Changes: stashes the hunk under the cursor, or the lines selected with v, and takes them
+ * out of the working tree; the rest of the file stays. git stash can't do part of a file without a terminal
+ * (stash -p asks), so the stash is made by hand: its base and index are the index as it is, its working tree
+ * the index plus the picked lines. Applying or popping it later brings back just those lines.
+ */
+export async function stashLines(ctx, f, diffText, picks) {
+  if (!needRepo(ctx)) return;
+  if (f.area !== 'unstaged' || f.kind === 'untracked') {
+    return ctx.note(f.kind === 'untracked' ? 'This is a new file: stash the whole file from the list instead (s).' : 'Only unstaged lines can be stashed on their own. Unstage them first.', 'error');
   }
-  const untracked = f.kind === 'untracked' ? ['--include-untracked'] : [];
-  return ctx.exec(['stash', 'push', ...untracked, '-m', f.path, '--', f.path], { label: 'Stashing' });
+  if (isInitial(ctx)) return ctx.note('There are no commits yet to stash against.', 'error');
+  const patch = buildPatch(parseDiff(diffText), picks);
+  if (!patch) return;
+  const { gitDir } = ctx.data;
+  const branch = ctx.data.status.branch.head ?? '(no branch)';
+  const message = `On ${branch}: ${f.path} (some lines)`;
+  const index = join(gitDir, 'splice-stash-index');
+  let made;
+  const r = await ctx.task(
+    `Stash the picked lines of ${f.path}`,
+    async (signal) => {
+      const g = (args, opts = {}) => ctx.git(args, { signal, ...opts }).then((s) => s.trim());
+      const env = { GIT_INDEX_FILE: index };
+      try {
+        const head = await g(['rev-parse', 'HEAD']);
+        const indexTree = await g(['write-tree']);
+        await g(['read-tree', indexTree], { env });
+        await g(['apply', '--cached', '--recount', '--whitespace=nowarn', '-'], { env, input: patch });
+        const worktreeTree = await g(['write-tree'], { env });
+        // Never signed: these are a stash's own commits, and signing could ask for a passphrase.
+        const commit = (tree, parents, msg) => g(['commit-tree', '--no-gpg-sign', tree, ...parents.flatMap((p) => ['-p', p]), '-m', msg]);
+        const base = await commit(indexTree, [head], `base of ${message}`);
+        const idx = await commit(indexTree, [base], `index on ${branch}`);
+        made = await commit(worktreeTree, [base, idx], message);
+        await g(['stash', 'store', '-m', message, made]);
+      } finally {
+        await rm(index, { force: true });
+      }
+      return { stdout: `Saved ${message}`, stderr: '' };
+    },
+    { label: 'Stashing', refresh: false },
+  );
+  if (!r.ok) return ctx.reload();
+  // Kept in the stash now: take the lines out of the working tree. Should that fail, the stash goes again.
+  const out = await apply(ctx, patch, ['--reverse'], 'Stashing', { refresh: false });
+  if (!out.ok) await ctx.exec(['stash', 'drop', '-q', 'stash@{0}'], { quiet: true, refresh: false });
+  await ctx.reload();
+  return out;
 }
 
 /**
@@ -365,8 +627,26 @@ export async function restoreStashFile(ctx, s, file) {
 export async function stashApply(ctx, ref, { pop = false } = {}) {
   if (!needRepo(ctx)) return;
   if (!ctx.data.stashes.length) return ctx.note('There are no stashes.', 'error');
-  await ctx.exec(['stash', pop ? 'pop' : 'apply', ref || 'stash@{0}'], { label: pop ? 'Popping stash' : 'Applying stash' });
+  const stash = ref || 'stash@{0}';
+  const label = pop ? 'Popping stash' : 'Applying stash';
+  const r = await ctx.exec(['stash', pop ? 'pop' : 'apply', stash], { label, quietError: true });
+  // git won't apply a stash to files with uncommitted changes, even elsewhere in the file (the rest of a file
+  // some lines were stashed from, say). Its changes to tracked files can still go on top, as a patch.
+  if (!r.ok && /would be overwritten by merge/.test(r.error?.message ?? '')) {
+    const untracked = await ctx.git(['rev-parse', '-q', '--verify', `${stash}^3`]).then(() => true, () => false);
+    const patch = untracked ? null : await ctx.git(['diff', '--binary', `${stash}^1`, stash]).catch(() => null);
+    if (patch) {
+      const applied = await ctx.exec(['apply', '--whitespace=nowarn', '-'], { input: patch, label, quietError: true, refresh: !pop });
+      if (applied.ok) {
+        if (pop) await ctx.exec(['stash', 'drop', '-q', stash], { quiet: true });
+        ctx.note(`${pop ? 'Popped' : 'Applied'} ${stash} on top of your uncommitted changes`, 'ok');
+        return applied;
+      }
+    }
+  }
+  if (!r.ok && !r.error?.cancelled) ctx.note(r.error.message, 'error');
   afterConflicts(ctx);
+  return r;
 }
 
 export async function stashDrop(ctx, s) {
@@ -679,6 +959,36 @@ export async function discardAll(ctx) {
   return settleCopy(ctx, copy, r);
 }
 
+/**
+ * I on a submodule in Changes, /submodule-update [path]: clones what isn't yet and checks out the commit this
+ * repository records, in one submodule or all of them (and theirs, recursively). Asks first when that moves
+ * one off another commit it has checked out.
+ */
+export async function updateSubmodules(ctx, text) {
+  if (!needRepo(ctx)) return;
+  const subs = ctx.data.submodules ?? [];
+  if (!subs.length) return ctx.note('This repository has no submodules.', 'error');
+  const path = (text ?? '').trim().replace(/[\\/]+$/, '');
+  const target = path ? subs.find((s) => s.path === path) : null;
+  if (path && !target) return ctx.note(`No submodule at ${path}.`, 'error');
+  const moving = (target ? [target] : subs).filter((s) => s.state === 'out of date');
+  if (moving.length) {
+    const ok = await ctx.confirm({
+      title: `Check out the recorded commit in ${moving.map((s) => s.path).join(', ')}?`,
+      detail: 'It has another commit checked out now. That commit stays in its history, but its HEAD moves (detached).',
+      options: YES_NO('Yes, update'),
+    });
+    if (!ok) return;
+  }
+  return ctx.exec(['submodule', 'update', '--init', '--recursive', ...(target ? ['--', target.path] : [])], { label: 'Updating submodules' });
+}
+
+/** o or ↵ on a submodule in Changes: opens it in Splice as the repository it is. */
+export function openSubmodule(ctx, sub) {
+  if (sub.state === 'uninitialised') return ctx.note(`${sub.path} isn't initialised yet: I clones and checks it out.`, 'error');
+  return ctx.openRepo(join(ctx.data.root, sub.path));
+}
+
 /** Takes one side of a conflicted file and marks it resolved. */
 export async function resolveWith(ctx, f, side) {
   const r = await ctx.exec(['checkout', `--${side}`, '--', f.path], { refresh: false, quiet: true });
@@ -869,6 +1179,7 @@ async function fixupCandidates(ctx) {
 }
 
 async function fixupInto(ctx, target, { stageAll }) {
+  if ((await readySigning(ctx)) === false) return;
   if (stageAll && !(await ctx.exec(['add', '-A'], { refresh: false, quiet: true })).ok) return;
   const made = await ctx.exec(['commit', `--fixup=${target.hash}`], { label: 'Committing the fixup' });
   if (!made.ok) return made;
@@ -927,6 +1238,29 @@ export async function find(ctx, text) {
   return r;
 }
 
+/**
+ * /filter --author <name> --path <path> --since <date> --until <date>: the graph shows only the commits, on
+ * any branch, by that author, touching that path, in those dates. /filter alone (or esc in the graph) clears it.
+ */
+export async function filter(ctx, text) {
+  if (!needRepo(ctx)) return;
+  const f = filterArgs(text);
+  if (f.error) return ctx.note(f.error, 'error');
+  if (!Object.keys(f).length) return ctx.find('');
+  const label = filterLabel(f);
+  let rows = [];
+  const r = await ctx.task(
+    `git log ${label}`,
+    async (signal) => {
+      rows = parseGraph(await ctx.git(filterLogArgs(f), { signal })).filter((row) => row.commit);
+      return { stdout: rows.length ? `${rows.length} commit${rows.length === 1 ? '' : 's'}` : 'No commits', stderr: '' };
+    },
+    { label: 'Filtering the history', refresh: false },
+  );
+  if (r.ok) ctx.find({ mode: 'F', query: label, rows });
+  return r;
+}
+
 function needHost(ctx) {
   if (!needRepo(ctx)) return null;
   const host = ctx.host();
@@ -935,7 +1269,15 @@ function needHost(ctx) {
 }
 
 // gh and az calls go through the same queue, spinner and activity lines as git.
-const hostTask = (ctx, title, fn, opts) => ctx.task(title, async (signal) => ({ stdout: (await fn(signal)) ?? '', stderr: '' }), opts);
+const hostTask = (ctx, title, fn, opts) =>
+  ctx.task(
+    title,
+    async (signal) => {
+      const out = await fn(signal);
+      return { stdout: typeof out === 'string' ? out : '', stderr: '' };
+    },
+    opts,
+  );
 const cliName = (host) => (host.kind === 'github' ? 'gh pr' : 'az repos pr');
 
 export async function prCheckout(ctx, pr) {
@@ -966,6 +1308,187 @@ export async function prComment(ctx, text) {
   if (!text) return ctx.prefill('/comment ');
   const r = await hostTask(ctx, `${cliName(host)} comment ${pr.label}`, (signal) => host.comment(pr, text, signal), { label: 'Commenting', refresh: false });
   if (r.ok) ctx.prsChanged();
+  return r;
+}
+
+/**
+ * m in PRs, /merge-pr [squash|merge|rebase] [--delete-branch] [--auto]: merges the pull request on the server,
+ * asking how (what isn't given), and whether now or once its checks and reviews pass (auto-merge).
+ */
+export async function prMerge(ctx, pr, text = '') {
+  const host = needHost(ctx);
+  if (!host) return;
+  if (!pr) return ctx.note('Pick a pull request in PRs (6) first.', 'error');
+  const given = mergePrArgs(text);
+  if (given.error) return ctx.note(given.error, 'error');
+  const methods = host.mergeMethods ?? ['merge'];
+  if (given.method && !methods.includes(given.method)) {
+    return ctx.note(`${host.name} can't ${given.method}-merge from here. Use ${methods.join(' or ')}.`, 'error');
+  }
+  const method =
+    given.method ??
+    (await ctx.confirm({
+      title: `Merge ${pr.label} "${pr.title}" into ${pr.target} how?`,
+      options: [...methods.map((m) => ({ label: MERGE_LABELS[m], value: m })), { label: 'Cancel', value: null }],
+    }));
+  if (!method) return;
+  const warn = [pr.draft ? "It's still a draft." : '', pr.conflicts ? 'It has merge conflicts.' : ''].filter(Boolean).join(' ');
+  const how = MERGE_LABELS[method].replace(/ and merge$/, '').toLowerCase();
+  let when;
+  if (given.auto != null || given.deleteBranch != null) {
+    const ok = await ctx.confirm({
+      title: `${given.auto ? 'Auto-merge' : 'Merge'} ${pr.label} into ${pr.target} (${how})?`,
+      detail: `${given.deleteBranch ? `Deletes ${pr.source} on the server afterwards. ` : ''}${warn || `On ${host.name}, for everyone.`}`,
+      options: YES_NO(given.auto ? 'Yes, merge it once it can' : 'Yes, merge it'),
+      danger: true,
+    });
+    if (!ok) return;
+    when = { auto: Boolean(given.auto), deleteBranch: Boolean(given.deleteBranch) };
+  } else {
+    when = await ctx.confirm({
+      title: `Merge ${pr.label} into ${pr.target} (${how})?`,
+      detail: warn || `On ${host.name}, for everyone. Auto-merge waits for the required checks and reviews.`,
+      options: [
+        { label: `Merge now, and delete ${pr.source}`, value: { auto: false, deleteBranch: true } },
+        { label: `Merge now, keep ${pr.source}`, value: { auto: false, deleteBranch: false } },
+        { label: `Auto-merge once it can, and delete ${pr.source}`, value: { auto: true, deleteBranch: true } },
+        { label: `Auto-merge once it can, keep ${pr.source}`, value: { auto: true, deleteBranch: false } },
+        { label: 'No', value: null },
+      ],
+      danger: true,
+    });
+    if (!when) return;
+  }
+  const opts = { method, ...when };
+  const title = host.kind === 'github' ? `gh pr merge ${pr.id} --${method}${opts.deleteBranch ? ' --delete-branch' : ''}${opts.auto ? ' --auto' : ''}` : `az repos pr update --id ${pr.id} ${opts.auto ? '--auto-complete' : '--status completed'}`;
+  const r = await hostTask(ctx, title, (signal) => host.merge(pr, opts, signal), { label: opts.auto ? 'Setting auto-merge' : 'Merging', refresh: false });
+  if (r.ok) {
+    ctx.prsChanged();
+    if (!opts.auto) ctx.note(`Merged ${pr.label} into ${pr.target}. f fetches it.`, 'ok');
+  }
+  return r;
+}
+
+const CHECK_ICON = { pass: ['✓', 'add'], fail: ['✗', 'del'], pending: ['…', 'warn'] };
+
+/**
+ * s in PRs, /checks: the pull request's CI checks in a picker, failed first. ↵ shows a check's log (a failed
+ * job's failed steps), o opens it in the browser, R re-runs the failed ones where the host can.
+ */
+export function prChecks(ctx, pr, { replace = false } = {}) {
+  const host = needHost(ctx);
+  if (!host) return;
+  if (!pr) return ctx.note('Pick a pull request in PRs (6) first.', 'error');
+  if (!host.checks) return ctx.note(`Splice can't list checks on ${host.name}.`, 'error');
+  const order = { fail: 0, pending: 1, pass: 2 };
+  let all = [];
+  ctx.showPicker(
+    {
+      title: `Checks of ${pr.label} ${pr.title}`,
+      hint: `↵ log · o open in browser${host.canRerun ? ' · R re-run failed' : ''}`,
+      empty: 'No checks have run on it.',
+      load: async () => {
+        all = (await host.checks(pr)).sort((a, b) => order[a.state] - order[b.state]);
+        return all.map((c) => {
+          const [icon, tone] = CHECK_ICON[c.state] ?? CHECK_ICON.pending;
+          return {
+            check: c,
+            segments: [{ text: `${icon} `, color: theme[tone], bold: true }, { text: c.name, strong: true }, { text: c.workflow ? `  ${c.workflow}` : '', color: theme.dim }],
+          };
+        });
+      },
+      onPick: ({ check }) => ctx.showAsync(`${check.name} (${check.state === 'fail' ? 'failed steps' : 'log'})`, () => host.checkLog(check)),
+      keys: {
+        o: ({ check }) => (check.url ? ctx.openUrl(check.url) : ctx.note(`${check.name} has no page to open.`, 'error')),
+        y: ({ check }) => (check.url ? ctx.copy(check.url, `the link to ${check.name}`) : undefined),
+      },
+      actions: {
+        R: async () => {
+          if (!host.canRerun) return ctx.note(`Splice can't re-run checks on ${host.name}.`, 'error');
+          const failed = all.filter((c) => c.state === 'fail');
+          if (!failed.length) return ctx.note('No check has failed, so there is nothing to re-run.', 'error');
+          const ok = await ctx.confirm({ title: `Re-run the ${failed.length} failed check${failed.length === 1 ? '' : 's'} of ${pr.label}?`, options: YES_NO('Yes, re-run them') });
+          if (!ok) return;
+          const r = await hostTask(ctx, `Re-run failed checks of ${pr.label}`, (signal) => host.rerun(pr, failed, signal), { label: 'Re-running checks', refresh: false });
+          if (r.ok) {
+            ctx.prsChanged();
+            prChecks(ctx, pr, { replace: true });
+          }
+        },
+      },
+    },
+    { replace },
+  );
+}
+
+function pickedPr(ctx) {
+  const host = needHost(ctx);
+  if (!host) return {};
+  const pr = ctx.selectedPr;
+  if (!pr) ctx.note('Pick a pull request in PRs (6) first.', 'error');
+  return { host, pr };
+}
+
+async function prEdit(ctx, host, pr, title, label, fn) {
+  const r = await hostTask(ctx, title, fn, { label, refresh: false });
+  if (r.ok) ctx.prsChanged();
+  return r;
+}
+
+/** A in PRs, /reviewer <name> [name ...]: asks them to review the picked pull request. */
+export function prReviewers(ctx, text) {
+  const { host, pr } = pickedPr(ctx);
+  if (!pr) return;
+  const names = splitArgs((text ?? '').replace(/,/g, ' '));
+  if (!names.length) return ctx.prefill('/reviewer ');
+  return prEdit(ctx, host, pr, `Ask ${names.join(', ')} to review ${pr.label}`, 'Adding reviewers', (signal) => host.addReviewers(pr, names, signal));
+}
+
+/** D in PRs, /draft and /ready: makes the picked pull request a draft, or ready for review. `draft` null switches it. */
+export function prSetDraft(ctx, draft = null) {
+  const { host, pr } = pickedPr(ctx);
+  if (!pr) return;
+  const want = draft ?? !pr.draft;
+  if (want === pr.draft) return ctx.note(`${pr.label} is ${want ? 'already a draft' : 'already ready for review'}.`, 'error');
+  return prEdit(ctx, host, pr, `${pr.label}: ${want ? 'back to draft' : 'ready for review'}`, want ? 'Making it a draft' : 'Marking it ready', (signal) => host.setDraft(pr, want, signal));
+}
+
+/** E in PRs, /title <text>: renames the picked pull request (E starts from its title as it is). */
+export function prTitle(ctx, text) {
+  const { host, pr } = pickedPr(ctx);
+  if (!pr) return;
+  const title = (text ?? '').trim();
+  if (!title) return ctx.prefill(`/title ${pr.title}`);
+  if (title === pr.title) return ctx.note('That is its title already.');
+  return prEdit(ctx, host, pr, `${pr.label}: retitle "${title}"`, 'Retitling', (signal) => host.edit(pr, { title }, signal));
+}
+
+/**
+ * B in PRs, /body: the picked pull request's description. With nothing after it, writes the description as it
+ * is to a file in .git for you to edit in your own editor, and puts /body --file <it> in the prompt to send it
+ * once saved. /body --file <path> sends a file; /body <text> sends the text (\n for a line break).
+ */
+export async function prBody(ctx, text) {
+  const { host, pr } = pickedPr(ctx);
+  if (!pr) return;
+  const args = bodyArgs(text);
+  if (args.file === undefined && args.text === undefined) {
+    const file = join(ctx.data.gitDir, `splice-pr-${String(pr.id).replace(/[^\w-]/g, '')}.md`);
+    await writeFile(file, pr.description ?? '');
+    ctx.note(`Wrote ${pr.label}'s description to ${file}\nEdit it in your editor and save, then press enter here to send it.`);
+    return ctx.prefill(`/body --file ${file}`);
+  }
+  let body = args.text;
+  if (args.file !== undefined) {
+    if (!args.file) return ctx.prefill('/body --file ');
+    try {
+      body = (await readFile(args.file, 'utf8')).replace(/\r\n/g, '\n').trimEnd();
+    } catch (e) {
+      return ctx.note(`Couldn't read ${args.file}: ${firstLine(e.message)}`, 'error');
+    }
+  }
+  const r = await prEdit(ctx, host, pr, `${pr.label}: new description`, 'Updating the description', (signal) => host.edit(pr, { body }, signal));
+  if (r.ok && args.file?.startsWith(ctx.data.gitDir)) await rm(args.file, { force: true });
   return r;
 }
 
@@ -1066,6 +1589,133 @@ export async function describeCommit(ctx) {
   if (!subject) return ctx.note("Claude didn't suggest a message. Try again, or write one: /commit <message>", 'error');
   ctx.prefill(`/commit ${subject}`);
   return r;
+}
+
+/**
+ * S in Changes, /split: Claude splits all the uncommitted changes into a few logical commits, grouping their
+ * hunks. Each proposed commit is shown as a diff to review, then committed (just its hunks staged), skipped,
+ * or the whole thing stopped; what isn't committed stays as it was, uncommitted.
+ */
+export async function claudeSplit(ctx) {
+  if (!needClaude(ctx)) return;
+  const { state } = ctx.data;
+  if (state) return ctx.note(`A ${OP[state]} is in progress. Finish it first (/continue or /abort).`, 'error');
+  if (isInitial(ctx)) return ctx.note('Make the first commit yourself; Claude can split the changes after that.', 'error');
+  const { staged, unstaged, conflicts } = ctx.data.changes;
+  if (conflicts.length) return ctx.note('Resolve the conflicts first (space marks a file resolved).', 'error');
+  if (!staged.length && !unstaged.length) return ctx.note('There are no changes to split: the working tree is clean.', 'error');
+  if (staged.length) {
+    const ok = await ctx.confirm({
+      title: 'Unstage everything first, so Claude can split all your changes?',
+      detail: 'Nothing is lost: the changes stay in the working tree, and each commit stages its own part.',
+      options: YES_NO('Yes, unstage and split'),
+    });
+    if (!ok) return;
+    if (!(await ctx.exec(['reset', '-q'], { quiet: true, refresh: false })).ok) return;
+  }
+  // New files take part as intended additions, so their hunks show in the diff; the ones not committed go back.
+  const added = unstaged.filter((f) => f.kind === 'untracked').map((f) => f.path);
+  if (added.length && !(await ctx.exec(['add', '--intent-to-add', '--', ...added], { quiet: true, refresh: false })).ok) return;
+  const putBack = async () => {
+    const left = added.filter((p) => ctx.data.status.files.some((f) => f.path === p));
+    if (left.length) await ctx.exec(['reset', '-q', '--', ...left], { quiet: true });
+    else await ctx.reload();
+  };
+  const units = splitUnits(await ctx.git(['diff', '--no-ext-diff']));
+  if (units.length < 2) {
+    await putBack();
+    return ctx.note('There is only one change, so there is nothing to split: commit it (c), or W for a message.', 'error');
+  }
+  const recent = (await ctx.git(['log', '-n15', '--format=%s']).catch(() => '')).split('\n').filter(Boolean);
+  const r = await askClaude(ctx, 'split into commits', splitPrompt(recent), splitInput(units));
+  if (!r.ok) return putBack();
+  const plan = parseSplit(r.out, units.map((u) => u.id));
+  if (plan.error) {
+    ctx.note(plan.error, 'error');
+    return putBack();
+  }
+  if ((await readySigning(ctx)) === false) return putBack();
+  const byId = new Map(units.map((u) => [u.id, u]));
+  const made = [];
+  let stopped = false;
+  for (const [i, g] of plan.groups.entries()) {
+    const parts = g.ids.map((id) => byId.get(id));
+    const files = [...new Set(parts.map((u) => u.path))];
+    const choice = await reviewWith(ctx, `Commit ${i + 1} of ${plan.groups.length}: ${g.message}`, parts.map((u) => u.text).join('\n'), {
+      title: `Commit ${i + 1} of ${plan.groups.length}: "${g.message}"?`,
+      detail: `${parts.length} hunk${parts.length === 1 ? '' : 's'} in ${files.length === 1 ? files[0] : `${files.length} files`}, shown above.`,
+      options: [
+        { label: 'Yes, commit it', value: 'commit' },
+        { label: 'Skip it: leave these changes uncommitted', value: 'skip' },
+        { label: 'Stop here', value: null },
+      ],
+    });
+    if (!choice) {
+      stopped = true;
+      break;
+    }
+    if (choice === 'skip') continue;
+    const problem = await stageUnits(ctx, parts);
+    if (problem) {
+      ctx.note(`Couldn't stage "${g.message}": ${problem}`, 'error');
+      await ctx.exec(['reset', '-q'], { quiet: true, refresh: false });
+      stopped = true;
+      break;
+    }
+    const c = await ctx.exec(['commit', '-q', '-m', g.message], { label: 'Committing' });
+    if (!c.ok) {
+      stopped = true;
+      break;
+    }
+    made.push(g.message);
+  }
+  ctx.closeOverlay();
+  await putBack();
+  const left = ctx.data.status.files.length;
+  const said = [
+    `${made.length ? `Made ${made.length} commit${made.length === 1 ? '' : 's'}` : 'No commits made'}${stopped ? ', then stopped' : ''}`,
+    ...made.map((m) => `  ${m}`),
+    ...(left ? [`${left} file${left === 1 ? '' : 's'} still with uncommitted changes.`] : []),
+    ...(plan.leftover.length ? [`Claude left ${plan.leftover.length} hunk${plan.leftover.length === 1 ? '' : 's'} out of every commit.`] : []),
+  ];
+  ctx.note(said.join('\n'), made.length ? 'ok' : 'info');
+  return r;
+}
+
+/** Stages just these units (split hunks) of the working tree, found again by their changed lines. Returns a problem, or null. */
+async function stageUnits(ctx, units) {
+  const byPath = new Map();
+  for (const u of units) byPath.set(u.path, [...(byPath.get(u.path) ?? []), u]);
+  for (const [path, list] of byPath) {
+    if (list.some((u) => u.whole)) {
+      const r = await ctx.exec(['add', '--', path], { quiet: true, refresh: false });
+      if (!r.ok) return firstLine(r.error.message);
+      continue;
+    }
+    const fresh = parseDiff(await ctx.git(['diff', '--no-ext-diff', '--', path]));
+    const { picks, missing } = picksBySignature(fresh, list.map((u) => u.signature));
+    if (missing) return `${path} changed since Claude looked at it.`;
+    const patch = buildPatch(fresh, picks);
+    if (!patch) continue;
+    const r = await apply(ctx, patch, ['--cached'], 'Staging', { refresh: false });
+    if (!r.ok) return firstLine(r.error.message);
+  }
+  return null;
+}
+
+/**
+ * Shows `text` (a diff) in the viewer and asks `req` under it. Its options get one more, to scroll through the
+ * diff first; esc in the viewer comes back to the question.
+ */
+async function reviewWith(ctx, title, text, req) {
+  for (;;) {
+    let closed;
+    const done = new Promise((resolve) => (closed = resolve));
+    ctx.showText(title, text, { diff: true, onClosed: closed });
+    const choice = await ctx.confirm({ ...req, options: [...req.options.slice(0, -1), { label: 'Scroll through the diff first (esc comes back here)', value: 'read' }, req.options.at(-1)] });
+    if (choice !== 'read') return choice;
+    await done;
+  }
 }
 
 /** Claude drafts a pull request for the current branch: the title goes in the prompt, the description with it. */

@@ -79,3 +79,14 @@ export function wrap(text, width) {
   }
   return lines;
 }
+
+/** How long ago `ms` (a timestamp) was, in a few characters: now, 5m, 3h, 2d, 4mo, 1y. */
+export function relTime(ms, now = Date.now()) {
+  const d = Math.max(0, (now - ms) / 1000);
+  if (d < 60) return 'now';
+  if (d < 3600) return `${Math.floor(d / 60)}m`;
+  if (d < 86400) return `${Math.floor(d / 3600)}h`;
+  if (d < 86400 * 30) return `${Math.floor(d / 86400)}d`;
+  if (d < 86400 * 365) return `${Math.floor(d / (86400 * 30))}mo`;
+  return `${Math.floor(d / (86400 * 365))}y`;
+}

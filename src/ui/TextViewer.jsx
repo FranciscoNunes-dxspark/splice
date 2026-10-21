@@ -6,7 +6,8 @@ import { lineText, markRanges, matcher, matchingLines, wordChanges } from '../se
 import { theme } from '../theme.js';
 import { clean } from '../text.js';
 import { useMouse } from './hooks.js';
-import { Panel, Row, diffSegments } from './parts.jsx';
+import { Panel, Row } from './parts.jsx';
+import { diffSegments } from './diffstyle.js';
 
 /**
  * Full-height scrollable text: diffs, command output, help, Claude's answers (`markdown`: formatted and

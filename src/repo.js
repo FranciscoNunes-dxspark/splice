@@ -18,6 +18,7 @@ import {
   parseStash,
   parseStashFiles,
   parseStatus,
+  parseSubmodules,
   parseWorktrees,
 } from './parse.js';
 
@@ -129,7 +130,7 @@ async function readStashes(repo, refs) {
 
 /** Loads everything the views show. */
 export async function loadRepo(repo, { graphLimit = 400 } = {}) {
-  const [snap, log, remotes] = await Promise.all([
+  const [snap, log, remotes, subs] = await Promise.all([
     readState(repo, REF_FORMAT, refsSignature),
     // An empty repository has nothing to log, which git reports as an error.
     git(repo.root, [
@@ -137,6 +138,9 @@ export async function loadRepo(repo, { graphLimit = 400 } = {}) {
       `--format=${LOG_FORMAT}`, '--exclude=refs/stash', '--all',
     ]).catch(() => ''),
     readRemotes(repo),
+    // Only a repository with submodules pays for asking about them. Not part of the signature: what
+    // polling needs to notice (a submodule's commit or changes) is in the status already.
+    existsSync(join(repo.root, '.gitmodules')) ? git(repo.root, ['submodule', 'status']).catch(() => '') : '',
   ]);
   const status = parseStatus(snap.status);
   const graph = parseGraph(log);
@@ -156,6 +160,7 @@ export async function loadRepo(repo, { graphLimit = 400 } = {}) {
     refs: parseRefs(snap.refs),
     stashes: await readStashes(repo, snap.refs),
     worktrees,
+    submodules: parseSubmodules(subs, status.files),
     ...remotes,
   };
 }
@@ -173,10 +178,11 @@ export function parseRemotes(raw) {
 /** Full message, author and changed files of one commit. */
 export async function commitDetail(root, hash) {
   // One git: the header ends at \x1e, and the file list follows it.
-  const out = await git(root, ['show', '--format=%H%x1f%an%x1f%ae%x1f%at%x1f%cn%x1f%P%x1f%B%x1e', '--name-status', '-M', '--diff-merges=first-parent', hash]);
+  // %G? and %GS: whether it's signed, and by whom (checking a signature never asks for a passphrase).
+  const out = await git(root, ['show', '--format=%H%x1f%an%x1f%ae%x1f%at%x1f%cn%x1f%P%x1f%G?%x1f%GS%x1f%B%x1e', '--name-status', '-M', '--diff-merges=first-parent', hash]);
   const end = out.indexOf('\x1e');
   const files = out.slice(end + 1);
-  const [full, author, email, time, committer, parents, body] = out.slice(0, end).split('\x1f');
+  const [full, author, email, time, committer, parents, signature, signer, ...body] = out.slice(0, end).split('\x1f');
   return {
     hash: full,
     author,
@@ -184,7 +190,9 @@ export async function commitDetail(root, hash) {
     time: Number(time),
     committer,
     parents: parents ? parents.split(' ') : [],
-    message: (body ?? '').trimEnd(),
+    signature: signature || 'N',
+    signer: signer ?? '',
+    message: body.join('\x1f').trimEnd(),
     files: parseNameStatus(files),
   };
 }

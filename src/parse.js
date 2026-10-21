@@ -21,6 +21,13 @@ function splitFields(s, n) {
   return out;
 }
 
+// The <sub> field of a porcelain v2 entry: "N..." for a file; for a submodule "S" then C (its commit changed),
+// M (tracked changes inside it) and U (untracked files inside it), or "." for each that isn't so.
+function subState(sub) {
+  if (sub?.[0] !== 'S') return {};
+  return { submodule: { commit: sub[1] === 'C', modified: sub[2] === 'M', untracked: sub[3] === 'U' } };
+}
+
 /** Parses `git status --porcelain=v2 --branch -z`. */
 export function parseStatus(raw) {
   const branch = { oid: null, head: null, upstream: null, ahead: 0, behind: 0 };
@@ -44,10 +51,10 @@ export function parseStatus(raw) {
     const type = p[0];
     if (type === '1') {
       const f = splitFields(p, 8);
-      files.push({ kind: 'changed', x: f[1][0], y: f[1][1], path: f[8] });
+      files.push({ kind: 'changed', x: f[1][0], y: f[1][1], path: f[8], ...subState(f[2]) });
     } else if (type === '2') {
       const f = splitFields(p, 9);
-      files.push({ kind: 'renamed', x: f[1][0], y: f[1][1], path: f[9], orig: parts[++i] });
+      files.push({ kind: 'renamed', x: f[1][0], y: f[1][1], path: f[9], orig: parts[++i], ...subState(f[2]) });
     } else if (type === 'u') {
       const f = splitFields(p, 10);
       files.push({ kind: 'unmerged', x: f[1][0], y: f[1][1], path: f[10] });
@@ -448,4 +455,120 @@ export function relTime(sec, now = Date.now() / 1000) {
   if (d < 86400 * 30) return `${Math.floor(d / 86400)}d`;
   if (d < 86400 * 365) return `${Math.floor(d / (86400 * 30))}mo`;
   return `${Math.floor(d / (86400 * 365))}y`;
+}
+
+/**
+ * "/remote add <name> <url>", "rename <old> <new>", "remove <name>" (or rm), "set-url <name> <url>" as the
+ * `git remote` arguments, with `name` (the remote it's about) and `remove` set for a removal; `error` says
+ * what's missing. Nothing typed gives {} (the list of remotes).
+ */
+export function remoteArgs(text) {
+  const [op, ...rest] = splitArgs(text ?? '');
+  if (!op) return {};
+  const need = { add: ['<name>', '<url>'], rename: ['<old>', '<new>'], remove: ['<name>'], rm: ['<name>'], 'set-url': ['<name>', '<url>'] }[op];
+  if (!need) return { error: `Unknown: /remote ${op}. Use add, rename, remove or set-url.` };
+  if (rest.length !== need.length) return { error: `Use: /remote ${op} ${need.join(' ')}` };
+  const verb = op === 'rm' ? 'remove' : op;
+  return { args: ['remote', verb, ...rest], name: rest[0], remove: verb === 'remove' };
+}
+
+/**
+ * "/upstream [branch] <remote/branch>" and "/upstream --unset [branch]" as `git branch` arguments; the branch
+ * is `current` unless named. `error` when there's no telling which branch, or what to track.
+ */
+export function upstreamArgs(text, current) {
+  const words = splitArgs(text ?? '');
+  const unset = words.includes('--unset');
+  const rest = words.filter((w) => w !== '--unset');
+  if (unset) {
+    const branch = rest[0] ?? current;
+    if (!branch) return { error: 'HEAD is detached: name the branch, /upstream --unset <branch>' };
+    return { args: ['branch', '--unset-upstream', branch], branch };
+  }
+  if (!rest.length || rest.length > 2) return { error: 'Use: /upstream [branch] <remote/branch>, or /upstream --unset [branch]' };
+  const [branch, up] = rest.length === 2 ? rest : [current, rest[0]];
+  if (!branch) return { error: 'HEAD is detached: name the branch, /upstream <branch> <remote/branch>' };
+  return { args: ['branch', `--set-upstream-to=${up}`, branch], branch, upstream: up };
+}
+
+const SUBMODULE_STATES = { '-': 'uninitialised', '+': 'out of date', U: 'conflict', ' ': 'ok' };
+
+/**
+ * Parses `git submodule status`: { path, sha, state, describe } per submodule, where state is 'uninitialised'
+ * (not cloned or checked out), 'out of date' (it has another commit checked out than the one recorded here),
+ * 'conflict', or 'ok'. `files` (parseStatus's) adds 'modified' for one with changes of its own inside it.
+ */
+export function parseSubmodules(raw, files = []) {
+  const out = [];
+  for (const line of raw.split('\n')) {
+    const m = /^([ +\-U])([0-9a-f]{40,64}) (.+?)(?: \((.*)\))?$/.exec(line);
+    if (!m) continue;
+    let state = SUBMODULE_STATES[m[1]];
+    const inside = files.find((f) => f.submodule && f.path === m[3])?.submodule;
+    const dirty = Boolean(inside && (inside.modified || inside.untracked));
+    if (state === 'ok' && dirty) state = 'modified';
+    out.push({ path: m[3], sha: m[2], state, describe: m[4] ?? '', dirty });
+  }
+  return out;
+}
+
+/**
+ * "/stash [-u | --no-untracked] [message]" as `git stash push` arguments. Untracked files go in when -u says
+ * so, or by default when `untracked` (the setting) is on; --no-untracked leaves them out either way.
+ */
+export function stashArgs(text, { untracked = true } = {}) {
+  let include = untracked;
+  const message = (text ?? '')
+    .replace(/(^|\s)(-u|--include-untracked|--no-untracked|--tracked)(?=\s|$)/g, (_, space, flag) => {
+      include = flag === '-u' || flag === '--include-untracked';
+      return space;
+    })
+    .replace(/\s+/g, ' ')
+    .trim();
+  return { args: ['stash', 'push', ...(include ? ['--include-untracked'] : []), ...(message ? ['-m', message] : [])], untracked: include, message };
+}
+
+const FILTER_FLAGS = { '--author': 'author', '--path': 'path', '--since': 'since', '--after': 'since', '--until': 'until', '--before': 'until' };
+
+/**
+ * Reads "/filter --author <name> --path <path> --since <date> --until <date>" (any of them, quoted when they
+ * have spaces; --after and --before are the same as --since and --until). Dates are anything git takes:
+ * 2026-01-31, "2 weeks ago", yesterday. Nothing typed gives {} (no filter); `error` says what's wrong.
+ */
+export function filterArgs(text) {
+  const words = splitArgs(text ?? '');
+  const out = {};
+  for (let i = 0; i < words.length; i++) {
+    const m = /^(--[a-z]+)(?:=(.*))?$/.exec(words[i]);
+    const key = m && FILTER_FLAGS[m[1]];
+    if (!key) return { error: `Unknown: ${words[i]}. Use --author <name>, --path <path>, --since <date>, --until <date>.` };
+    const value = m[2] ?? words[++i];
+    if (value == null || value === '') return { error: `Say what after ${m[1]}.` };
+    out[key] = value;
+  }
+  return out;
+}
+
+/** What a filter keeps, for the graph's title: 'by ana, touching src/, since 2 weeks ago'. */
+export function filterLabel(f) {
+  return [
+    f.author && `by ${f.author}`,
+    f.path && `touching ${f.path}`,
+    f.since && `since ${f.since}`,
+    f.until && `until ${f.until}`,
+  ]
+    .filter(Boolean)
+    .join(', ');
+}
+
+/** `git log` over every branch for a /filter, in LOG_FORMAT, newest first (up to `limit` commits). */
+export function filterLogArgs(f, limit = 2000) {
+  return [
+    'log', '--date-order', '--decorate=full', ...DECORATE_REFS, `-n${limit}`,
+    ...(f.author ? [`--author=${f.author}`, '--regexp-ignore-case'] : []),
+    ...(f.since ? [`--since=${f.since}`] : []),
+    ...(f.until ? [`--until=${f.until}`] : []),
+    `--format=${LOG_FORMAT}`, '--exclude=refs/stash', '--all',
+    ...(f.path ? ['--', f.path] : []),
+  ];
 }

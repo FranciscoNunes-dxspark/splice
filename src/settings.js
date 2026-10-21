@@ -33,6 +33,13 @@ export function settingRows(config, { file = '', mouse = true } = {}) {
       note: checks ? 'they start the next time you open Splice' : 'only while checking is on',
       action: 'toggle',
     },
+    {
+      id: 'stashUntracked',
+      label: 'Stash untracked files',
+      value: isOn(config.stashUntracked) ? 'on' : 'off',
+      note: isOn(config.stashUntracked) ? 's and /stash take new files too (/stash --no-untracked)' : 'only changes to tracked files (/stash -u)',
+      action: 'toggle',
+    },
     { id: 'roots', label: 'Folders to scan', value: count(roots.length, 'folder'), note: 'see them, add or remove', action: 'roots' },
     { id: 'recent', label: 'Recent repositories', value: count(recent.length, 'repository', 'repositories'), note: recent.length ? 'forget them' : '', action: recent.length ? 'clear' : 'none' },
     { id: 'history', label: 'Prompt history', value: count(history.length, 'entry', 'entries'), note: history.length ? 'clear it' : '', action: history.length ? 'clear' : 'none' },

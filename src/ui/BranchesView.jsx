@@ -6,7 +6,8 @@ import { defaultBranch, isDefaultBranch, relTime } from '../parse.js';
 import { compareRefs, refLog } from '../repo.js';
 import { theme } from '../theme.js';
 import { fit } from '../text.js';
-import { useAsync, useListNav, useMouse, usePrList } from './hooks.js';
+import { useAsync, useListNav, useMouse } from './hooks.js';
+import { usePrList } from './prList.js';
 import { Lines, Panel, Row } from './parts.jsx';
 import { TONE, checksText } from './PrView.jsx';
 
@@ -107,8 +108,15 @@ export function BranchesView({ data, ctx, width, height, active, prVersion }) {
     if (!ctx.viewHasKeys()) return;
     if (nav.handle(input, key)) return;
     if (input === 'C') return a.cleanUp(ctx);
+    if (input === 'M') return a.remote(ctx, '');
     if (!sel?.ref) return;
     const { name } = sel.ref;
+    if (sel.type === 'tag' && input === 'u') return a.pushTag(ctx, name);
+    if (sel.type === 'tag' && input === 'R') return a.createRelease(ctx, name);
+    if (sel.type === 'local' && input === 'U') {
+      const remote = data.remotes.includes('origin') ? 'origin' : data.remotes[0];
+      return ctx.prefill(`/upstream ${name} ${sel.ref.upstream ?? (remote ? `${remote}/${name}` : '')}`);
+    }
     if (key.return) a.checkout(ctx, name);
     else if (input === 'y') ctx.copy(name);
     else if (input === 'n') ctx.prefill(`/branch  ${name}`, 8);
@@ -131,7 +139,7 @@ export function BranchesView({ data, ctx, width, height, active, prVersion }) {
     if (nav.pick(e.y - 1) && e.double) keys('', { return: true });
   });
 
-  const hint = [vsDefault ? 'D diff' : '', selPr ? 'o open PR' : ''].filter(Boolean).join(' · ');
+  const hint = [vsDefault ? 'D diff' : '', selPr ? 'o open PR' : '', sel?.type === 'tag' ? 'u push · R release · d delete' : ''].filter(Boolean).join(' · ');
   return (
     <Box width={width} height={height}>
       <Panel title="Branches" hint={`${local.length} local · ${remote.length} remote`} width={listW} height={height} focused={active}>

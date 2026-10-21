@@ -123,3 +123,57 @@ export function parsePrDraft(answer) {
   const title = cleanSubject(lines[first].replace(/^#+\s*/, ''));
   return { title, body: lines.slice(first + 1).join('\n').trim() };
 }
+
+/** What to ask for splitting a large change into commits; `splitInput` makes what goes on stdin. */
+export function splitPrompt(recentSubjects) {
+  return [
+    'Standard input has uncommitted changes in a git repository, cut into numbered hunks (H1, H2, ...), each with its file.',
+    'Group the hunks into a few logical commits, each one change that makes sense on its own, in the order they should be committed.',
+    'Every hunk goes in exactly one commit. Keep hunks that depend on each other in the same commit.',
+    'Reply in exactly this form and nothing else, one block per commit, a blank line between blocks:',
+    'COMMIT: <subject line, under 72 characters, no quotes, no trailing period>',
+    'HUNKS: H1 H4 H5',
+    recentSubjects.length ? `Match the style of this repository's recent commit subjects:\n${recentSubjects.map((s) => `- ${s}`).join('\n')}` : 'Use the imperative mood ("Add", "Fix").',
+  ].join('\n');
+}
+
+/** The hunks, numbered, for Claude to group. */
+export function splitInput(units) {
+  return units.map((u) => `### ${u.id} (${u.path})\n${u.text}`).join('\n\n');
+}
+
+/**
+ * Claude's grouping: { groups: [{ message, ids }], leftover: [ids no group took], error }. Hunks it named twice
+ * stay in the first group; ids it made up are dropped, and groups left without hunks with them.
+ */
+export function parseSplit(answer, ids) {
+  const known = new Set(ids);
+  const taken = new Set();
+  const groups = [];
+  let cur = null;
+  for (const raw of (answer ?? '').replace(/\r/g, '').split('\n')) {
+    const line = raw.replace(/^[\s*#>-]+/, '').replace(/\*\*/g, '');
+    const commit = /^commit\s*\d*\s*:\s*(.+)$/i.exec(line);
+    if (commit) {
+      cur = { message: cleanSubject(commit[1]), ids: [] };
+      groups.push(cur);
+      continue;
+    }
+    const hunks = /^hunks?\s*:\s*(.*)$/i.exec(line);
+    if (hunks && cur) {
+      for (const m of hunks[1].matchAll(/\bH(\d+)\b/gi)) {
+        const id = `H${m[1]}`;
+        if (known.has(id) && !taken.has(id)) {
+          taken.add(id);
+          cur.ids.push(id);
+        }
+      }
+    }
+  }
+  const kept = groups.filter((g) => g.message && g.ids.length);
+  return {
+    groups: kept,
+    leftover: ids.filter((id) => !taken.has(id)),
+    error: kept.length ? null : "Claude didn't propose any commits. Try again, or commit the changes yourself.",
+  };
+}

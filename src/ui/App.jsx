@@ -40,10 +40,10 @@ const VIEWS = [
 
 const HINTS = {
   graph: '↵ diff · c checkout · b branch · m merge · i rebase from here · C cherry-pick · v revert · X reset · B bisect · e/R Claude explains/reviews',
-  changes: 'space stage · ↵ hunks/lines · a all · u unstage all · d discard · s stash file · c commit · A amend · F fix up · H history · B blame · W Claude writes it · R review',
-  branches: '↵ checkout · n new · m merge · e rebase · d delete · D diff vs default · o open PR · C clean up',
+  changes: 'space stage · ↵ hunks/lines · a all · u unstage all · d discard · s stash file · v select files · c commit · A amend · F fix up · H history · B blame · W Claude writes it · S splits it · R review · on a submodule: I init/update · o open',
+  branches: '↵ checkout · n new · m merge · e rebase · d delete · D diff vs default · o open PR · C clean up · U upstream · M remotes · on a tag: u push · R release',
   stash: '↵ diff · s stash · S with a message · a apply · o pop · x drop · F files, to restore one',
-  prs: '↵ diff · c checkout · a approve · C comment · o open in browser · n new PR · W Claude drafts one · e/R explain/review',
+  prs: '↵ diff · c checkout · a approve · m merge · s checks · A reviewers · D draft/ready · E title · B description · C comment · o open in browser · n new PR · W Claude drafts one · e/R explain/review',
   repos: '↵ open · s scan folder · x forget',
   worktrees: '↵ open · n new · x remove or prune · C clean up',
 };
@@ -724,6 +724,11 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
   // Where things were drawn, for matching clicks against (set as the layout below is worked out).
   const layout = useRef(null);
   const lastPress = useRef(null);
+  // The component under a point of the main area (`y` counted from its top), and that `y` in it.
+  const mouseTarget = (y) => {
+    const target = ctx.mouseHandlers.findLast((h) => h.top <= y);
+    return target && { target, y: y - target.top };
+  };
   const onMouse = (e) => {
     if (e.type === 'copy') {
       const n = e.text.split('\n').length;
@@ -732,13 +737,22 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
     if (e.button === 'left' && !e.release && !e.drag) {
       const prev = lastPress.current;
       const now = Date.now();
-      e.double = Boolean(prev && prev.x === e.x && prev.y === e.y && now - prev.at < DOUBLE_CLICK_MS);
-      // A third click starts over rather than counting as another double-click.
-      lastPress.current = e.double ? null : { x: e.x, y: e.y, at: now };
-    } else if (e.button !== 'wheel') return;
+      const count = prev && prev.x === e.x && prev.y === e.y && now - prev.at < DOUBLE_CLICK_MS ? prev.count + 1 : 1;
+      e.double = count === 2;
+      e.triple = count === 3;
+      // A fourth click starts over rather than counting on.
+      lastPress.current = count < 3 ? { x: e.x, y: e.y, at: now, count } : null;
+    } else if (!e.drag && e.button !== 'wheel') return;
     // A confirmation's options are picked with keys.
     if (confirmRef.current || !layout.current) return;
     const { mainTop, mainH, promptTop, sugCount, tabs } = layout.current;
+    if (e.drag) {
+      // A drag the component it started in takes itself (claimDrags below; useMouse's `drags`).
+      const hit = mouseTarget(e.from.y - mainTop);
+      if (!hit) return;
+      if (focusRef.current === 'prompt') setFocus('view');
+      return hit.target.handle({ ...e, y: e.y - mainTop - hit.target.top, from: { x: e.from.x, y: hit.y } });
+    }
     if (e.y === mainTop - 1 && !e.wheel) {
       const tab = tabs.find((t) => e.x >= t.from && e.x < t.to);
       if (!tab) return;
@@ -750,7 +764,8 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
     if (e.y >= mainTop && e.y < mainTop + mainH) {
       // Like esc, a click on the view leaves the prompt's text for later.
       if (!e.wheel && focusRef.current === 'prompt') setFocus('view');
-      return ctx.mouseHandlers.at(-1)?.({ ...e, y: e.y - mainTop });
+      const hit = mouseTarget(e.y - mainTop);
+      return hit?.target.handle({ ...e, y: hit.y });
     }
     if (e.wheel) return;
     if (e.y >= promptTop && e.y < promptTop + 3) {
@@ -771,6 +786,17 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
   const mouseRef = useRef(onMouse);
   mouseRef.current = onMouse;
   useEffect(() => mouse?.subscribe((e) => mouseRef.current(e)), [mouse]);
+  // Drags that start where the component on screen selects for itself skip the screen selection.
+  useEffect(
+    () =>
+      mouse?.claimDrags?.((e) => {
+        const at = layout.current;
+        if (confirmRef.current || !at || e.y < at.mainTop || e.y >= at.mainTop + at.mainH) return false;
+        const hit = mouseTarget(e.y - at.mainTop);
+        return Boolean(hit?.target.drags?.({ ...e, y: hit.y }));
+      }),
+    [mouse],
+  );
 
   // Layout: everything is sized to the terminal, one row short of it so Ink never clears the screen.
   const W = columns;

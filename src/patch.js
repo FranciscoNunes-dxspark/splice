@@ -75,3 +75,68 @@ export function buildPatch(diff, picks, { reverse = false } = {}) {
   });
   return any ? `${out.join('\n')}\n` : null;
 }
+
+/** Splits a multi-file `git diff` into one diff per file: { path, text }. */
+export function splitFiles(text) {
+  const out = [];
+  const parts = text.split(/^(?=diff --git )/m).filter((p) => p.startsWith('diff --git '));
+  for (const part of parts) {
+    const lines = part.split('\n');
+    const plus = lines.find((l) => l.startsWith('+++ '));
+    const minus = lines.find((l) => l.startsWith('--- '));
+    let path = null;
+    if (plus && plus !== '+++ /dev/null') path = plus.slice(4).replace(/^b\//, '');
+    else if (minus && minus !== '--- /dev/null') path = minus.slice(4).replace(/^a\//, '');
+    else {
+      // No ---/+++ lines (a binary file, a mode change): the header's "a/x b/x", both halves the same.
+      const m = /^diff --git a\/(.*) b\/(.*)$/.exec(lines[0]);
+      path = m ? m[2] : lines[0].slice(11);
+    }
+    out.push({ path: path.replace(/\t$/, ''), text: part.endsWith('\n') ? part : `${part}\n` });
+  }
+  return out;
+}
+
+/** A hunk's identity that survives other hunks being staged: its changed lines, not its line numbers. */
+export const hunkSignature = (hunk) => hunk.lines.filter(isChange).join('\n');
+
+/**
+ * The units Claude groups into commits: every hunk of every file (H1, H2, ...), in diff order, as
+ * { id, path, signature, text } where `text` is the file's header and that one hunk. A file without hunks
+ * (binary, mode only) is one unit with `whole` set.
+ */
+export function splitUnits(diffText) {
+  const units = [];
+  for (const file of splitFiles(diffText)) {
+    const diff = parseDiff(file.text);
+    if (!diff.hunks.length) {
+      units.push({ id: `H${units.length + 1}`, path: file.path, whole: true, signature: null, text: file.text });
+      continue;
+    }
+    for (const h of diff.hunks) {
+      units.push({ id: `H${units.length + 1}`, path: file.path, whole: false, signature: hunkSignature(h), text: [...diff.header, h.header, ...h.lines].join('\n') });
+    }
+  }
+  return units;
+}
+
+/**
+ * Picks, in `fresh` (a file's diff as it is now), the hunks whose signatures are in `signatures` (each used
+ * once). Returns { picks, missing }: the picks map for buildPatch, and how many signatures weren't found.
+ */
+export function picksBySignature(fresh, signatures) {
+  const want = new Map();
+  for (const s of signatures) want.set(s, (want.get(s) ?? 0) + 1);
+  const picks = new Map();
+  fresh.hunks.forEach((h, hi) => {
+    const sig = hunkSignature(h);
+    if (!want.get(sig)) return;
+    want.set(sig, want.get(sig) - 1);
+    const set = new Set();
+    h.lines.forEach((l, li) => isChange(l) && set.add(li));
+    picks.set(hi, set);
+  });
+  let missing = 0;
+  for (const n of want.values()) missing += n;
+  return { picks, missing };
+}

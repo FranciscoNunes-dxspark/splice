@@ -5,7 +5,8 @@ import { renderMarkdown } from '../markdown.js';
 import { relTime } from '../parse.js';
 import { theme } from '../theme.js';
 import { fit, fitSegments, wrap } from '../text.js';
-import { useAsync, useListNav, useMouse, usePrList } from './hooks.js';
+import { useAsync, useListNav, useMouse } from './hooks.js';
+import { usePrList } from './prList.js';
 import { Lines, Panel, Row } from './parts.jsx';
 
 export const TONE = { good: theme.add, bad: theme.del, wait: theme.warn, none: theme.dim };
@@ -92,6 +93,12 @@ export function PrView({ data, ctx, width, height, active, prVersion }) {
     else if (input === 'y') ctx.copy(pr.url, `the link to ${pr.label}`);
     else if (input === 'c') a.prCheckout(ctx, pr);
     else if (input === 'a') a.prApprove(ctx, pr);
+    else if (input === 'm') a.prMerge(ctx, pr);
+    else if (input === 's') a.prChecks(ctx, pr);
+    else if (input === 'A') ctx.prefill('/reviewer ');
+    else if (input === 'D') a.prSetDraft(ctx);
+    else if (input === 'E') a.prTitle(ctx, '');
+    else if (input === 'B') a.prBody(ctx, '');
     else if (input === 'C') ctx.prefill('/comment ');
     else if (input === 'o') ctx.openUrl(pr.url);
     else if (input === 'e' || input === 'R') a.claudeLook(ctx, input === 'e' ? 'explain' : 'review', { kind: 'pr', pr });

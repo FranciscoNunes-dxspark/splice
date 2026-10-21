@@ -156,7 +156,7 @@ test('a local branch absorbs its remote twin in the pills', () => {
 test('slash suggestions: command names, then ref completion', () => {
   const data = { refs: { local: [{ name: 'main' }, { name: 'feature/login' }], remote: [{ name: 'origin/main' }], tags: [] } };
   const names = suggestionsFor('/pu', { data }).map((s) => s.label);
-  assert.deepEqual(names, ['/pull', '/push']);
+  assert.deepEqual(names, ['/pull', '/push', '/tag-push']);
   const checkout = suggestionsFor('/checkout ', { data });
   assert.equal(checkout[0].insert, '/checkout main');
   assert.deepEqual(suggestionsFor('/checkout log', { data }).map((s) => s.label), ['feature/login']);
@@ -208,4 +208,58 @@ test('worktrees: main, branch, detached, locked and missing ones, paths with spa
   );
   assert.deepEqual(parseWorktrees(['worktree /srv/repo.git', 'bare', '', ''].join('\0')).map((w) => [w.bare, w.main]), [[true, true]]);
   assert.deepEqual(parseWorktrees(''), []);
+});
+
+test('/remote and /upstream arguments', async () => {
+  const { remoteArgs, upstreamArgs } = await import('../src/parse.js');
+  assert.deepEqual(remoteArgs(''), {});
+  assert.deepEqual(remoteArgs('add fork git@x:y.git'), { args: ['remote', 'add', 'fork', 'git@x:y.git'], name: 'fork', remove: false });
+  assert.deepEqual(remoteArgs('rm fork'), { args: ['remote', 'remove', 'fork'], name: 'fork', remove: true });
+  assert.deepEqual(remoteArgs('rename a "b c"').args, ['remote', 'rename', 'a', 'b c']);
+  assert.match(remoteArgs('add fork').error, /\/remote add <name> <url>/);
+  assert.match(remoteArgs('prune').error, /Unknown/);
+  assert.deepEqual(upstreamArgs('origin/main', 'main'), { args: ['branch', '--set-upstream-to=origin/main', 'main'], branch: 'main', upstream: 'origin/main' });
+  assert.deepEqual(upstreamArgs('topic up/topic', 'main').args, ['branch', '--set-upstream-to=up/topic', 'topic']);
+  assert.deepEqual(upstreamArgs('--unset', 'main').args, ['branch', '--unset-upstream', 'main']);
+  assert.deepEqual(upstreamArgs('--unset topic', null).args, ['branch', '--unset-upstream', 'topic']);
+  assert.match(upstreamArgs('origin/main', null).error, /detached/);
+  assert.match(upstreamArgs('', 'main').error, /Use:/);
+});
+
+test('submodules: their state from git submodule status, and changes inside from the status', async () => {
+  const { parseStatus, parseSubmodules } = await import('../src/parse.js');
+  const h = (c) => c.repeat(40);
+  const status = parseStatus(['# branch.oid ' + h('a'), '# branch.head main', `1 .M SC.U 160000 160000 160000 ${h('1')} ${h('1')} lib`, `1 .M N... 100644 100644 100644 ${h('2')} ${h('2')} a.txt`, ''].join('\0'));
+  assert.deepEqual(status.files[0].submodule, { commit: true, modified: false, untracked: true });
+  assert.equal(status.files[1].submodule, undefined);
+  const subs = parseSubmodules(`-${h('3')} vendor/x\n+${h('4')} lib (v1-2-gabc)\n ${h('5')} docs (heads/main)\nU${h('0')} both\n`, status.files);
+  assert.deepEqual(
+    subs.map((s) => [s.path, s.state, s.describe]),
+    [
+      ['vendor/x', 'uninitialised', ''],
+      ['lib', 'out of date', 'v1-2-gabc'],
+      ['docs', 'ok', 'heads/main'],
+      ['both', 'conflict', ''],
+    ],
+  );
+  assert.equal(subs[1].dirty, true, 'untracked files inside lib');
+  assert.equal(parseSubmodules(` ${h('6')} lib (x)`, status.files)[0].state, 'modified');
+});
+
+test('/filter: author, path and dates, as git log arguments', async () => {
+  const { filterArgs, filterLabel, filterLogArgs } = await import('../src/parse.js');
+  assert.deepEqual(filterArgs(''), {});
+  const f = filterArgs('--author "Ana Lu" --path=src/ui --since "2 weeks ago" --before 2026-03-01');
+  assert.deepEqual(f, { author: 'Ana Lu', path: 'src/ui', since: '2 weeks ago', until: '2026-03-01' });
+  assert.equal(filterLabel(f), 'by Ana Lu, touching src/ui, since 2 weeks ago, until 2026-03-01');
+  const args = filterLogArgs(f, 50);
+  assert.ok(args.includes('--author=Ana Lu') && args.includes('--since=2 weeks ago') && args.includes('--until=2026-03-01'));
+  assert.ok(args.includes('-n50'));
+  assert.deepEqual(args.slice(-2), ['--', 'src/ui'], 'the path last, after --');
+  assert.ok(args.indexOf('--exclude=refs/stash') < args.indexOf('--all'));
+  assert.deepEqual(filterLogArgs({ author: 'bo' }).slice(-1), ['--all']);
+  assert.match(filterArgs('ana').error, /Unknown: ana/);
+  assert.match(filterArgs('--since').error, /Say what after --since/);
+  const flags = suggestionsFor('/filter ', { data: null }).map((s) => s.label);
+  assert.deepEqual(flags, ['--author', '--path', '--since', '--until']);
 });
