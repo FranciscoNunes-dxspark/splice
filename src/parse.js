@@ -107,19 +107,14 @@ export function parseDecorations(deco) {
   return refs;
 }
 
-/** Parses `git log --graph --format=LOG_FORMAT`. Rows without a commit are the graph's connector lines. */
-export function parseGraph(raw) {
+/** Parses `git log --format=LOG_FORMAT` into rows of one commit each. */
+export function parseLog(raw) {
   const rows = [];
   for (const line of raw.split('\n')) {
-    if (!line) continue;
     const i = line.indexOf('\x1f');
-    if (i < 0) {
-      rows.push({ graph: line.trimEnd() });
-      continue;
-    }
+    if (i < 0) continue;
     const [hash, parents, deco, author, time, subject] = line.slice(i + 1).split('\x1f');
     rows.push({
-      graph: line.slice(0, i).trimEnd(),
       commit: {
         hash,
         parents: parents ? parents.split(' ') : [],

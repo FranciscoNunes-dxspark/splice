@@ -9,7 +9,7 @@ import { configFile } from './config.js';
 import { matchLineEndings, parseConflicts, takeSide, unifiedDiff } from './conflict.js';
 import { blamePicker, historyPicker, repoPath } from './history.js';
 import { MERGE_LABELS, bodyArgs, mergePrArgs, releaseArgs } from './hosting.js';
-import { defaultBranch, filterArgs, filterLabel, filterLogArgs, findArgs, firstBadCommit, parseGraph, parseStatus, relTime, remoteArgs, searchArgs, splitArgs, stashArgs, upstreamArgs } from './parse.js';
+import { defaultBranch, filterArgs, filterLabel, filterLogArgs, findArgs, firstBadCommit, parseLog, parseStatus, relTime, remoteArgs, searchArgs, splitArgs, stashArgs, upstreamArgs } from './parse.js';
 import { buildPatch, coversAll, parseDiff, picksBySignature, splitUnits } from './patch.js';
 import {
   COMMIT_LIST_FORMAT,
@@ -1277,7 +1277,7 @@ export async function find(ctx, text) {
   const r = await ctx.task(
     `git log -${mode} ${JSON.stringify(query)} --all`,
     async (signal) => {
-      rows = parseGraph(await ctx.git(searchArgs(mode, query), { signal })).filter((row) => row.commit);
+      rows = parseLog(await ctx.git(searchArgs(mode, query), { signal }));
       return { stdout: rows.length ? `${rows.length} commit${rows.length === 1 ? '' : 's'}` : 'No commits', stderr: '' };
     },
     { label: 'Searching the history', refresh: false },
@@ -1300,7 +1300,7 @@ export async function filter(ctx, text) {
   const r = await ctx.task(
     `git log ${label}`,
     async (signal) => {
-      rows = parseGraph(await ctx.git(filterLogArgs(f), { signal })).filter((row) => row.commit);
+      rows = parseLog(await ctx.git(filterLogArgs(f), { signal }));
       return { stdout: rows.length ? `${rows.length} commit${rows.length === 1 ? '' : 's'}` : 'No commits', stderr: '' };
     },
     { label: 'Filtering the history', refresh: false },

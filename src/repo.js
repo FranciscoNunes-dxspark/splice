@@ -3,16 +3,18 @@ import { readFile, readdir, stat } from 'node:fs/promises';
 import { basename, join, resolve } from 'node:path';
 import { samePath } from './config.js';
 import { git } from './git.js';
+import { layoutGraph } from './graph.js';
 import {
   COMMIT_FORMAT,
   DECORATE_REFS,
   LOG_FORMAT,
   REF_FORMAT,
   STASH_FORMAT,
+  defaultBranch,
   groupChanges,
   parseAheadBehind,
   parseCommits,
-  parseGraph,
+  parseLog,
   parseNameStatus,
   parseRefs,
   parseStash,
@@ -134,7 +136,7 @@ export async function loadRepo(repo, { graphLimit = 400 } = {}) {
     readState(repo, REF_FORMAT, refsSignature),
     // An empty repository has nothing to log, which git reports as an error.
     git(repo.root, [
-      'log', '--graph', '--date-order', '--decorate=full', ...DECORATE_REFS, `-n${graphLimit}`,
+      'log', '--date-order', '--decorate=full', ...DECORATE_REFS, `-n${graphLimit}`,
       `--format=${LOG_FORMAT}`, '--exclude=refs/stash', '--all',
     ]).catch(() => ''),
     readRemotes(repo),
@@ -143,7 +145,11 @@ export async function loadRepo(repo, { graphLimit = 400 } = {}) {
     existsSync(join(repo.root, '.gitmodules')) ? git(repo.root, ['submodule', 'status']).catch(() => '') : '',
   ]);
   const status = parseStatus(snap.status);
-  const graph = parseGraph(log);
+  const refs = parseRefs(snap.refs);
+  const graph = layoutGraph(parseLog(log), {
+    wip: status.files.length ? status.branch.oid : null,
+    main: defaultBranch(refs, remotes.remotes)?.name,
+  });
   // Without linked worktrees, the main one is the open one, and status already says what it has out.
   const worktrees = snap.worktrees
     ? parseWorktrees(snap.worktrees).map((w) => ({ ...w, path: resolve(w.path), current: samePath(w.path, repo.root) }))
@@ -154,10 +160,12 @@ export async function loadRepo(repo, { graphLimit = 400 } = {}) {
     state: snap.state,
     status,
     changes: groupChanges(status.files),
-    graph,
+    graph: graph.rows,
+    // The working-tree row's cells, in HEAD's column; null when there are no changes or HEAD isn't loaded.
+    graphWip: graph.wip,
     graphLimit,
-    graphComplete: graph.filter((r) => r.commit).length < graphLimit,
-    refs: parseRefs(snap.refs),
+    graphComplete: graph.rows.filter((r) => r.commit).length < graphLimit,
+    refs,
     stashes: await readStashes(repo, snap.refs),
     worktrees,
     submodules: parseSubmodules(subs, status.files),

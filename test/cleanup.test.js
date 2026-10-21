@@ -310,7 +310,8 @@ test('/cleanup removes clean worktrees and deletes branches with nothing only he
   const app = lastApp;
   const frame = () => app.lastFrame() ?? '';
   try {
-    await until(() => frame().includes('Merge the worktree branches'), 'the graph');
+    // Ten branches from one commit make a wide graph, which leaves room for only part of the subject.
+    await until(() => frame().includes('Merge the work'), 'the graph');
 
     // C in Branches lists what would go, and "No" leaves everything alone.
     app.stdin.write('3');

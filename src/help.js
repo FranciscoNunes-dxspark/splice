@@ -31,7 +31,7 @@ export const HELP = [
   },
   {
     title: 'Graph',
-    about: 'the commit pane says whether the commit is signed, and if the signature is good',
+    about: '● a commit · ○ a merge, < or > pointing into it from the branch it brings in · ◌ your uncommitted changes; the commit pane says whether the commit is signed, and if the signature is good',
     views: ['graph'],
     rows: [
       ['↵', 'Full diff of the commit'],
