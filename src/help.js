@@ -214,6 +214,14 @@ export const HELP = [
     ],
   },
   {
+    title: 'Doctor',
+    about: '/doctor: a health check of the repository, in the viewer, each finding with what to do about it',
+    rows: [
+      'It looks for: a git older than Splice needs · a detached HEAD · signing turned on without a key that can sign · a password in a remote\'s URL · https remotes with no credential helper · branches pushed but not tracking their remote branch · stashes already in HEAD, or older than 30 days · files stored with CRLF that .gitattributes says to keep LF · core.autocrlf on outside Windows · untracked files over 10 MB · files over 10 MB in the last 50 commits · loose objects past gc.auto.',
+      'After the report, it offers what Splice can do itself (asks first): set those upstreams, drop the stashes already in HEAD, renormalise line endings, add the big untracked files to .gitignore, git gc.',
+    ],
+  },
+  {
     title: 'Repos',
     views: ['repos'],
     rows: [

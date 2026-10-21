@@ -7,6 +7,7 @@ import { READ_ONLY, blameInput, blamePrompt, clip, commitPrompt, lookPrompt, par
 import { absorbFiles, absorbSummary, absorbText, blameMap, blameTargets, groupPatch, lineRanges, planAbsorb } from './absorb.js';
 import { cleanupChoice, cleanupCount, cleanupOptions, cleanupText, planCleanup, readCleanup } from './cleanup.js';
 import { configFile } from './config.js';
+import { doctorFindings, doctorText, ignoreLines, readDoctor } from './doctor.js';
 import { droppedPaths, insideRepo } from './drop.js';
 import { matchLineEndings, parseConflicts, takeSide, unifiedDiff } from './conflict.js';
 import { blamePicker, historyPicker, lineLogArgs, linesRange, repoPath } from './history.js';
@@ -986,6 +987,76 @@ export async function cleanUp(ctx) {
     ...problems,
   ];
   ctx.note([head, ...lines].join('\n'), problems.length || stopped ? 'error' : 'ok');
+}
+
+/**
+ * /doctor: a health report of the repository in the viewer, each finding with what to do (doctor.js). What
+ * Splice can do itself (set upstreams, drop stashes already in HEAD, renormalise line endings, ignore big
+ * untracked files, git gc) it offers after the report.
+ */
+export async function doctor(ctx) {
+  if (!needRepo(ctx)) return;
+  const { root, gitDir, commonDir } = ctx.data;
+  let findings;
+  const read = await ctx.task(
+    'Checking the repository',
+    async (signal) => {
+      findings = doctorFindings(await readDoctor({ root, gitDir, commonDir, data: ctx.data, signal }));
+      return { stdout: '', stderr: '' };
+    },
+    { label: 'Checking the repository', refresh: false, quiet: true },
+  );
+  if (!read.ok) return read;
+  if (!findings.length) return ctx.note('The repository looks healthy: nothing for /doctor to report.', 'ok');
+  ctx.showText(`Doctor: ${findings.length === 1 ? '1 thing' : `${findings.length} things`} to look at`, doctorText(findings));
+  const fixes = findings.filter((f) => f.action);
+  if (!fixes.length) return;
+  const choice = await ctx.confirm({
+    title: fixes.length === 1 ? `${fixes[0].action.label}?` : `Do ${fixes.length} of these now?`,
+    detail: 'Listed above, with what each one does.',
+    options: [
+      ...(fixes.length > 1 ? [{ label: 'All of them', value: 'all' }] : []),
+      ...fixes.map((f) => ({ label: fixes.length === 1 ? `Yes, ${f.action.label[0].toLowerCase()}${f.action.label.slice(1)}` : f.action.label, value: f.id })),
+      { label: 'No, leave them', value: false },
+    ],
+    danger: fixes.some((f) => f.action.danger),
+  });
+  ctx.closeOverlay();
+  if (!choice) return;
+  const done = [];
+  const problems = [];
+  for (const f of fixes.filter((x) => choice === 'all' || x.id === choice)) {
+    const step = async (args, label) => {
+      const r = await ctx.exec(args, { label, refresh: false });
+      if (!r.ok && !r.error?.cancelled) problems.push(firstLine(r.error.message));
+      return r.ok;
+    };
+    const { action } = f;
+    let ok = true;
+    if (action.kind === 'upstream') {
+      for (const it of action.items) ok = (await step(['branch', `--set-upstream-to=${it.upstream}`, it.branch], 'Setting the upstream')) && ok;
+    } else if (action.kind === 'drop') {
+      // Highest first, so dropping one doesn't renumber the others still to go.
+      const n = (ref) => Number(/\{(\d+)\}/.exec(ref)?.[1] ?? 0);
+      for (const ref of [...action.refs].sort((a, b) => n(b) - n(a))) ok = (await step(['stash', 'drop', ref], 'Dropping the stash')) && ok;
+    } else if (action.kind === 'renormalize') {
+      ok = await step(['add', '--renormalize', '.'], 'Renormalising the line endings');
+    } else if (action.kind === 'gc') {
+      ok = await step(['gc'], 'Packing objects');
+    } else if (action.kind === 'ignore') {
+      try {
+        const file = join(root, '.gitignore');
+        const before = existsSync(file) ? await readFile(file, 'utf8') : '';
+        await writeFile(file, `${before}${before && !before.endsWith('\n') ? '\n' : ''}${ignoreLines(action.paths).join('\n')}\n`);
+      } catch (e) {
+        ok = false;
+        problems.push(`.gitignore: ${e.message}`);
+      }
+    }
+    if (ok) done.push(action.label);
+  }
+  await ctx.reload();
+  ctx.note([done.length ? `Done: ${done.join('; ')}` : 'Nothing was done', ...problems].join('\n'), problems.length ? 'error' : 'ok');
 }
 
 export function tag(ctx, argText) {

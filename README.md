@@ -81,7 +81,7 @@ The mouse works too: click a tab, a row or the prompt, double-click a row to do 
 
 Type `/` and the menu narrows as you type; `tab` completes, `↑`/`↓` picks, `↵` runs. Commands that take a branch complete branch, tag and remote names; `/history` and `/blame` complete the repository's tracked files.
 
-`/commit <msg> | --file [path]` `/amend [msg | --file [path]]` `/checkout <ref>` `/branch <name> [start]` `/delete <ref>` `/merge <ref>` `/rebase <ref>` `/reset <ref>` `/tag <name> [ref]` `/tag-push <tag> [remote]` `/release <tag> [--draft] [title]` `/fetch` `/pull [--rebase]` `/push [--force] [remote]` `/remote [add|rename|remove|set-url] …` `/upstream [branch] <remote/branch>` `/stash [-u | --no-untracked] [msg]` `/pop` `/discard` `/submodule-update [path]` `/undo` `/reflog` `/continue` `/abort` `/find <text>` `/find -S <text>` `/find -G <regex>` `/filter [--author <name>] [--path <path>] [--since <date>] [--until <date>]` `/fixup [ref]` `/absorb` `/open <path>` `/scan <folder>` `/last` `/settings` `/accent <#rrggbb|default>` `/refresh` `/help` `/quit` `/pr <title> [--into <branch>] [--draft]` `/comment <text>` `/review-comment <text>` `/reply <text>` `/resolve` `/unresolve` `/approve` `/request-changes [text]` `/merge-pr [squash|merge|rebase] [--delete-branch] [--auto]` `/ci` `/reviewer <name>` `/draft` `/ready` `/title <text>` `/body [--file <path>]` `/worktree <path> [ref]` `/compare <ref> [base]` `/history <path>` `/blame <path>` `/cleanup` `/describe` `/split` `/draft-pr [--into <branch>]` `/explain [ref]` `/review [ref]`
+`/commit <msg> | --file [path]` `/amend [msg | --file [path]]` `/checkout <ref>` `/branch <name> [start]` `/delete <ref>` `/merge <ref>` `/rebase <ref>` `/reset <ref>` `/tag <name> [ref]` `/tag-push <tag> [remote]` `/release <tag> [--draft] [title]` `/fetch` `/pull [--rebase]` `/push [--force] [remote]` `/remote [add|rename|remove|set-url] …` `/upstream [branch] <remote/branch>` `/stash [-u | --no-untracked] [msg]` `/pop` `/discard` `/submodule-update [path]` `/undo` `/reflog` `/continue` `/abort` `/find <text>` `/find -S <text>` `/find -G <regex>` `/filter [--author <name>] [--path <path>] [--since <date>] [--until <date>]` `/fixup [ref]` `/absorb` `/open <path>` `/scan <folder>` `/last` `/settings` `/accent <#rrggbb|default>` `/refresh` `/help` `/quit` `/pr <title> [--into <branch>] [--draft]` `/comment <text>` `/review-comment <text>` `/reply <text>` `/resolve` `/unresolve` `/approve` `/request-changes [text]` `/merge-pr [squash|merge|rebase] [--delete-branch] [--auto]` `/ci` `/reviewer <name>` `/draft` `/ready` `/title <text>` `/body [--file <path>]` `/worktree <path> [ref]` `/compare <ref> [base]` `/history <path>` `/blame <path>` `/cleanup` `/doctor` `/describe` `/split` `/draft-pr [--into <branch>]` `/explain [ref]` `/review [ref]`
 
 ### Commit messages
 
@@ -170,6 +170,22 @@ The Worktrees view (`4`) lists the main working tree and every worktree added to
 - **Branches on the remote** go when their pull request was merged and nobody has pushed to them since. Never the default branch, or one that an open pull request comes from or goes into. One already deleted on the server just has its remote-tracking branch removed.
 
 Worktrees are removed first with a plain `git worktree remove`, then branches deleted with `git branch -d`; `-D` is used only for branches it refuses because they aren't merged into the one you're on, which were already checked against the remotes, the default branch and the pull requests. Branches on the remote go last, with `git push --delete`. Something that fails is reported and the rest carries on. Without `gh` or `az` signed in, the list says the pull requests couldn't be asked about, and a squash-merged branch whose remote branch was deleted isn't caught, since its commits are on neither a remote branch nor the default branch: delete it yourself (`d`). Only the last 200 merged pull requests are looked at. Fetch first (`f`) so Splice knows which remote branches are gone.
+
+### Repository health
+
+`/doctor` checks the repository for things that tend to go wrong quietly, and lists what it finds in the viewer, each with what to do about it. It takes a few seconds at most (esc cancels), and looks for:
+
+- a git older than Splice needs (2.23 for `git switch` and `git restore`, 2.31 and 2.36 for parts of the graph and the Worktrees view);
+- a detached HEAD, where new commits belong to no branch (not during a rebase or bisect, where that's normal);
+- `commit.gpgsign` on without a key that can sign: gpg missing, no secret key, an expired one, or a locked key with no window to ask for its passphrase in; for SSH signing, no key set or its file missing;
+- a password or token written into a remote's URL, and https remotes with no credential helper, which Splice (having no terminal for git to ask in) can't fetch from or push to;
+- branches you've pushed that don't track the remote branch, so `p` and the ahead and behind counts don't know about it;
+- stashes whose changes are already in HEAD, and stashes older than 30 days;
+- files stored with CRLF line endings that `.gitattributes` says to keep with LF, and `core.autocrlf` turned on outside Windows;
+- untracked files over 10 MB, and files over 10 MB in the last 50 commits, which belong in Git LFS;
+- more loose objects than `gc.auto` lets pile up, or more pack files than `gc.autoPackLimit`.
+
+What Splice can do about them itself, it offers after the report, as `/cleanup` does: setting those branches' upstreams, dropping the stashes already in HEAD, renormalising the line endings (`git add --renormalize .`, for you to commit), adding the big untracked files to `.gitignore`, and packing the objects (`git gc`). Pick one or all of them, or none.
 
 ### Repositories
 

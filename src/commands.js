@@ -12,6 +12,7 @@ export const COMMANDS = [
   { name: 'branch', args: '<name> [start]', desc: 'Create a branch and switch to it', run: (ctx, s) => a.createBranch(ctx, s) },
   { name: 'delete', args: '<branch|tag>', desc: 'Delete a branch (local or remote) or a tag', complete: 'refs', run: (ctx, s) => a.deleteRef(ctx, s) },
   { name: 'cleanup', desc: 'Delete branches and remove worktrees with nothing of yours on them, and merged PRs\' branches on the remote (asks first)', run: (ctx) => a.cleanUp(ctx) },
+  { name: 'doctor', desc: 'A health check of the repository: what looks wrong, what to do about it, and doing what Splice can (asks first)', run: (ctx) => a.doctor(ctx) },
   { name: 'merge', args: '<ref>', desc: 'Merge a ref into the current branch', complete: 'refs', run: (ctx, s) => a.merge(ctx, s) },
   { name: 'rebase', args: '[-i] <ref>', desc: 'Rebase the current branch onto a ref (-i: edit the commits after it)', complete: 'refs', run: (ctx, s) => a.rebase(ctx, s) },
   { name: 'compare', args: '<ref> [base]', desc: 'Full diff of what a branch adds to the default branch (or to base)', complete: 'refs', run: (ctx, s) => a.compare(ctx, s) },
