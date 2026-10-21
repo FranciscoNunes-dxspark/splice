@@ -53,11 +53,11 @@ import {
 } from './rebase.js';
 import { blobIds, checkCommits, foundCount, foundSummary, parseBatchCheck, parsePushLog, pushCheckText, pushLogArgs, pushRange } from './pushcheck.js';
 import { eachLimited, fetchRepo } from './repos.js';
-import { settingRows, settingSegments } from './settings.js';
+import { nextTheme, settingRows, settingSegments } from './settings.js';
 import { forcePushes, forwardInput, planSync, rebasingElsewhere, syncSummary, syncText, updateBranchArgs } from './sync.js';
 import { SIGNING_KEYS, checkGpgKey, explainSigning, needsPinentryCheck, signingConfig } from './signing.js';
 import { fit } from './text.js';
-import { DEFAULT_ACCENT, isColour, setAccent, theme } from './theme.js';
+import { DEFAULT_ACCENT, applyTheme, isColour, setAccent, theme } from './theme.js';
 import {
   REFLOG_FORMAT,
   captureDiscard,
@@ -3548,6 +3548,13 @@ async function changeSetting(ctx, row) {
     return redrawSettings(ctx);
   }
   if (row.action === 'accent') return ctx.prefill(`/accent ${ctx.config.accent ?? DEFAULT_ACCENT}`);
+  if (row.action === 'theme') {
+    ctx.setConfig((c) => ({ ...c, theme: nextTheme(c) }));
+    applyTheme(ctx.config);
+    // The graph's lanes take their colours as it's laid out.
+    ctx.reload();
+    return redrawSettings(ctx);
+  }
   if (row.action === 'roots') return scanFolders(ctx);
   if (row.action === 'clear') {
     const ok = await ctx.confirm({

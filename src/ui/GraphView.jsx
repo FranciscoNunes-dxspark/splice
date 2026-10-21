@@ -41,7 +41,8 @@ export function refPills(refs) {
 }
 
 const META_W = 26;
-const SIG_TONE = { good: theme.add, wait: theme.warn, bad: theme.del, none: theme.dim };
+// Getters, so the colours are the theme's as it is now (light or dark).
+const SIG_TONE = { get good() { return theme.add; }, get wait() { return theme.warn; }, get bad() { return theme.del; }, get none() { return theme.dim; } };
 
 function detailLines(c, d, width) {
   const lines = [

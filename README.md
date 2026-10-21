@@ -265,6 +265,7 @@ The app icon at every size it ships in, drawn by `scripts/logo.js` like the rest
 `,` (or `/settings`) lists every setting with its value, and `↵` changes the one under the cursor; each change is saved as you make it:
 
 - **Accent colour**: `↵` puts `/accent <colour>` in the prompt; give `#rrggbb`, or `default`. It repaints straight away.
+- **Theme**: `↵` goes through `dark`, `light` and `auto`, and repaints straight away. `auto`, the default, reads the `COLORFGBG` variable that some terminals set (Konsole, rxvt, iTerm2 with its option on) to tell a light background from a dark one, and is dark where it isn't set. The light palette has darker colours, pale backgrounds behind the words a diff line changed and behind search matches, and a darker green as the default accent; an accent of your own is used as it is.
 - **Mouse**: on or off. Off, Splice leaves clicks and selecting to the terminal.
 - **Stash untracked files**: on (the default), stashing everything takes new files too; off, only changes to tracked files (`/stash -u` still takes them).
 - **Notify when done**: on (the default), a command that takes longer than 10 seconds rings the terminal's bell and raises a desktop notification when it ends, and so does news on your own pull requests (see [How it behaves](#how-it-behaves)); off, it says nothing. `"notifyAfter": 30` in the settings file changes the seconds.
