@@ -137,7 +137,7 @@ export const HELP = [
       ['m  e', 'Merge it in · Rebase onto it'],
       ['d', 'Delete (asks before force-deleting or deleting on the remote)'],
       ['D', 'Full diff of what it adds to the default branch (/compare <ref> [base])'],
-      ['o', 'Open its pull request in the browser (#12 GitHub, !12 Azure DevOps; coloured by review)'],
+      ['o', 'Open its pull request in the browser (#12 GitHub, !12 Azure DevOps and GitLab; coloured by review)'],
       'The right-hand pane: how far it is ahead of and behind the default branch, its commits the default branch doesn\'t have, then its history.',
       ['C', 'Clean up: delete branches with nothing unpushed or unmerged, and clean worktrees, and the branches of merged pull requests on the remote (/cleanup)'],
       ['U', 'On a local branch: set what it tracks (/upstream [branch] <remote/branch>, --unset to stop)'],
@@ -145,7 +145,7 @@ export const HELP = [
       { heading: 'Tags', about: 'at the bottom of the list' },
       ['u', 'Push it (/tag-push <tag> [remote])'],
       ['d', 'Delete it: here, on the remote, or both (asks first)'],
-      ['R', 'Create a GitHub release for it, published or as a draft (/release <tag> [--draft] [title])'],
+      ['R', 'Create a GitHub release for it, published or as a draft, or a GitLab one (/release <tag> [--draft] [title])'],
     ],
   },
   {
@@ -171,13 +171,13 @@ export const HELP = [
   },
   {
     title: 'PRs',
-    about: 'GitHub through gh, Azure DevOps through az: your existing sign-in',
+    about: 'GitHub through gh, Azure DevOps through az, GitLab through glab: your existing sign-in',
     views: ['prs'],
     rows: [
       '◆ asks for your review · ● yours · others below',
       ['↵', 'Full diff, with review comments under their lines (below: In its diff)'],
       ['c', 'Check out its branch'],
-      ['a  X', 'Approve · Request changes (/request-changes [text]; GitHub needs the text, Azure DevOps votes "waiting for author"); both ask first'],
+      ['a  X', 'Approve · Request changes (/request-changes [text]; GitHub needs the text, Azure DevOps votes "waiting for author", GitLab comments and takes back your approval); both ask first'],
       ['C', 'Comment (/comment <text>)'],
       ['m', 'Merge it: squash, merge commit or rebase; now or once checks pass (auto-merge), deleting the branch or not (/merge-pr [squash|merge|rebase] [--delete-branch] [--auto])'],
       ['s', 'Its checks (/ci), failed first: ↵ the log (a failed job\'s failed steps), o open in the browser, R re-run the failed ones'],

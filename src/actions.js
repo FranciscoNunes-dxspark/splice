@@ -388,8 +388,9 @@ export function pushTag(ctx, text) {
 }
 
 /**
- * R on a tag in Branches, /release <tag> [--draft] [title]: a GitHub release for the tag, with notes GitHub
- * writes from what was merged since the last one. Pushes the tag first, since the release needs the server to have it.
+ * R on a tag in Branches, /release <tag> [--draft] [title]: a GitHub or GitLab release for the tag, with notes
+ * GitHub writes from what was merged since the last one (on GitLab, the commits since the tag before). Pushes
+ * the tag first, since the release needs the server to have it. GitLab has no drafts.
  */
 export async function createRelease(ctx, text) {
   if (!needRepo(ctx)) return;
@@ -397,23 +398,21 @@ export async function createRelease(ctx, text) {
   if (!tag) return ctx.prefill('/release ');
   const host = needHost(ctx);
   if (!host) return;
-  if (!host.createRelease) return ctx.note(`${host.name} has no releases made from tags: Splice only creates them on GitHub. u pushes the tag.`, 'error');
+  if (!host.createRelease) return ctx.note(`${host.name} has no releases made from tags: Splice only creates them on GitHub and GitLab. u pushes the tag.`, 'error');
   if (!ctx.data.refs.tags.some((t) => t.name === tag)) return ctx.note(`No tag called ${tag}. t on a commit in the graph makes one.`, 'error');
+  const drafts = host.releaseDrafts !== false;
+  if (draft && !drafts) return ctx.note(`${host.name} has no draft releases. Leave out --draft to publish it.`, 'error');
   const asDraft =
     draft ||
     (await ctx.confirm({
-      title: `Create a GitHub release for ${tag}${title ? ` called "${title}"` : ''}?`,
-      detail: `Pushes ${tag} to ${host.remoteName} first. GitHub writes the notes from what was merged since the last release.`,
-      options: [
-        { label: 'Yes, publish it', value: 'publish' },
-        { label: 'Save it as a draft', value: true },
-        { label: 'No', value: null },
-      ],
+      title: `Create a ${host.name} release for ${tag}${title ? ` called "${title}"` : ''}?`,
+      detail: `Pushes ${tag} to ${host.remoteName} first. ${host.releaseNotesBy ?? ''}`.trim(),
+      options: [{ label: 'Yes, publish it', value: 'publish' }, ...(drafts ? [{ label: 'Save it as a draft', value: true }] : []), { label: 'No', value: null }],
     }));
   if (!asDraft) return;
   const pushed = await ctx.exec(['push', host.remoteName, `refs/tags/${tag}`], { label: 'Pushing tag', refresh: false });
   if (!pushed.ok) return pushed;
-  return hostTask(ctx, `gh release create ${tag}${asDraft === true ? ' --draft' : ''}`, (signal) => host.createRelease({ tag, title, draft: asDraft === true }, signal), {
+  return hostTask(ctx, `${host.kind === 'gitlab' ? 'glab' : 'gh'} release create ${tag}${asDraft === true ? ' --draft' : ''}`, (signal) => host.createRelease({ tag, title, draft: asDraft === true }, signal), {
     label: 'Creating the release',
     refresh: false,
   });
@@ -1357,7 +1356,7 @@ export async function filter(ctx, text) {
 function needHost(ctx) {
   if (!needRepo(ctx)) return null;
   const host = ctx.host();
-  if (!host) ctx.note("This repository's remote isn't on GitHub or Azure DevOps, so there are no pull requests to show.", 'error');
+  if (!host) ctx.note("This repository's remote isn't on GitHub, Azure DevOps or GitLab, so there are no pull requests to show.", 'error');
   return host;
 }
 
@@ -1371,7 +1370,14 @@ const hostTask = (ctx, title, fn, opts) =>
     },
     opts,
   );
-const cliName = (host) => (host.kind === 'github' ? 'gh pr' : 'az repos pr');
+const cliName = (host) => ({ github: 'gh pr', gitlab: 'glab mr' })[host.kind] ?? 'az repos pr';
+
+// What the activity line says a merge ran, in the host's CLI's own words.
+function mergeTitle(host, pr, { method, deleteBranch, auto }) {
+  if (host.kind === 'github') return `gh pr merge ${pr.id} --${method}${deleteBranch ? ' --delete-branch' : ''}${auto ? ' --auto' : ''}`;
+  if (host.kind === 'gitlab') return `glab mr merge ${pr.id}${method === 'merge' ? '' : ` --${method}`}${deleteBranch ? ' --remove-source-branch' : ''}${auto ? ' --auto-merge' : ''}`;
+  return `az repos pr update --id ${pr.id} ${auto ? '--auto-complete' : '--status completed'}`;
+}
 
 export async function prCheckout(ctx, pr) {
   const host = needHost(ctx);
@@ -1453,8 +1459,7 @@ export async function prMerge(ctx, pr, text = '') {
     if (!when) return;
   }
   const opts = { method, ...when };
-  const title = host.kind === 'github' ? `gh pr merge ${pr.id} --${method}${opts.deleteBranch ? ' --delete-branch' : ''}${opts.auto ? ' --auto' : ''}` : `az repos pr update --id ${pr.id} ${opts.auto ? '--auto-complete' : '--status completed'}`;
-  const r = await hostTask(ctx, title, (signal) => host.merge(pr, opts, signal), { label: opts.auto ? 'Setting auto-merge' : 'Merging', refresh: false });
+  const r = await hostTask(ctx, mergeTitle(host, pr, opts), (signal) => host.merge(pr, opts, signal), { label: opts.auto ? 'Setting auto-merge' : 'Merging', refresh: false });
   if (r.ok) {
     ctx.prsChanged();
     if (!opts.auto) ctx.note(`Merged ${pr.label} into ${pr.target}. f fetches it.`, 'ok');
@@ -1646,7 +1651,8 @@ export async function resolveThread(ctx, resolved, target = ctx.reviewThread) {
 
 /**
  * X in PRs, /request-changes [text]: a review asking for changes, after asking. GitHub needs the text (the
- * review's body); Azure DevOps votes "waiting for the author" and posts the text, if any, as a comment.
+ * review's body); Azure DevOps votes "waiting for the author" and posts the text, if any, as a comment;
+ * GitLab, with no such vote on every plan, posts the text (which it needs) and takes back your approval.
  */
 export async function prRequestChanges(ctx, pr, text = '') {
   const host = needHost(ctx);

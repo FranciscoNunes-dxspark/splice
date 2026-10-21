@@ -113,7 +113,7 @@ export function PrView({ data, ctx, width, height, active, prVersion }) {
   });
 
   let message = null;
-  if (!host) message = "This repository's remote isn't on GitHub or Azure DevOps.";
+  if (!host) message = "This repository's remote isn't on GitHub, Azure DevOps or GitLab.";
   else if (prs.error && !prs.value) message = `Couldn't load pull requests from ${host.name}: ${prs.error.message.split('\n')[0]}  (signed in? Run ${host.signIn} in a terminal.)`;
   else if (!prs.value) message = `Loading pull requests from ${host.name}…`;
   else if (!list.length) message = 'No open pull requests. Press n to open one from the current branch.';

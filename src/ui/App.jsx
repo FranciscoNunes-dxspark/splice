@@ -131,7 +131,7 @@ function activityRows(entries) {
 
 const DOUBLE_CLICK_MS = 400;
 
-// `makeHost` stands in for hosting.js's hostFor in tests, so they never call gh or az. `mouse` is
+// `makeHost(data, config)` stands in for hosting.js's hostFor in tests, so they never call gh, az or glab. `mouse` is
 // mouse.js's terminalMouse() from cli.jsx (missing where the terminal can't report it); tests pass their own.
 // `copy` puts text on the clipboard (cli.jsx's; tests pass a stub). `notify(title, body)` says something
 // finished (cli.jsx rings the terminal's bell and raises a desktop notification); without it, as in most
@@ -398,11 +398,13 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
     task,
     // A read that doesn't show in the activity lines or block other commands. `opts.signal` cancels it.
     git: (args, opts) => git(repoRef.current.root, args, opts),
-    // The PR host (GitHub or Azure DevOps) of the open repository, kept while the remotes don't change.
+    // The PR host (GitHub, Azure DevOps or GitLab) of the open repository, kept while the remotes (and the
+    // config's `hosts`, which names self-managed GitLab servers) don't change.
     host: () => {
       const d = dataRef.current;
-      const key = d ? `${d.root}|${JSON.stringify(d.remoteUrls)}` : null;
-      if (ctx.hostCache?.key !== key) ctx.hostCache = { key, host: d ? makeHost(d) : null };
+      const hosts = configRef.current?.hosts;
+      const key = d ? `${d.root}|${JSON.stringify(d.remoteUrls)}|${JSON.stringify(hosts ?? null)}` : null;
+      if (ctx.hostCache?.key !== key) ctx.hostCache = { key, host: d ? makeHost(d, configRef.current) : null };
       return ctx.hostCache.host;
     },
     prsChanged: () => setPrVersion((v) => v + 1),

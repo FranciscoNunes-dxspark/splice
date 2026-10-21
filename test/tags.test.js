@@ -1,4 +1,4 @@
-// Tags in the Branches view: pushing one, a GitHub release (a stub stands in for gh), and deleting one here
+// Tags in the Branches view: pushing one, a GitHub or GitLab release (a stub stands in for gh and glab), and deleting one here
 // and on the remote, against a throwaway repository with a bare one as its origin.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -88,6 +88,50 @@ test('a tag in Branches: u pushes it, R makes a release, d deletes it here and o
     app.stdin.write('2');
     await until(() => !remoteTags().includes('v1.0') && git('tag', '--list') === '', 'the tag gone in both places');
     await until(() => !frame().includes('Tags ('), 'the Tags section gone');
+  } finally {
+    app.unmount();
+  }
+});
+
+test('a GitLab release: published, as GitLab has no drafts, with notes Splice writes', async () => {
+  git('tag', 'v2.0');
+  const releases = [];
+  const makeHost = () => ({
+    kind: 'gitlab',
+    name: 'GitLab',
+    signIn: 'glab auth login',
+    remoteName: 'origin',
+    list: async () => [],
+    releaseDrafts: false,
+    releaseNotesBy: 'The notes list the commits since the tag before it.',
+    createRelease: async (opts) => {
+      releases.push(opts);
+      return 'https://example.invalid/-/releases/v2.0';
+    },
+  });
+  lastApp = render(React.createElement(App, { initialPath: dir, config: { recent: [], roots: [], history: [] }, makeHost }));
+  const app = lastApp;
+  const frame = () => app.lastFrame() ?? '';
+  try {
+    await until(() => frame().includes('First commit'), 'the graph');
+    const command = async (text) => {
+      app.stdin.write('/');
+      await until(() => frame().includes('> /'), 'the prompt');
+      for (const ch of text) {
+        app.stdin.write(ch);
+        await new Promise((r) => setTimeout(r, 5));
+      }
+      await until(() => frame().includes(`> /${text}`), text);
+      app.stdin.write('\r');
+    };
+    await command('release v2.0 --draft');
+    await until(() => frame().includes('GitLab has no draft releases'), 'drafts refused');
+    await command('release v2.0 Two');
+    await until(() => frame().includes('Create a GitLab release for v2.0 called "Two"?') && frame().includes('the commits since the tag before it'), 'the release question');
+    assert.ok(!frame().includes('Save it as a draft'), 'no draft to offer');
+    app.stdin.write('1');
+    await until(() => releases.length === 1 && remoteTags().includes('refs/tags/v2.0'), 'the release, after pushing the tag');
+    assert.deepEqual(releases[0], { tag: 'v2.0', title: 'Two', draft: false });
   } finally {
     app.unmount();
   }

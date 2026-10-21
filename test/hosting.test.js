@@ -20,7 +20,7 @@ test('remote URLs: GitHub and Azure DevOps, https and ssh', () => {
   );
   assert.equal(parseRemote('git@ssh.dev.azure.com:v3/org/Proj/Repo').repo, 'Repo');
   assert.equal(parseRemote('org@vs-ssh.visualstudio.com:v3/org/Proj/Repo').orgUrl, 'https://org.visualstudio.com');
-  assert.equal(parseRemote('https://gitlab.com/a/b.git'), null);
+  assert.equal(parseRemote('https://bitbucket.org/a/b.git'), null);
 });
 
 test('git remote -v keeps one URL per remote', () => {

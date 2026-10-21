@@ -167,7 +167,7 @@ test('Branches compares the selected branch with the default branch, and D shows
     app.stdin.write('D');
     await until(() => frame().includes('main is the default branch itself'), 'D on the default branch to explain itself');
     app.stdin.write('o');
-    await until(() => frame().includes("remote isn't on GitHub or Azure DevOps"), 'o without a host');
+    await until(() => frame().includes("remote isn't on GitHub, Azure DevOps or GitLab"), 'o without a host');
 
     app.stdin.write('/');
     await type(app.stdin, 'compare main feature');

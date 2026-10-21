@@ -242,3 +242,44 @@ test('/request-changes on Azure DevOps votes, with no text needed', async () => 
     app.unmount();
   }
 });
+
+test('a GitLab merge request: listed as !12, merged through glab, no merge without the text for changes', async () => {
+  const calls = [];
+  const app = start(
+    stubHost(calls, {
+      kind: 'gitlab',
+      name: 'GitLab',
+      signIn: 'glab auth login',
+      remoteName: 'review-gl',
+      list: async () => [{ ...PR, id: 12, label: '!12', mine: false }],
+      requestChangesNeedsText: true,
+      requestChanges: async (pr, text) => calls.push(['requestChanges', pr.id, text]),
+    }),
+  );
+  const frame = () => app.lastFrame() ?? '';
+  try {
+    await until(() => frame().includes('First commit'), 'the graph');
+    app.stdin.write('6');
+    await until(() => /❯.*!12.*Bump b/.test(frame()) && frame().includes('GitLab'), 'the merge request');
+    app.stdin.write('/');
+    await type(app.stdin, 'request-changes');
+    app.stdin.write('\r');
+    await until(() => frame().includes('GitLab needs to be told what to change'), 'the text asked for');
+    await type(app.stdin, 'Rename it');
+    app.stdin.write('\r');
+    await until(() => frame().includes('Request changes to !12 "Bump b"?') && frame().includes('On GitLab, as you, saying "Rename it"'), 'the confirmation');
+    app.stdin.write('1');
+    await until(() => calls.length === 1 && frame().includes('glab mr request changes !12'), 'the request');
+    assert.deepEqual(calls[0], ['requestChanges', 12, 'Rename it']);
+
+    app.stdin.write('/');
+    await type(app.stdin, 'merge-pr squash --delete-branch');
+    app.stdin.write('\r');
+    await until(() => frame().includes('Merge !12 into main (squash)?'), 'the merge question');
+    app.stdin.write('1');
+    await until(() => calls.length === 2 && frame().includes('glab mr merge 12 --squash --remove-source-branch'), 'the merge');
+    assert.deepEqual(calls[1], ['merge', 12, { method: 'squash', auto: false, deleteBranch: true }]);
+  } finally {
+    app.unmount();
+  }
+});

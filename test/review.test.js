@@ -103,7 +103,7 @@ test('a comment on a diff line: added and unchanged lines on the new side, remov
   const pos = diffPositions(DIFF);
   assert.deepEqual(lineTarget(pos[7], DIFF[7]), { path: 'src/app.js', line: 11, side: 'new', text: '  const b = 3;' });
   assert.deepEqual(lineTarget(pos[6], DIFF[6]), { path: 'src/app.js', line: 11, side: 'old', text: '  const b = 2;' });
-  assert.deepEqual(lineTarget(pos[8], DIFF[8]), { path: 'src/app.js', line: 12, side: 'new', text: '  return a + b;' });
+  assert.deepEqual(lineTarget(pos[8], DIFF[8]), { path: 'src/app.js', line: 12, side: 'new', text: '  return a + b;', old: 12 }, 'an unchanged line has both numbers');
   assert.equal(lineTarget(pos[0], DIFF[0]), null, 'diff --git');
   assert.equal(lineTarget(pos[4], DIFF[4]), null, 'the hunk header');
   assert.equal(lineTarget(undefined, undefined), null);
