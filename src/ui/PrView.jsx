@@ -93,6 +93,7 @@ export function PrView({ data, ctx, width, height, active, prVersion }) {
     else if (input === 'y') ctx.copy(pr.url, `the link to ${pr.label}`);
     else if (input === 'c') a.prCheckout(ctx, pr);
     else if (input === 'a') a.prApprove(ctx, pr);
+    else if (input === 'X') ctx.prefill('/request-changes ');
     else if (input === 'm') a.prMerge(ctx, pr);
     else if (input === 's') a.prChecks(ctx, pr);
     else if (input === 'A') ctx.prefill('/reviewer ');

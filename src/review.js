@@ -1,6 +1,6 @@
 // Review comments in a pull request's diff: each thread placed under the line it's about, drawn as a
 // box of its comments. Pure, so placing them is tested without a server; hosting.js fetches the
-// threads (githubThreads, azureThreads) and TextViewer shows the result.
+// threads (githubReviewThreads, azureThreads) and TextViewer shows the result.
 import { renderMarkdown } from './markdown.js';
 import { relTime } from './parse.js';
 import { theme } from './theme.js';
@@ -50,8 +50,7 @@ export function diffPositions(lines) {
  * Which diff line each thread goes under: { at: Map(line index → threads), away: threads }, `away`
  * being the ones whose line isn't in the diff (outdated, or outside the hunks shown).
  */
-export function placeThreads(lines, threads) {
-  const pos = diffPositions(lines);
+export function placeThreads(lines, threads, pos = diffPositions(lines)) {
   const at = new Map();
   const away = [];
   for (const t of threads) {
@@ -60,6 +59,17 @@ export function placeThreads(lines, threads) {
     else at.set(i, [...(at.get(i) ?? []), t]);
   }
   return { at, away };
+}
+
+/**
+ * Where a new comment on a diff line goes: { path, line, side, text } (`text` the line without its
+ * + - or space), or null for a line no comment can go on (headers, hunk headers, "\ No newline").
+ * Added lines and the unchanged ones around them are on the new side, removed lines on the old.
+ */
+export function lineTarget(pos, line) {
+  if (!pos?.path) return null;
+  const side = pos.new != null ? 'new' : 'old';
+  return { path: pos.path, line: pos[side], side, text: (line ?? '').slice(1) };
 }
 
 /** A thread as viewer lines (segments): a box of its comments, Markdown formatted, `width` wide. */
@@ -84,26 +94,35 @@ export function threadLines(thread, width, { current = false, now = Date.now() /
 }
 
 /**
- * A diff with its review threads drawn in: { lines, starts }. `lines` mixes the diff's own lines
- * (strings) with the threads' (segments); `starts` is where each thread's box begins, in order.
+ * A diff with its review threads drawn in: { lines, starts, rows }. `lines` mixes the diff's own lines
+ * (strings) with the threads' (segments); `starts` is where each thread's box begins and ends, in order.
+ * `rows` says what each line is: a `key` that stays the same when threads come and go around it, and
+ * either `thread` (a line of its box) or `diff` (its index in `diffLines`) with `at` (diffPositions').
  * Threads whose line isn't in the diff come first, under a heading. `current` is the picked thread.
  */
 export function withThreads(diffLines, threads, width, { current = null, now } = {}) {
-  const { at, away } = placeThreads(diffLines, threads);
+  const pos = diffPositions(diffLines);
+  const { at, away } = placeThreads(diffLines, threads, pos);
   const lines = [];
   const starts = [];
+  const rows = [];
   const add = (t, where) => {
-    starts.push({ thread: t, at: lines.length });
-    lines.push(...threadLines(t, width, { current: current === t.id, now, where }));
+    const box = threadLines(t, width, { current: current === t.id, now, where });
+    starts.push({ thread: t, at: lines.length, end: lines.length + box.length });
+    box.forEach((_, k) => rows.push({ key: `t${t.id}:${k}`, thread: t }));
+    lines.push(...box);
   };
   if (away.length) {
     lines.push([{ text: 'Comments on lines this diff no longer shows', color: theme.dim, bold: true }]);
+    rows.push({ key: 'away' });
     away.forEach((t) => add(t, true));
     lines.push('');
+    rows.push({ key: 'away:end' });
   }
   diffLines.forEach((l, i) => {
     lines.push(l);
+    rows.push({ key: `d${i}`, diff: i, at: pos[i] });
     for (const t of at.get(i) ?? []) add(t, false);
   });
-  return { lines, starts };
+  return { lines, starts, rows };
 }

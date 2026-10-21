@@ -1,7 +1,8 @@
 import React, { useMemo, useRef, useState } from 'react';
 import { useInput } from 'ink';
+import * as a from '../actions.js';
 import { renderMarkdown } from '../markdown.js';
-import { withThreads } from '../review.js';
+import { lineTarget, withThreads } from '../review.js';
 import { lineText, markRanges, matcher, matchingLines, wordChanges } from '../search.js';
 import { theme } from '../theme.js';
 import { clean } from '../text.js';
@@ -13,22 +14,59 @@ import { diffSegments } from './diffstyle.js';
  * Full-height scrollable text: diffs, command output, help, Claude's answers (`markdown`: formatted and
  * wrapped to fit). / searches it: matches are picked out, n/N go from one to the next. A pull request's
  * diff (`pr`) comes with its review `threads`, drawn under the lines they're about: t/T go from one to
- * the next, r replies to the one picked (or the first on screen) through /reply.
+ * the next, r replies to the one picked (or the first on screen) through /reply, x resolves it or opens
+ * it again. That diff has a line cursor, which j/k move rather than scroll: c comments on its line
+ * through /review-comment, and moving into a thread's box picks that thread.
  */
 export function TextViewer({ title, text, loading, diff, markdown, threads, pr, ctx, width, height, active, onClose }) {
   const [threadId, setThreadId] = useState(null);
-  const { lines, starts } = useMemo(() => {
+  const lineCursor = Boolean(pr) && !markdown;
+  const { lines, starts, rows } = useMemo(() => {
     const t = (text ?? '').replace(/\n$/, '');
-    if (markdown) return { lines: renderMarkdown(t, width - 2), starts: [] };
-    if (threads?.length) return withThreads(t.split('\n'), threads, width - 2, { current: threadId });
-    return { lines: t.split('\n'), starts: [] };
-  }, [text, markdown, width, threads, threadId]);
+    if (markdown) return { lines: renderMarkdown(t, width - 2), starts: [], rows: null };
+    if (pr || threads?.length) return withThreads(t.split('\n'), threads ?? [], width - 2, { current: threadId });
+    return { lines: t.split('\n'), starts: [], rows: null };
+  }, [text, markdown, width, threads, threadId, pr]);
   // Diff lines are drawn cleaned (tabs to spaces), so the changed words are found in that text.
   const words = useMemo(() => (diff ? wordChanges(lines.map((l) => (typeof l === 'string' ? clean(l) : ''))) : null), [lines, diff]);
   const [offset, setOffset] = useState(0);
   const innerH = height - 2;
   const max = Math.max(0, lines.length - innerH);
   const to = (n) => setOffset(Math.max(0, Math.min(max, n)));
+
+  // The line cursor, kept as its row's key (and index, should that row go): threads arriving or growing
+  // above it leave it on the same line. In a ref as well, for keys typed faster than renders.
+  const rowIndex = useMemo(() => new Map((rows ?? []).map((r, i) => [r.key, i])), [rows]);
+  const [cursorAt, setCursorAt] = useState({ key: null, index: 0 });
+  const cursorRef = useRef(cursorAt);
+  const cur = () => rowIndex.get(cursorRef.current.key) ?? Math.max(0, Math.min(lines.length - 1, cursorRef.current.index));
+  const cursor = lineCursor ? cur() : -1;
+  const pickThread = (thread) => {
+    setThreadId(thread.id);
+    ctx.reviewThread = { pr, thread };
+  };
+  // Moves the cursor to line i, the view scrolled to `top` (or by `scroll`), and then as far as it takes to show it.
+  const moveCursor = (i, { top = null, scroll = 0 } = {}) => {
+    if (!rows?.length) return;
+    const n = Math.max(0, Math.min(rows.length - 1, i));
+    cursorRef.current = { key: rows[n].key, index: n };
+    setCursorAt(cursorRef.current);
+    if (rows[n].thread && rows[n].thread.id !== threadId) pickThread(rows[n].thread);
+    setOffset((o) => {
+      let next = top ?? o + scroll;
+      if (n < next) next = n;
+      if (n >= next + innerH) next = n - innerH + 1;
+      return Math.max(0, Math.min(max, next));
+    });
+  };
+  // Without a cursor the keys scroll the text; with one they move it, and the view follows.
+  const step = (n) => (lineCursor ? moveCursor(cur() + n, { scroll: Math.abs(n) > 1 ? n : 0 }) : to(offset + n));
+  const jump = (i, top = i) => (lineCursor ? moveCursor(i, { top }) : to(top));
+  // The thread r and x act on: the one the cursor is in, else the one picked, else the first on screen.
+  const pickedThread = () =>
+    (lineCursor && rows[cur()]?.thread) ||
+    (starts.find((s) => s.thread.id === threadId) ?? starts.find((s) => s.at >= offset && s.at < offset + innerH))?.thread;
+  const noThread = () => ctx.note(starts.length ? 'No comment on screen: t goes to the next one.' : 'This pull request has no review comments yet.', 'error');
 
   // `typing` while the query is being typed after /; `from` is where the view was when it started.
   // Kept in refs as well as state: keys typed faster than renders each see the one before.
@@ -49,7 +87,7 @@ export function TextViewer({ title, text, loading, diff, markdown, threads, pr, 
   // A match in view a few lines down, not on the top line, so what leads up to it shows too.
   const show = (k, list = matches) => {
     setHere(k);
-    if (k >= 0) to(list[k] - Math.min(3, Math.floor(innerH / 3)));
+    if (k >= 0) jump(list[k], list[k] - Math.min(3, Math.floor(innerH / 3)));
   };
   const typed = (query) => {
     const list = matchingLines(lines, query);
@@ -95,22 +133,35 @@ export function TextViewer({ title, text, loading, diff, markdown, threads, pr, 
             : input === 't'
               ? Math.max(0, starts.findIndex((s) => s.at >= offset))
               : Math.max(0, starts.findLastIndex((s) => s.at < offset));
-        setThreadId(starts[next].thread.id);
-        return to(starts[next].at - 2);
+        pickThread(starts[next].thread);
+        return jump(starts[next].at, starts[next].at - 2);
       }
       if (input === 'r' && pr) {
-        const picked = starts.find((s) => s.thread.id === threadId) ?? starts.find((s) => s.at >= offset && s.at < offset + innerH);
-        if (!picked) return ctx.note(starts.length ? 'No comment on screen to reply to: t goes to the next one.' : 'This pull request has no review comments to reply to.', 'error');
-        ctx.reviewThread = { pr, thread: picked.thread };
-        setThreadId(picked.thread.id);
+        const thread = pickedThread();
+        if (!thread) return noThread();
+        pickThread(thread);
         return ctx.prefill('/reply ');
       }
-      if (key.downArrow || input === 'j') to(offset + 1);
-      else if (key.upArrow || input === 'k') to(offset - 1);
-      else if (key.pageDown || input === ' ' || (key.ctrl && input === 'd')) to(offset + innerH - 1);
-      else if (key.pageUp || (key.ctrl && input === 'u')) to(offset - innerH + 1);
-      else if (input === 'g') to(0);
-      else if (input === 'G') to(max);
+      if (input === 'x' && pr) {
+        const thread = pickedThread();
+        if (!thread) return noThread();
+        pickThread(thread);
+        return a.resolveThread(ctx, !thread.resolved, { pr, thread });
+      }
+      if (input === 'c' && lineCursor) {
+        const row = rows[cur()];
+        if (row?.thread) return ctx.note("That's a review comment: r replies to it. c comments on a line of the diff.", 'error');
+        const at = lineTarget(row?.at, lines[cur()]);
+        if (!at) return ctx.note('Only changed lines and those shown around them can be commented on.', 'error');
+        ctx.reviewLine = { pr, at };
+        return ctx.prefill('/review-comment ');
+      }
+      if (key.downArrow || input === 'j') step(1);
+      else if (key.upArrow || input === 'k') step(-1);
+      else if (key.pageDown || input === ' ' || (key.ctrl && input === 'd')) step(innerH - 1);
+      else if (key.pageUp || (key.ctrl && input === 'u')) step(-innerH + 1);
+      else if (input === 'g') jump(0);
+      else if (input === 'G') jump(lines.length - 1);
       else if ((input === 'n' || input === 'N') && searchRef.current.query) {
         const list = matchingLines(lines, searchRef.current.query);
         const n = list.length;
@@ -122,17 +173,22 @@ export function TextViewer({ title, text, loading, diff, markdown, threads, pr, 
       } else if (input === 'n' || input === 'N') {
         // Jump to the next (or previous) hunk or file.
         const isMark = (l) => typeof l === 'string' && (l.startsWith('@@') || l.startsWith('diff --git'));
+        const from = lineCursor ? cur() : offset;
         if (input === 'n') {
-          const i = lines.findIndex((l, j) => j > offset && isMark(l));
-          if (i >= 0) to(i);
+          const i = lines.findIndex((l, j) => j > from && isMark(l));
+          if (i >= 0) jump(i);
         } else {
-          for (let j = offset - 1; j >= 0; j--) if (isMark(lines[j])) return to(j);
+          for (let j = from - 1; j >= 0; j--) if (isMark(lines[j])) return jump(j);
         }
       }
     },
     { isActive: active },
   );
-  useMouse(ctx, (e) => e.wheel && setOffset((o) => Math.max(0, Math.min(max, o + e.wheel * 3))));
+  useMouse(ctx, (e) => {
+    if (e.wheel) return setOffset((o) => Math.max(0, Math.min(max, o + e.wheel * 3)));
+    // Lines start under the panel's top border; a click puts the cursor on one.
+    if (lineCursor && e.y >= 1 && e.y <= innerH) moveCursor(offset + e.y - 1);
+  });
 
   const find = matcher(search.query);
   const segmentsOf = (l, idx) => {
@@ -148,13 +204,15 @@ export function TextViewer({ title, text, loading, diff, markdown, threads, pr, 
     ? `/${search.query}▏ ${search.query ? found : ''} · ↵ done · esc cancel`
     : search.query
       ? `"${search.query}" ${found} · n/N · esc clears`
-      : `${pos}${pos ? ' · ' : ''}${starts.length ? `${starts.length} comment${starts.length === 1 ? '' : 's'} · t/T · r reply · ` : ''}/ search · esc close`;
+      : `${pos}${pos ? ' · ' : ''}${starts.length ? `${starts.length} comment${starts.length === 1 ? '' : 's'} · t/T · r reply · x resolve · ` : ''}${pr ? 'c comment · ' : ''}/ search · esc close`;
   return (
     <Panel title={title} hint={hint} width={width} height={height} focused={active}>
       {loading ? (
         <Row pointer={false} width={width - 2} segments={[{ text: 'Loading…', color: theme.dim }]} />
       ) : (
-        lines.slice(offset, offset + innerH).map((l, i) => <Row key={offset + i} pointer={false} width={width - 2} segments={segmentsOf(l, offset + i)} />)
+        lines
+          .slice(offset, offset + innerH)
+          .map((l, i) => <Row key={offset + i} pointer={false} selected={offset + i === cursor} focused={active} width={width - 2} segments={segmentsOf(l, offset + i)} />)
       )}
     </Panel>
   );

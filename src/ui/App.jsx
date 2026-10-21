@@ -527,6 +527,7 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
       const closing = overlayRef.current;
       ctx.rebaseEditor = null;
       ctx.reviewThread = null;
+      ctx.reviewLine = null;
       // As a function, so a picker going back to another picker (blame to history) isn't given this one to return to.
       setOverlay((cur) => cur?.back ?? null);
       // An action waiting for the viewer to close (showText(..., { onClosed })) carries on.
