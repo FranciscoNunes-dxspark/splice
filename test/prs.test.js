@@ -3,7 +3,7 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import React from 'react';
@@ -177,7 +177,8 @@ test('A asks for reviewers, D makes it a draft, E retitles it and B edits its de
 
     app.stdin.write('B');
     const file = join(dir, '.git', 'splice-pr-7.md');
-    await until(() => frame().includes('> /body --file'), 'the body file in the prompt');
+    // The prompt scrolls to its end, so a long temp path (Windows) hides the start of the command.
+    await until(() => existsSync(file) && frame().includes('Edit it in your editor') && /splice-pr-7\.md *│/.test(frame()), 'the body file in the prompt');
     assert.equal(readFileSync(file, 'utf8'), 'Old body');
     writeFileSync(file, 'New body\r\n\r\nWith a second paragraph\r\n');
     app.stdin.write('\r');
