@@ -7,7 +7,7 @@ import { join, resolve } from 'node:path';
 import React from 'react';
 import { render } from 'ink-testing-library';
 import { removeTemp } from './temp.js';
-import { READ_ONLY, cleanSubject, clip, commitPrompt, parsePrDraft } from '../src/claude.js';
+import { READ_ONLY, cleanSubject, clip, commitPrompt, parseCommitMessage, parsePrDraft } from '../src/claude.js';
 import { prArgs } from '../src/actions.js';
 import { App } from '../src/ui/App.jsx';
 
@@ -26,6 +26,20 @@ test('a pull request draft splits into a title and a description', () => {
   });
   assert.deepEqual(parsePrDraft('\n\nTitle only'), { title: 'Title only', body: '' });
   assert.deepEqual(parsePrDraft(''), { title: '', body: '' });
+});
+
+test('a commit message from Claude: a subject, and a body when it wrote one', () => {
+  assert.deepEqual(parseCommitMessage('Add worktrees view'), { subject: 'Add worktrees view', body: '' });
+  assert.deepEqual(parseCommitMessage('\n"Fix the poll"\n\n\n\nIt reloaded twice   \nper tick.\n\n'), { subject: 'Fix the poll', body: 'It reloaded twice\nper tick.' });
+  assert.deepEqual(parseCommitMessage('```text\r\nSubject: Drop the cache\r\n\r\nBody: Nothing read it.\r\n```'), { subject: 'Drop the cache', body: 'Nothing read it.' });
+  assert.deepEqual(parseCommitMessage(''), { subject: '', body: '' });
+});
+
+test('the commit prompt shows recent subjects, and their bodies indented, cut when long', () => {
+  const p = commitPrompt(['Add the thing\n\nBecause it was missing.\nTwo lines.', 'Fix the other', `Long one\n\n${'x'.repeat(700)}`]);
+  assert.match(p, /- Add the thing\n {2}Because it was missing\.\n {2}Two lines\.\n- Fix the other\n- Long one\n {2}x{600}…\n?/);
+  assert.match(p, /blank line and a short body/);
+  assert.match(p, /subject alone/);
 });
 
 test('/pr arguments: flags anywhere, and the title kept as typed', () => {

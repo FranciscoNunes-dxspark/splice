@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { Box, useInput } from 'ink';
 import { dirname, basename } from 'node:path/posix';
 import * as a from '../actions.js';
+import { promptMessage } from '../message.js';
 import { hunkPicks, isChange, parseDiff } from '../patch.js';
 import { changeDiff } from '../repo.js';
 import { wordChanges } from '../search.js';
@@ -215,6 +216,8 @@ export function ChangesView({ data, ctx, width, height, active }) {
     if (input === 'u') return a.unstageAll(ctx);
     if (input === 'c') return a.commit(ctx, '');
     if (input === 'A') return ctx.prefill('/amend ');
+    // Started from what's typed after /commit or /amend in the prompt, if anything.
+    if (input === 'M') return a.editMessage(ctx, promptMessage(ctx.promptText));
     if (input === 'W') return a.describeCommit(ctx);
     if (input === 'S') return a.claudeSplit(ctx);
     if (input === 'R') return a.claudeLook(ctx, 'review', { kind: 'changes' });

@@ -4,8 +4,8 @@ import { splitArgs } from './parse.js';
 // Slash commands. `args` in square brackets are optional, so picking the command runs it straight away.
 // `complete` names the list offered while typing the first argument.
 export const COMMANDS = [
-  { name: 'commit', args: '<message>', desc: 'Commit the staged changes', run: (ctx, s) => a.commit(ctx, s) },
-  { name: 'amend', args: '[message]', desc: 'Amend the last commit (keeps its message if none given)', run: (ctx, s) => a.commit(ctx, s, { amend: true }) },
+  { name: 'commit', args: '<message> | --file [path]', desc: 'Commit the staged changes (\\n for a new line); --file: the message from a file, alone: written to one for your editor', run: (ctx, s) => a.commit(ctx, s) },
+  { name: 'amend', args: '[message | --file [path]]', desc: 'Amend the last commit (keeps its message if none given); --file alone: its message in a file for your editor', run: (ctx, s) => a.commit(ctx, s, { amend: true }) },
   { name: 'fixup', args: '[ref]', desc: 'Make the staged changes a fix for an earlier commit (picked from a list), then fold it in', complete: 'refs', run: (ctx, s) => a.fixup(ctx, s) },
   { name: 'checkout', args: '<branch|tag|hash>', desc: 'Switch to a branch, tag or commit', complete: 'refs', run: (ctx, s) => a.checkout(ctx, s) },
   { name: 'branch', args: '<name> [start]', desc: 'Create a branch and switch to it', run: (ctx, s) => a.createBranch(ctx, s) },

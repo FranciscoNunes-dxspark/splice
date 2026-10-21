@@ -2,14 +2,15 @@
 // `ctx` is the app's handle: data, exec, confirm, note, prefill, and so on (see App.jsx).
 import { existsSync } from 'node:fs';
 import { readFile, rm, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
-import { READ_ONLY, cleanSubject, clip, commitPrompt, lookPrompt, parsePrDraft, parseResolution, parseSplit, prPrompt, resolveInput, resolvePrompt, splitInput, splitPrompt } from './claude.js';
+import { join, resolve } from 'node:path';
+import { READ_ONLY, clip, commitPrompt, lookPrompt, parseCommitMessage, parsePrDraft, parseResolution, parseSplit, prPrompt, resolveInput, resolvePrompt, splitInput, splitPrompt } from './claude.js';
 import { cleanupChoice, cleanupCount, cleanupOptions, cleanupText, planCleanup, readCleanup } from './cleanup.js';
 import { configFile } from './config.js';
 import { matchLineEndings, parseConflicts, takeSide, unifiedDiff } from './conflict.js';
 import { blamePicker, historyPicker, repoPath } from './history.js';
+import { commentChar, messageFileText, readMessage } from './message.js';
 import { MERGE_LABELS, bodyArgs, mergePrArgs, releaseArgs } from './hosting.js';
-import { defaultBranch, filterArgs, filterLabel, filterLogArgs, findArgs, firstBadCommit, parseLog, parseStatus, relTime, remoteArgs, searchArgs, splitArgs, stashArgs, upstreamArgs } from './parse.js';
+import { defaultBranch, filterArgs, filterLabel, filterLogArgs, findArgs, firstBadCommit, parseLog, parseNameStatus, parseStatus, relTime, remoteArgs, searchArgs, splitArgs, stashArgs, upstreamArgs } from './parse.js';
 import { buildPatch, coversAll, parseDiff, picksBySignature, splitUnits } from './patch.js';
 import {
   COMMIT_LIST_FORMAT,
@@ -191,9 +192,28 @@ export function upstream(ctx, text) {
   return ctx.exec(u.args, { label: 'Setting the upstream' });
 }
 
-export async function commit(ctx, message, { amend = false } = {}) {
+/**
+ * c in Changes, /commit and /amend. The message is typed (\n for a line break), or with --file <path>
+ * read from a file (git leaves out its comment lines); --file alone writes one to edit first (editMessage).
+ */
+export async function commit(ctx, text, { amend = false } = {}) {
   if (!needRepo(ctx)) return;
-  if (!message && !amend) return ctx.prefill('/commit ');
+  const typed = bodyArgs(text);
+  if (typed.file === null) return editMessage(ctx, { amend });
+  if (!typed.text && typed.file === undefined && !amend) return ctx.prefill('/commit ');
+  const file = typed.file && resolve(ctx.data.root, typed.file);
+  if (file) {
+    let written;
+    try {
+      written = await readFile(file, 'utf8');
+    } catch (e) {
+      return ctx.note(`Couldn't read ${file}: ${firstLine(e.message)}`, 'error');
+    }
+    if (!readMessage(written, await commentFor(ctx))) {
+      ctx.note(`The message is empty, so nothing was ${amend ? 'amended' : 'committed'}.\nWrite one in ${file}, save it, then press enter here.`, 'error');
+      return ctx.prefill(`/${amend ? 'amend' : 'commit'} --file ${file}`);
+    }
+  }
   const { staged, unstaged, conflicts } = ctx.data.changes;
   if (conflicts.length && !amend) return ctx.note('Resolve the conflicts first (space marks a file resolved).', 'error');
   if (!staged.length && !amend) {
@@ -207,8 +227,51 @@ export async function commit(ctx, message, { amend = false } = {}) {
   }
   const signing = await readySigning(ctx);
   if (signing === false) return;
-  const args = ['commit', ...(amend ? ['--amend'] : []), ...(message ? ['-m', message] : ['--no-edit'])];
-  return ctx.exec(args, { label: `${signing ? 'Signing and ' : ''}${amend ? 'amending' : 'committing'}`.replace(/^./, (c) => c.toUpperCase()) });
+  const how = file ? ['--cleanup=strip', '-F', file] : typed.text ? ['-m', typed.text] : ['--no-edit'];
+  const r = await ctx.exec(['commit', ...(amend ? ['--amend'] : []), ...how], {
+    label: `${signing ? 'Signing and ' : ''}${amend ? 'amending' : 'committing'}`.replace(/^./, (c) => c.toUpperCase()),
+  });
+  // A message file Splice wrote has done its job.
+  if (r.ok && file && [false, true].some((a) => messagePath(ctx, a) === file)) await rm(file, { force: true });
+  return r;
+}
+
+// The files the message for a commit, or an amend, is written to for editing (one each, so neither overwrites the other).
+const messagePath = (ctx, amend) => join(ctx.data.gitDir, amend ? 'splice-amend-message.txt' : 'splice-commit-message.txt');
+const commentFor = async (ctx) => commentChar(await ctx.git(['config', '--get', 'core.commentChar']).catch(() => ''));
+
+/** What an amended commit will hold: HEAD's changes with the staged ones, from its parent (all files for a first commit). */
+async function amendFiles(ctx) {
+  try {
+    return parseNameStatus(await ctx.git(['diff', '--cached', '--name-status', '-M', 'HEAD^', '--']));
+  } catch {
+    return (await ctx.git(['ls-files', '-z']).catch(() => '')).split('\0').filter(Boolean).map((path) => ({ code: 'A', path }));
+  }
+}
+
+/**
+ * M in Changes, /commit --file and /amend --file alone: writes the message to a file in .git, for you to
+ * edit in your own editor (Splice never opens one), and puts /commit --file <it> in the prompt to commit
+ * once saved. It starts from `message`, else (for an amend) the commit's own message, else what an earlier
+ * one left in the file; commented lines below list what will be committed.
+ */
+export async function editMessage(ctx, { amend = false, message = '' } = {}) {
+  if (!needRepo(ctx)) return;
+  if (amend && isInitial(ctx)) return ctx.note('There is no commit to amend yet.', 'error');
+  const file = messagePath(ctx, amend);
+  const comment = await commentFor(ctx);
+  let start = message.trim();
+  // An amend starts from the commit as it is now, which an old file may no longer match.
+  if (!start && amend) start = (await ctx.git(['log', '-1', '--format=%B']).catch(() => '')).trim();
+  if (!start) start = readMessage(await readFile(file, 'utf8').catch(() => ''), comment);
+  const files = amend ? await amendFiles(ctx) : ctx.data.changes.staged;
+  try {
+    await writeFile(file, messageFileText({ message: start, files, amend, comment }));
+  } catch (e) {
+    return ctx.note(`Couldn't write ${file}: ${firstLine(e.message)}`, 'error');
+  }
+  ctx.note(`Wrote the ${amend ? "amended commit's" : 'commit'} message to ${file}\nEdit it in your editor and save, then press enter here to ${amend ? 'amend' : 'commit'}.`);
+  return ctx.prefill(`/${amend ? 'amend' : 'commit'} --file ${file}`);
 }
 
 /**
@@ -1624,18 +1687,29 @@ function needClaude(ctx) {
   return false;
 }
 
-/** Claude writes the commit message for the staged changes; it lands in the prompt to edit. */
+/**
+ * W in Changes, /describe: Claude writes the commit message for the staged changes. A subject alone lands
+ * in the prompt as /commit <it>; with a body, the message goes in the message file (editMessage) and
+ * /commit --file <it> in the prompt, the message showing in the viewer meanwhile.
+ */
 export async function describeCommit(ctx) {
   if (!needClaude(ctx)) return;
   if (!ctx.data.changes.staged.length) {
     return ctx.note('Stage what you want to commit first (space, or a for everything), then ask Claude for the message (W).', 'error');
   }
-  const recent = (await ctx.git(['log', '-n15', '--format=%s']).catch(() => '')).split('\n').filter(Boolean);
+  const log = await ctx.git(['log', '-n12', '--format=%B%x1e']).catch(() => '');
+  const recent = log.split('\x1e').map((m) => m.trim()).filter(Boolean);
   const r = await askClaude(ctx, 'commit message', commitPrompt(recent), () => ctx.git(['diff', '--cached', '--stat', '--patch', '-M']));
   if (!r.ok) return r;
-  const subject = cleanSubject(r.out);
+  const { subject, body } = parseCommitMessage(r.out);
   if (!subject) return ctx.note("Claude didn't suggest a message. Try again, or write one: /commit <message>", 'error');
-  ctx.prefill(`/commit ${subject}`);
+  if (!body) {
+    ctx.prefill(`/commit ${subject}`);
+    return r;
+  }
+  const message = `${subject}\n\n${body}`;
+  ctx.showText('Commit message from Claude', message);
+  await editMessage(ctx, { message });
   return r;
 }
 
