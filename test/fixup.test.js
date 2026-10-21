@@ -103,13 +103,14 @@ test('F picks an older commit, commits the fixup and folds it in, keeping other 
     assert.equal(g('log', '-1', '--format=%s'), 'fixup! Alpha');
     assert.match(frame(), /other changes are stashed meanwhile/);
     app.stdin.write('1');
-    await until(() => g('log', '--format=%s') === 'Gamma\nBeta\nAlpha', 'the fixup to be folded in');
+    // The rebase runs a git process per step, which a busy Windows runner can take well over 8 seconds to get through.
+    await until(() => g('log', '--format=%s') === 'Gamma\nBeta\nAlpha', 'the fixup to be folded in', 30000);
     // The fix landed in Alpha itself, and nothing else changed there.
     assert.equal(g('show', 'HEAD~2:Alpha.txt'), 'Alpha, fixed');
     assert.equal(g('show', '--name-only', '--format=', 'HEAD~2'), 'Alpha.txt');
     assert.equal(g('status', '--porcelain'), 'M Gamma.txt');
     assert.equal(readFileSync(join(dir, 'Gamma.txt'), 'utf8'), 'Gamma\nwork in progress\n');
-    await until(() => !frame().includes('REBASING'), 'no rebase left in progress');
+    await until(() => !frame().includes('REBASING'), 'no rebase left in progress', 30000);
   } finally {
     app.unmount();
   }
