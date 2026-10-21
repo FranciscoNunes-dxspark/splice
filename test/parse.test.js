@@ -4,7 +4,7 @@ import {
   findArgs,
   groupChanges,
   parseDecorations,
-  parseGraph,
+  parseLog,
   parseNameStatus,
   parseRefs,
   parseStatus,
@@ -65,22 +65,19 @@ test('decorations: HEAD, locals, remotes, tags; origin/HEAD is dropped', () => {
   assert.deepEqual(parseDecorations(''), []);
 });
 
-test('graph: commit rows and connector rows', () => {
+test('log: one row per commit, with its parents and refs', () => {
   const raw = [
-    '*   \x1faaa\x1fbbb ccc\x1fHEAD -> refs/heads/main\x1fAna\x1f1700000000\x1fMerge feature',
-    '|\\  ',
-    '| * \x1fccc\x1fbbb\x1f\x1fBo\x1f1699999000\x1fWork, with \x1f-free subject',
-    '|/  ',
-    '* \x1fbbb\x1f\x1f\x1fAna\x1f1699990000\x1fFirst',
+    '\x1faaa\x1fbbb ccc\x1fHEAD -> refs/heads/main\x1fAna\x1f1700000000\x1fMerge feature',
+    '\x1fccc\x1fbbb\x1f\x1fBo\x1f1699999000\x1fWork, with \x1f-free subject',
+    '\x1fbbb\x1f\x1f\x1fAna\x1f1699990000\x1fFirst',
+    '',
   ].join('\n');
-  const rows = parseGraph(raw);
-  assert.equal(rows.length, 5);
-  assert.equal(rows[0].graph, '*');
+  const rows = parseLog(raw);
+  assert.equal(rows.length, 3);
   assert.deepEqual(rows[0].commit.parents, ['bbb', 'ccc']);
   assert.equal(rows[0].commit.refs[0].name, 'main');
-  assert.equal(rows[1].commit, undefined);
-  assert.equal(rows[1].graph, '|\\');
-  assert.deepEqual(rows[4].commit.parents, []);
+  assert.equal(rows[1].commit.author, 'Bo');
+  assert.deepEqual(rows[2].commit.parents, []);
 });
 
 test('refs: tracking info, current branch, remotes without HEAD, tags newest first', () => {
@@ -134,10 +131,12 @@ test('fitSegments truncates at the edge and pads to width', () => {
   assert.equal(clean('a\tb\r'), 'a   b');
 });
 
-test('graph glyphs are padded and coloured per lane', () => {
-  const segs = graphSegments('| *', 5);
+test('graph cells become segments, padded or cut to the width', () => {
+  const cells = [{ ch: '│', color: 'red' }, { ch: ' ' }, { ch: '●', color: 'blue', node: true }];
+  const segs = graphSegments(cells, 5);
   assert.equal(segs.map((s) => s.text).join(''), '│ ●  ');
-  assert.notEqual(segs[0].color, segs.find((s) => s.text.includes('●')).color);
+  assert.equal(segs.find((s) => s.text === '●').bold, true);
+  assert.equal(graphSegments(cells, 2).map((s) => s.text).join(''), '│…');
 });
 
 test('a local branch absorbs its remote twin in the pills', () => {

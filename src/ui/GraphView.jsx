@@ -9,25 +9,16 @@ import { fit, fitSegments, wrap } from '../text.js';
 import { useAsync, useListNav, useMouse } from './hooks.js';
 import { Lines, Panel, Row } from './parts.jsx';
 
-// git draws lanes two columns apart; diagonals sit between them and belong to the lane they lead to.
-function laneColor(col, ch) {
-  const lane = ch === '|' || ch === '*' ? col / 2 : Math.ceil(col / 2);
-  return theme.lanes[Math.floor(lane) % theme.lanes.length];
-}
-
-/** Colours git's ASCII graph by lane and swaps in nicer glyphs, padded to `width`. */
-export function graphSegments(graph, width) {
-  const g = graph.length > width ? `${graph.slice(0, Math.max(0, width - 1))}…` : graph.padEnd(width);
+/** A row's graph cells (from `layoutGraph`) as segments, cut or padded to `width`. */
+export function graphSegments(cells, width) {
+  const g = cells.length > width ? [...cells.slice(0, Math.max(0, width - 1)), { ch: '…' }] : cells;
   const segs = [];
-  for (let i = 0; i < g.length; i++) {
-    const ch = g[i];
-    const glyph = ch === '*' ? '●' : ch === '|' ? '│' : ch;
-    const color = ch === ' ' || ch === '…' ? undefined : laneColor(i, ch);
-    const bold = ch === '*';
+  for (const { ch, color, node = false } of g) {
     const last = segs.at(-1);
-    if (last && last.color === color && last.bold === bold) last.text += glyph;
-    else segs.push({ text: glyph, color, bold });
+    if (last && last.color === color && last.bold === node) last.text += ch;
+    else segs.push({ text: ch, color, bold: node });
   }
+  if (g.length < width) segs.push({ text: ' '.repeat(width - g.length) });
   return segs;
 }
 
@@ -210,7 +201,7 @@ export function GraphView({ data, ctx, width, height, active, filter }) {
                 focused={active}
                 segments={fitSegments(
                   [
-                    { text: fit('◌', graphW), color: theme.accent, bold: true },
+                    ...graphSegments(data.graphWip ?? [{ ch: '◌', color: theme.accent, node: true }], graphW),
                     { text: ' ' },
                     { text: ' // WIP ', color: theme.accent, bold: true },
                     { text: ` ${row.wip} changed file${row.wip === 1 ? '' : 's'}`, color: theme.dim },

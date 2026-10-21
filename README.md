@@ -10,13 +10,13 @@ Splice used to be called Tiller. A Tiller that updates itself becomes Splice on 
 (•Π•) Splice  │  Keel  ⎇ main → origin/main ↑1  ● 2 changes                              C:\Team\Keel
  1 Graph   2 Changes 2   3 Branches   4 Worktrees   5 Stash   6 PRs   7 Repos
 ╭─ Commits ────────────────────────────────── 125 ─╮╭─ Commit ──────────────── J/K scroll ─╮
-│❯ ◌  // WIP  2 changed files                      ││4e9f0080cb  19/10/2026, 15:14:35      │
+│❯ ◌    // WIP  2 changed files                    ││4e9f0080cb  19/10/2026, 15:14:35      │
 │  ●    ● main ⇅ origin  Compact view on the Pro…  ││Francisco Nunes                       │
-│  ●   Merge pull request #27 from …               ││                                      │
-│  │\                                              ││Compact view on the Production page   │
+│  ○<╮ Merge pull request #27 from …               ││                                      │
+│  │ │                                             ││Compact view on the Production page   │
 │  ● │ Add CLAUDE.md for Claude Code               ││                                      │
 │  │ ●  origin/ccr-618ea99b  Don't show an old …   ││6 files changed                       │
-│  │/                                              ││M README.md                           │
+│  ├─╯                                             ││M README.md                           │
 ╰──────────────────────────────────────────────────╯╰──────────────────────────────────────╯
 ● git push
   ⎿  To github.com:you/keel.git
@@ -176,7 +176,7 @@ Worktrees are removed first with a plain `git worktree remove`, then branches de
 - **The window title shows the repository and branch**, like `splice (main) — Splice`, so tabs running Splice are easy to tell apart. Quitting puts the terminal's own title back.
 - **Never hangs on a prompt.** Git runs with `GIT_TERMINAL_PROMPT=0`; credentials come from your credential helper (Git Credential Manager on Windows). On Linux and macOS git also runs without a terminal of its own, so ssh, ssh-keygen or a pinentry that would ask in the terminal fails at once instead. Esc cancels a slow fetch or push.
 - **Signed commits.** With `commit.gpgsign` on, Splice's commits are signed as git's own are, and the activity line says "Signing and committing". The commit pane in the graph says whether each commit is signed, and whether the signature is good (`%G?`). Since there's no terminal to type a passphrase in, a key has to be ready to use: unlocked in gpg-agent, added to ssh-agent, or with a pinentry that opens its own window (as on Windows and macOS). On Linux without a desktop, Splice checks a gpg key before committing; either way, a commit that can't be signed stops with a message saying so and what to do, rather than waiting.
-- The graph loads 400 commits at a time and fetches more as you scroll to the bottom. `/find` filters the loaded commits by message, author, hash or branch name. `/find -S <text>` searches the whole history instead, every branch included, for the commits that add or remove the text, and `/find -G <regex>` for the ones whose added or removed lines match the regex; esc cancels a slow search. `/filter` narrows the graph to the commits on any branch by an author (`--author ana`, name or email, any case), touching a file or folder (`--path src/ui`, relative to the repository's root), or in a date range (`--since 2026-01-01`, `--until "2 weeks ago"`, anything git understands); combine them freely, and quote values with spaces. Either way the graph shows just the matching commits, `↵` opens one's diff, and esc (or `/filter` alone) goes back to the full graph.
+- In the graph, `●` is a commit, `○` a merge, and `◌` your uncommitted changes, above the commit you have out. The default branch is always the left-most column, one straight line. Every other branch has a column and a colour of its own from its tip down to the commit it started from (branches that never overlap share a column), and a merge's line to the branch it brings in leaves from its own row, with an arrow (`<` or `>`) pointing into the merge. A row with no commit follows each merge, and a branch bends back into the commit it started from on a row of its own, which gives each branch some room. The graph loads 400 commits at a time and fetches more as you scroll to the bottom. `/find` filters the loaded commits by message, author, hash or branch name. `/find -S <text>` searches the whole history instead, every branch included, for the commits that add or remove the text, and `/find -G <regex>` for the ones whose added or removed lines match the regex; esc cancels a slow search. `/filter` narrows the graph to the commits on any branch by an author (`--author ana`, name or email, any case), touching a file or folder (`--path src/ui`, relative to the repository's root), or in a date range (`--since 2026-01-01`, `--until "2 weeks ago"`, anything git understands); combine them freely, and quote values with spaces. Either way the graph shows just the matching commits, `↵` opens one's diff, and esc (or `/filter` alone) goes back to the full graph.
 
 ## Meet Twig
 
