@@ -64,6 +64,17 @@ export function prPrompt(branch, target) {
   ].join('\n');
 }
 
+/** What to ask for release notes from the commits (and merged pull requests) since `since` (null: from the start) up to `until`. */
+export function changelogPrompt(since, until) {
+  return [
+    `Write the release notes for what changed ${since ? `since ${since}` : 'from the start'} up to ${until}.`,
+    'Standard input has the commits, newest first, each with its short hash, subject and body, and then, when the server could be asked, the pull requests merged in that time.',
+    'Reply with the notes only, in Markdown: a "## Features" section, then "## Fixes", then "## Other", each a "-" list of short entries written for the people who use the software, not for its developers. Leave out a section with nothing in it.',
+    'Fold commits that belong together (a pull request and its commits, a fix and its follow-ups) into one entry, and leave out ones that change nothing for users (merges, formatting, test-only changes) unless nothing else is left. Name a pull request by its number (#12 or !12) when an entry comes from one.',
+    'No introduction or closing remarks, and no heading above the sections.',
+  ].join('\n');
+}
+
 /** What to ask for explaining (`mode` "explain") or reviewing ("review") one `subject` ("this commit", ...). */
 export function lookPrompt(mode, subject) {
   const task =

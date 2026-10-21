@@ -3,15 +3,37 @@
 import { existsSync, realpathSync, statSync } from 'node:fs';
 import { readFile, rm, writeFile } from 'node:fs/promises';
 import { basename, join, resolve } from 'node:path';
-import { READ_ONLY, blameInput, blamePrompt, clip, commitPrompt, lookPrompt, parseCommitMessage, parsePrDraft, parseResolution, parseSplit, prPrompt, resolveInput, resolvePrompt, splitInput, splitPrompt } from './claude.js';
+import { READ_ONLY, blameInput, blamePrompt, changelogPrompt, clip, commitPrompt, lookPrompt, parseCommitMessage, parsePrDraft, parseResolution, parseSplit, prPrompt, resolveInput, resolvePrompt, splitInput, splitPrompt } from './claude.js';
 import { cleanupChoice, cleanupCount, cleanupOptions, cleanupText, planCleanup, readCleanup } from './cleanup.js';
-import { configFile } from './config.js';
+import { configFile, samePath } from './config.js';
 import { droppedPaths, insideRepo } from './drop.js';
 import { ignoreChoices, withIgnoreLine } from './ignore.js';
 import { matchLineEndings, parseConflicts, takeSide, unifiedDiff } from './conflict.js';
 import { blamePicker, historyPicker, lineLogArgs, linesRange, repoPath } from './history.js';
 import { commentChar, messageFileText, readMessage } from './message.js';
-import { MERGE_LABELS, bodyArgs, mergePrArgs, releaseArgs } from './hosting.js';
+import { MERGE_LABELS, bodyArgs, mergePrArgs, prIdFromUrl, prSource, releaseArgs } from './hosting.js';
+import {
+  backportArgs,
+  backportBody,
+  backportBranch,
+  backportPicks,
+  backportSteps,
+  backportTitle,
+  changelogArgs,
+  changelogCount,
+  changelogInput,
+  commitsDraft,
+  parseCommitLines,
+  prNumber,
+  reviewBranch,
+  reviewPath,
+  shipArgs,
+  shipSteps,
+  shippedEntry,
+  shippedIn,
+  withShipped,
+  withoutShipped,
+} from './prflow.js';
 import { defaultBranch, filterArgs, filterLabel, filterLogArgs, findArgs, firstBadCommit, parseLog, parseNameStatus, parseStatus, relTime, remoteArgs, searchArgs, splitArgs, stashArgs, upstreamArgs } from './parse.js';
 import { buildPatch, coversAll, parseDiff, picksBySignature, splitUnits } from './patch.js';
 import {
@@ -459,8 +481,16 @@ export function pushTag(ctx, text) {
  */
 export async function createRelease(ctx, text) {
   if (!needRepo(ctx)) return;
-  const { tag, title, draft } = releaseArgs(text);
+  const { tag, title, draft, notesFile } = releaseArgs(text);
   if (!tag) return ctx.prefill('/release ');
+  let notes;
+  if (notesFile) {
+    try {
+      notes = (await readFile(resolve(ctx.data.root, notesFile), 'utf8')).replace(/\r\n/g, '\n').trim();
+    } catch (e) {
+      return ctx.note(`Couldn't read ${notesFile}: ${firstLine(e.message)}`, 'error');
+    }
+  }
   const host = needHost(ctx);
   if (!host) return;
   if (!host.createRelease) return ctx.note(`${host.name} has no releases made from tags: Splice only creates them on GitHub and GitLab. u pushes the tag.`, 'error');
@@ -471,13 +501,13 @@ export async function createRelease(ctx, text) {
     draft ||
     (await ctx.confirm({
       title: `Create a ${host.name} release for ${tag}${title ? ` called "${title}"` : ''}?`,
-      detail: `Pushes ${tag} to ${host.remoteName} first. ${host.releaseNotesBy ?? ''}`.trim(),
+      detail: `Pushes ${tag} to ${host.remoteName} first. ${notesFile ? `The notes are ${notesFile}.` : (host.releaseNotesBy ?? '')}`.trim(),
       options: [{ label: 'Yes, publish it', value: 'publish' }, ...(drafts ? [{ label: 'Save it as a draft', value: true }] : []), { label: 'No', value: null }],
     }));
   if (!asDraft) return;
   const pushed = await ctx.exec(['push', host.remoteName, `refs/tags/${tag}`], { label: 'Pushing tag', refresh: false });
   if (!pushed.ok) return pushed;
-  return hostTask(ctx, `${host.kind === 'gitlab' ? 'glab' : 'gh'} release create ${tag}${asDraft === true ? ' --draft' : ''}`, (signal) => host.createRelease({ tag, title, draft: asDraft === true }, signal), {
+  return hostTask(ctx, `${host.kind === 'gitlab' ? 'glab' : 'gh'} release create ${tag}${asDraft === true ? ' --draft' : ''}`, (signal) => host.createRelease({ tag, title, draft: asDraft === true, ...(notes != null ? { notes } : {}) }, signal), {
     label: 'Creating the release',
     refresh: false,
   });
@@ -548,6 +578,11 @@ export async function continueOp(ctx) {
   if (!ctx.data.state) {
     await cleanup(ctx.data.gitDir);
     if (r.ok && state === 'rebasing') afterRewrite(ctx);
+    // A /backport that stopped on a conflict goes on: push, then the pull request.
+    if (r.ok && state === 'cherry-picking') {
+      const waiting = await readBackport(ctx);
+      if (waiting && waiting.name === ctx.data.status.branch.head) return finishBackport(ctx, waiting);
+    }
   }
   afterConflicts(ctx);
 }
@@ -564,7 +599,14 @@ export async function abortOp(ctx) {
   });
   if (!ok) return;
   await ctx.exec([OP[state], '--abort'], { label: 'Aborting' });
-  if (!ctx.data.state) await cleanup(ctx.data.gitDir);
+  if (!ctx.data.state) {
+    await cleanup(ctx.data.gitDir);
+    const waiting = state === 'cherry-picking' && (await readBackport(ctx));
+    if (waiting) {
+      await rm(backportFile(ctx), { force: true });
+      ctx.note(`The backport of ${waiting.label} to ${waiting.branch} stopped. ${waiting.name} stays, with what was picked before: d in Branches deletes it.`);
+    }
+  }
 }
 
 /**
@@ -931,6 +973,14 @@ async function findDefaultBranch(ctx) {
  */
 export async function cleanUp(ctx) {
   if (!needRepo(ctx)) return;
+  forgetGoneShipped(ctx);
+  // On a branch you shipped (/ship) whose pull request has been merged since: finishing it switches to the
+  // default branch first, which the cleanup alone never does (it leaves the current branch), then the rest.
+  const shipping = ctx.host()?.pr && shippedEntry(ctx.config, repoKey(ctx), ctx.data.status.branch.head);
+  if (shipping) {
+    const got = await hostRead(ctx, `Is ${shipping.label} merged?`, (signal) => ctx.host().pr(shipping.id, signal), 'Asking about the pull request');
+    if (got.ok && got.value.state === 'merged') await finishShipped(ctx, shipping, got.value);
+  }
   const { root, refs, remotes } = ctx.data;
   const host = ctx.host();
   let plan;
@@ -973,7 +1023,17 @@ export async function cleanUp(ctx) {
   });
   ctx.closeOverlay();
   if (!choice) return;
-  const { worktrees, branches, remote } = cleanupChoice(plan, choice);
+  await removeCleanup(ctx, cleanupChoice(plan, choice));
+  forgetGoneShipped(ctx);
+}
+
+/**
+ * Removes what a cleanup plan (or the part of one picked) lists: worktrees first, with a plain `git worktree
+ * remove`; then the branches, with -d (and -D for those it refuses only because they aren't merged into
+ * HEAD, already checked against the remotes, the default branch and the pull requests); then the branches
+ * on the remote. Says what went, and what couldn't and why. /cleanup and /ship's finishing both use it.
+ */
+async function removeCleanup(ctx, { worktrees, branches, remote }) {
   const problems = [];
   const removed = new Set();
   let stopped = false;
@@ -1053,6 +1113,7 @@ export async function cleanUp(ctx) {
     ...problems,
   ];
   ctx.note([head, ...lines].join('\n'), problems.length || stopped ? 'error' : 'ok');
+  return { deleted, removed: [...removed], problems, stopped };
 }
 
 export function tag(ctx, argText) {
@@ -2138,6 +2199,21 @@ async function reviewWith(ctx, title, text, req) {
   }
 }
 
+// What a pull request into `target` is compared with: the server's copy of it when there is one, as the PR will be.
+function prBase(ctx, target) {
+  const { remotes } = ctx.data;
+  const remote = remotes.includes('origin') ? 'origin' : remotes[0];
+  return ctx.data.refs.remote.some((b) => b.name === `${remote}/${target}`) ? `${remote}/${target}` : target;
+}
+
+// Claude drafts a pull request of `branch` into `target` from its commits (`log`, oldest first) and its diff against `base`.
+async function claudeDraft(ctx, branch, target, base, log) {
+  const r = await askClaude(ctx, 'pull request', prPrompt(branch, target), async () =>
+    `${log.trim()}\n\n${await ctx.git(['diff', '--stat', '--patch', '-M', `${base}...HEAD`])}`,
+  );
+  return r.ok ? { r, ...parsePrDraft(r.out) } : { r };
+}
+
 /** Claude drafts a pull request for the current branch: the title goes in the prompt, the description with it. */
 export async function draftPr(ctx, text) {
   if (!needClaude(ctx)) return;
@@ -2154,17 +2230,11 @@ export async function draftPr(ctx, text) {
   }
   if (!target) return ctx.note('Say which branch it goes into: /draft-pr --into <branch>', 'error');
   if (target === branch.head) return ctx.note(`You're on ${target} itself. Switch to the branch with your changes first.`, 'error');
-  // Compare with the server's copy of the target when there is one: that's what the PR will be against.
-  const { remotes } = ctx.data;
-  const remote = remotes.includes('origin') ? 'origin' : remotes[0];
-  const base = ctx.data.refs.remote.some((b) => b.name === `${remote}/${target}`) ? `${remote}/${target}` : target;
+  const base = prBase(ctx, target);
   const log = await ctx.git(['log', '--reverse', '--format=%s%n%n%b', `${base}..HEAD`]).catch(() => '');
   if (!log.trim()) return ctx.note(`${branch.head} has no commits that aren't in ${base}, so there's nothing to open a pull request for.`, 'error');
-  const r = await askClaude(ctx, 'pull request', prPrompt(branch.head, target), async () =>
-    `${log.trim()}\n\n${await ctx.git(['diff', '--stat', '--patch', '-M', `${base}...HEAD`])}`,
-  );
+  const { r, title, body } = await claudeDraft(ctx, branch.head, target, base, log);
   if (!r.ok) return r;
-  const { title, body } = parsePrDraft(r.out);
   if (!title) return ctx.note("Claude didn't draft a title. Try again, or open it yourself: /pr <title>", 'error');
   ctx.prDraft = { branch: branch.head, body };
   ctx.showText(`Pull request draft: ${branch.head} → ${target}`, `${title}\n\n${body}`, { markdown: true });
@@ -2345,6 +2415,455 @@ export function prArgs(text) {
     .replace(/\s+/g, ' ')
     .trim();
   return { target, draft, title };
+}
+
+// Pull request flows: /ship, /review-pr, /backport and /changelog. Their pure parts (arguments, plans, the
+// state kept) are in prflow.js; they reach the server only through the host's own methods.
+
+// A read from the PR host with the spinner (esc cancels it): { ok: true, value }, or the task's failure.
+async function hostRead(ctx, title, fn, label = 'Asking the server') {
+  let value;
+  const r = await ctx.task(
+    title,
+    async (signal) => {
+      value = await fn(signal);
+      return { stdout: '', stderr: '' };
+    },
+    { label, refresh: false, quiet: true },
+  );
+  return r.ok ? { ok: true, value } : r;
+}
+
+// Shipped branches are kept per repository, by its common git dir, which its worktrees share.
+const repoKey = (ctx) => ctx.data.commonDir;
+const forgetShipped = (ctx, branch) => ctx.setConfig((c) => withoutShipped(c, repoKey(ctx), (e) => e.branch === branch));
+
+// Shipped branches that are gone (deleted by /cleanup, say) are no longer worth watching.
+function forgetGoneShipped(ctx) {
+  const names = new Set(ctx.data.refs.local.map((b) => b.name));
+  if (shippedIn(ctx.config, repoKey(ctx)).some((e) => !names.has(e.branch))) ctx.setConfig((c) => withoutShipped(c, repoKey(ctx), (e) => !names.has(e.branch)));
+}
+
+const howLabel = (method) => (MERGE_LABELS[method] ?? method).replace(/ and merge$/, '').toLowerCase();
+
+/**
+ * /ship [--into <branch>]: from a feature branch, in one go once you've seen the plan and said yes: pushes it
+ * (the first push setting its upstream), opens its pull request with the title and description Claude drafts
+ * (unless it has one open already), and turns on auto-merge with the repository's usual method (asked the
+ * first time, then remembered as `shipMethods` in the config). The branch is then remembered as shipped
+ * (`shipped`), and once its pull request is merged Splice offers to finish it (finishShipped). On a branch
+ * shipped before, it finishes it if merged, and otherwise pushes what's new and turns auto-merge on again.
+ */
+export async function ship(ctx, text) {
+  const host = needHost(ctx);
+  if (!host) return;
+  const args = shipArgs(text);
+  if (args.error) return ctx.note(args.error, 'error');
+  const { branch } = ctx.data.status;
+  if (!branch.head) return ctx.note('HEAD is detached. Check out the branch you want to ship.', 'error');
+  if (ctx.data.state) return ctx.note(`A ${OP[ctx.data.state]} is in progress. Finish it first (/continue or /abort).`, 'error');
+  const repo = repoKey(ctx);
+  const entry = shippedEntry(ctx.config, repo, branch.head);
+  // Its pull request from the last /ship, while it's still open.
+  let shipped = null;
+  if (entry && host.pr) {
+    const got = await hostRead(ctx, `Is ${entry.label} merged?`, (signal) => host.pr(entry.id, signal), 'Asking about the pull request');
+    if (!got.ok) return got;
+    if (got.value.state === 'merged') return finishShipped(ctx, entry, got.value);
+    if (got.value.state === 'open') shipped = got.value;
+    else {
+      forgetShipped(ctx, entry.branch);
+      ctx.note(`${entry.label} was closed without being merged, so /ship opens a new pull request.`);
+    }
+  }
+  const local = ctx.data.refs.local.find((b) => b.name === branch.head);
+  const source = (local && prSource(local, host.remoteName)) ?? branch.head;
+  const listed = await hostRead(ctx, `Open pull requests on ${host.name}`, () => host.list());
+  if (!listed.ok) return listed;
+  const open = listed.value.find((p) => p.source === source && (!args.target || p.target === args.target)) ?? (shipped && (!args.target || shipped.target === args.target) ? shipped : null);
+  const target = open?.target ?? args.target ?? (await findDefaultBranch(ctx)).name;
+  if (!target) return ctx.note('Say which branch it goes into: /ship --into <branch>', 'error');
+  if (target === branch.head) return ctx.note(`You're on ${target}, the branch pull requests go into. /ship works from a feature branch.`, 'error');
+  const base = prBase(ctx, target);
+  const log = await ctx.git(['log', '--reverse', '--format=%s%n%n%b', `${base}..HEAD`]).catch(() => '');
+  if (!open && !log.trim()) return ctx.note(`${branch.head} has no commits that aren't in ${base}, so there's nothing to ship.`, 'error');
+  const remote = branch.upstream ? branch.upstream.split('/')[0] : host.remoteName;
+  const toPush = !branch.upstream ? { first: true } : branch.ahead ? { count: branch.ahead } : null;
+  const methods = host.mergeMethods ?? ['merge'];
+  let method = ctx.config.shipMethods?.[repo];
+  for (;;) {
+    if (!methods.includes(method)) {
+      method = await ctx.confirm({
+        title: `How should ${host.name} merge ${branch.head} into ${target}?`,
+        detail: 'Splice remembers it for /ship in this repository; the plan comes next.',
+        options: [...methods.map((m) => ({ label: MERGE_LABELS[m], value: m })), { label: 'Cancel', value: null }],
+      });
+      if (!method) return;
+      const chosen = method;
+      ctx.setConfig((c) => ({ ...c, shipMethods: { ...c.shipMethods, [repo]: chosen } }));
+    }
+    const steps = shipSteps({ branch: branch.head, target, remote, hostName: host.name, push: toPush, open, claude: Boolean(ctx.askClaude), method });
+    ctx.showText(`Ship ${branch.head} into ${target}`, steps.join('\n'), { markdown: true });
+    const go = await ctx.confirm({
+      title: `Ship ${branch.head} into ${target}?`,
+      detail: 'Listed above: each step in turn, stopping if one fails.',
+      options: [
+        { label: 'Yes, ship it', value: 'go' },
+        { label: `Merge another way than ${howLabel(method)}`, value: 'method' },
+        { label: 'No', value: null },
+      ],
+    });
+    ctx.closeOverlay();
+    if (go === 'go') break;
+    if (go !== 'method') return;
+    method = null;
+  }
+  if (toPush) {
+    const pushed = await push(ctx);
+    if (!pushed?.ok) return pushed;
+  }
+  let pr = open;
+  if (!pr) {
+    let draft = null;
+    if (ctx.askClaude) {
+      const d = await claudeDraft(ctx, branch.head, target, base, log);
+      if (!d.r.ok) return d.r;
+      if (d.title) draft = { title: d.title, body: d.body };
+    }
+    draft ??= commitsDraft(parseCommitLines(await ctx.git(['log', '--reverse', '--format=%H%x1f%s', `${base}..HEAD`]).catch(() => '')));
+    if (!draft.title) return ctx.note('There was no title to open the pull request with. Open it yourself: /pr <title>', 'error');
+    const made = await hostTask(ctx, `${cliName(host)} create "${draft.title}"`, (signal) => host.create({ title: draft.title, body: draft.body, source: branch.head, target }, signal), {
+      label: 'Opening pull request',
+      refresh: false,
+    });
+    if (!made.ok) return made;
+    ctx.prsChanged();
+    const id = prIdFromUrl(made.out);
+    const found = await hostRead(ctx, 'The new pull request', async (signal) =>
+      id != null && host.pr ? host.pr(id, signal) : (await host.list()).find((p) => p.source === source && p.target === target),
+    );
+    if (!found.ok || !found.value) return ctx.note("The pull request is open, but Splice couldn't find it again to turn on auto-merge: m on it in PRs does that.", 'error');
+    pr = found.value;
+  }
+  ctx.setConfig((c) => withShipped(c, { repo, branch: branch.head, id: pr.id, label: pr.label, title: pr.title, url: pr.url, target: pr.target, at: Date.now() }));
+  const opts = { method, deleteBranch: true, auto: true };
+  const r = await hostTask(ctx, mergeTitle(host, pr, opts), (signal) => host.merge(pr, opts, signal), { label: 'Setting auto-merge', refresh: false });
+  ctx.prsChanged();
+  if (r.ok) ctx.note(`Shipped ${branch.head}: ${pr.label} merges into ${pr.target} once its checks and reviews pass.\nOnce it has, Splice offers to finish: switch to ${pr.target}, pull it and delete ${branch.head}.`, 'ok');
+  return r;
+}
+
+/**
+ * Finishing a shipped branch whose pull request (`pr`, from host.pr) was merged, after asking: switches to
+ * the default branch (when you're on the shipped one; from a worktree of its own, Splice opens the main
+ * working tree instead), pulls it, then deletes the branch and its worktree by /cleanup's rules and with its
+ * code, so a branch with commits that are only here, or a worktree with changes, stays.
+ */
+export async function finishShipped(ctx, entry, pr) {
+  if (!needHost(ctx)) return;
+  if (!ctx.data.refs.local.some((b) => b.name === entry.branch)) {
+    forgetShipped(ctx, entry.branch);
+    return ctx.note(`${entry.label} was merged, and ${entry.branch} is gone already.`, 'ok');
+  }
+  const def = (await findDefaultBranch(ctx)).name ?? entry.target;
+  const here = ctx.data.status.branch.head;
+  const wt = ctx.data.worktrees.find((w) => w.branch === entry.branch);
+  const main = ctx.data.worktrees.find((w) => w.main);
+  const away = Boolean(wt?.current && !wt.main && main);
+  const switching = !away && here === entry.branch;
+  const steps = [
+    away ? `open the main working tree (${basename(main.path)})` : switching ? `switch to ${def}` : null,
+    switching || here === def || (away && main.branch === def) ? `pull ${def}` : 'fetch',
+    `delete ${entry.branch}${wt && !wt.main ? ` and its worktree ${basename(wt.path)}` : ''}`,
+  ].filter(Boolean);
+  const answer = await ctx.confirm({
+    title: `${pr.label} "${pr.title}" was merged into ${pr.target}. Finish ${entry.branch}?`,
+    detail: `${steps.join(', ').replace(/^./, (c) => c.toUpperCase())}, as /cleanup would: it stays if it has commits that are only here.`,
+    options: [
+      { label: 'Yes, finish it', value: 'yes' },
+      { label: 'Not now (/ship or /cleanup asks again)', value: null },
+      { label: 'No, and stop asking', value: 'forget' },
+    ],
+  });
+  if (answer === 'forget') return forgetShipped(ctx, entry.branch);
+  if (!answer) return;
+  if (away) {
+    if (!(await ctx.openRepo(main.path))) return;
+  } else if (switching) {
+    const r = await checkout(ctx, def);
+    if (!r?.ok) return r;
+  }
+  const host = ctx.host();
+  const { status } = ctx.data;
+  const pulled = status.branch.head === def && status.branch.upstream
+    ? await ctx.exec(['pull', '--prune'], { label: 'Pulling' })
+    : await ctx.exec(['fetch', '--prune', host.remoteName], { label: 'Fetching' });
+  if (!pulled.ok) return pulled;
+  const { root, refs, remotes } = ctx.data;
+  const mergedRefs = [def, `${host.remoteName}/${def}`].filter((r) => refs.local.some((b) => b.name === r) || refs.remote.some((b) => b.name === r));
+  let plan;
+  const read = await ctx.task(
+    `Can ${entry.branch} go?`,
+    async () => {
+      const server = { remoteName: host.remoteName, merged: [{ ...pr, fork: false }], open: [] };
+      plan = planCleanup(await readCleanup(root, { defaultBranch: def, mergedRefs, hasRemotes: remotes.length > 0, server }));
+      return { stdout: '', stderr: '' };
+    },
+    { label: 'Checking the branch', refresh: false, quiet: true },
+  );
+  if (!read.ok) return read;
+  forgetShipped(ctx, entry.branch);
+  const branches = plan.branches.filter((b) => b.name === entry.branch);
+  if (!branches.length) {
+    const kept = plan.kept.find((k) => k.name === entry.branch);
+    return ctx.note(`${entry.branch} stays: ${kept?.at ? `checked out in ${kept.at}, which has changes` : (kept?.why ?? "it can't go")}. d in Branches deletes it anyway.`, 'error');
+  }
+  return removeCleanup(ctx, { worktrees: plan.worktrees.filter((w) => w.branch === entry.branch), branches, remote: [] });
+}
+
+/**
+ * The PR list's poll (prList.js), with `open` the pull requests it found: a shipped branch's pull request
+ * that's no longer among them was merged or closed. Merged, Splice offers to finish it, or says so when
+ * a question or something else has the screen; closed, it stops watching. Each is looked at once a session.
+ */
+export async function watchShipped(ctx, open) {
+  const host = ctx.host();
+  if (!host?.pr || !ctx.data) return;
+  const repo = repoKey(ctx);
+  ctx.shipLooked ??= new Set();
+  for (const e of shippedIn(ctx.config, repo)) {
+    const key = `${repo}\n${e.branch}\n${e.id}`;
+    if (open.some((p) => p.id === e.id) || ctx.shipLooked.has(key)) continue;
+    ctx.shipLooked.add(key);
+    const pr = await host.pr(e.id).catch(() => null);
+    // Not answered, or still open (past the list's first 100, say): the next poll looks again.
+    if (!pr || pr.state === 'open') {
+      ctx.shipLooked.delete(key);
+      continue;
+    }
+    if (pr.state !== 'merged') {
+      forgetShipped(ctx, e.branch);
+      ctx.note(`${e.label} was closed without being merged, so ${e.branch} isn't shipped any more.`);
+    } else if (ctx.isBusy() || !ctx.viewHasKeys()) {
+      ctx.note(`${e.label} "${e.title}" was merged. /ship on ${e.branch} finishes it: switch to ${e.target}, pull, delete the branch.`, 'ok');
+    } else await finishShipped(ctx, e, pr);
+  }
+}
+
+/**
+ * /review-pr <number>, w in PRs: checks the pull request out in a worktree of its own beside the repository
+ * (<repo>-pr-<n>, on a branch pr-<n>, fetched from the host's ref for the PR's head, so ones from forks work
+ * too) and opens that in Splice, so reviewing leaves your own work as it is. Again for the same pull request,
+ * it brings the worktree up to the PR's latest commit (asking first if the PR was rewritten) and opens it.
+ */
+export async function reviewPr(ctx, text, given = null) {
+  const host = needHost(ctx);
+  if (!host) return;
+  const id = given?.id ?? prNumber(text);
+  if (id == null) return (text ?? '').trim() ? ctx.note(`${text.trim()} isn't a pull request number. /review-pr 12, say.`, 'error') : ctx.prefill('/review-pr ');
+  let pr = given;
+  if (!pr) {
+    if (!host.pr) return ctx.note(`Splice can't look up a pull request by its number on ${host.name}.`, 'error');
+    const got = await hostRead(ctx, `Pull request ${id} on ${host.name}`, (signal) => host.pr(id, signal), 'Asking about the pull request');
+    if (!got.ok) return got;
+    pr = got.value;
+    if (pr.state !== 'open') return ctx.note(`${pr.label} is ${pr.state === 'merged' ? 'merged' : 'closed'} already, so there's nothing left to review.`, 'error');
+  }
+  const main = ctx.data.worktrees.find((w) => w.main)?.path ?? ctx.data.root;
+  const path = reviewPath(main, pr.id);
+  const name = reviewBranch(pr.id);
+  // Fetched into a ref of Splice's own first: git won't fetch into a branch a worktree has out.
+  const temp = `refs/splice/review/${pr.id}`;
+  const fetched = await ctx.exec(['fetch', host.remoteName, `+${host.headRef(pr)}:${temp}`], { label: `Fetching ${pr.label}`, refresh: false });
+  if (!fetched.ok) return fetched;
+  try {
+    const head = (await ctx.git(['rev-parse', '--verify', `${temp}^{commit}`])).trim();
+    let at = ctx.data.worktrees.find((w) => samePath(w.path, path));
+    if (at?.prunable) {
+      if (!(await ctx.exec(['worktree', 'prune'], { label: 'Pruning worktrees', refresh: false })).ok) return;
+      at = null;
+    }
+    if (!at) {
+      if (existsSync(path)) return ctx.note(`${path} is there already, and isn't a worktree of this repository. Move it away first.`, 'error');
+      // A pr-<n> left from before (its worktree removed) moves to the PR's head, unless it has commits the PR doesn't.
+      const had = ctx.data.refs.local.find((b) => b.name === name);
+      if (had && had.oid !== head && !(await isAncestor(ctx, had.oid, head))) {
+        const ok = await ctx.confirm({
+          title: `${name} has commits that aren't in ${pr.label}. Move it to the pull request anyway?`,
+          detail: 'Those commits would then only be in the reflog.',
+          options: YES_NO(`Yes, move ${name}`),
+          danger: true,
+        });
+        if (!ok) return;
+      }
+      const r = await ctx.exec(['worktree', 'add', '-B', name, path, head], { label: 'Adding worktree', refresh: false });
+      if (!r.ok) return r;
+    } else if (at.branch !== name) {
+      ctx.note(`The worktree at ${path} has ${at.branch ?? 'a detached HEAD'} out, not ${name}, so it was left as it is.`, 'error');
+    } else if (at.head !== head) {
+      const ff = await ctx.exec(['-C', path, 'merge', '--ff-only', head], { label: `Updating ${name}`, refresh: false, quietError: true });
+      if (!ff.ok) {
+        if (!/fast-forward/i.test(ff.error?.message ?? '')) return ctx.note(ff.error.message, 'error');
+        const ok = await ctx.confirm({
+          title: `${pr.label} was rewritten since ${name} was checked out. Reset ${name} to it?`,
+          detail: 'With git reset --keep, which stops rather than lose uncommitted changes; commits only on the old one stay in the reflog.',
+          options: YES_NO(`Yes, reset ${name}`),
+          danger: true,
+        });
+        if (!ok) return;
+        const r = await ctx.exec(['-C', path, 'reset', '--keep', head], { label: `Resetting ${name}`, refresh: false });
+        if (!r.ok) return r;
+      }
+    }
+  } finally {
+    await ctx.git(['update-ref', '-d', temp]).catch(() => {});
+  }
+  if (!(await ctx.openRepo(path))) return;
+  ctx.note(`Reviewing ${pr.label} "${pr.title}" in ${path}, on ${name}.\n/open ${main} goes back to your own work. /cleanup removes this worktree, and ${name} once ${pr.label} is merged.`, 'ok');
+}
+
+// A /backport waiting for /continue after a conflict: { id, label, title, url, branch, name, remote }.
+const backportFile = (ctx) => join(ctx.data.gitDir, 'splice-backport.json');
+async function readBackport(ctx) {
+  try {
+    return JSON.parse(await readFile(backportFile(ctx), 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * /backport <pr-number> <branch>: copies a merged pull request onto a release branch. Works out its commits
+ * from how it was merged (the merge commit with -m 1, the squashed commit, or the commits it was rebased
+ * as), makes backport/<n>-to-<branch> from <remote>/<branch>, cherry-picks them (-x), pushes the branch and
+ * opens a pull request into <branch>, titled "[<branch>] <title>" with a link to the original. Lists all
+ * that and asks first. A conflict stops it with the usual banner; /continue then carries on (finishBackport).
+ */
+export async function backport(ctx, text) {
+  const host = needHost(ctx);
+  if (!host) return;
+  const args = backportArgs(text);
+  if (args.error) return ctx.note(args.error, 'error');
+  if (args.id == null) return ctx.prefill('/backport ');
+  if (!host.pr) return ctx.note(`Splice can't look up a pull request by its number on ${host.name}.`, 'error');
+  const { id, branch } = args;
+  if (ctx.data.state) return ctx.note(`A ${OP[ctx.data.state]} is in progress. Finish it first (/continue or /abort).`, 'error');
+  const { staged, unstaged, conflicts } = ctx.data.changes;
+  if (staged.length || conflicts.length || unstaged.some((f) => f.code !== '?')) return ctx.note('Commit or stash your changes first: a backport is made on a branch of its own.', 'error');
+  const got = await hostRead(ctx, `Pull request ${id} on ${host.name}`, (signal) => host.pr(id, signal), 'Asking about the pull request');
+  if (!got.ok) return got;
+  const pr = got.value;
+  if (pr.state !== 'merged') return ctx.note(`${pr.label} isn't merged${pr.state === 'closed' ? ': it was closed' : ' yet'}, so there's nothing to backport.`, 'error');
+  if (!pr.mergeCommit) return ctx.note(`${host.name} didn't say which commit merged ${pr.label}.`, 'error');
+  if (branch === pr.target) return ctx.note(`${pr.label} was merged into ${branch} itself.`, 'error');
+  const remote = host.remoteName;
+  const name = backportBranch(pr.id, branch);
+  if (ctx.data.refs.local.some((b) => b.name === name)) return ctx.note(`${name} is there already: /checkout ${name} to carry on with it, or /delete ${name} to start again.`, 'error');
+  const spec = (b) => `+refs/heads/${b}:refs/remotes/${remote}/${b}`;
+  const fetched = await ctx.exec(['fetch', remote, spec(branch), spec(pr.target)], { label: 'Fetching', refresh: false });
+  if (!fetched.ok) return fetched;
+  let how;
+  let picks;
+  try {
+    const parents = (await ctx.git(['rev-list', '--parents', '-n', '1', pr.mergeCommit])).trim().split(' ').slice(1);
+    const n = pr.commits.length;
+    const landed = parents.length === 1 && n > 1 ? parseCommitLines(await ctx.git(['log', '--first-parent', `-n${n}`, '--format=%H%x1f%s', pr.mergeCommit])).reverse() : [];
+    const plan = backportPicks({ mergeCommit: pr.mergeCommit, parents, commits: pr.commits, landed });
+    how = plan;
+    picks = parseCommitLines(await ctx.git(['log', '--no-walk=unsorted', '--format=%H%x1f%s', ...plan.picks]));
+  } catch (e) {
+    return ctx.note(`${short(pr.mergeCommit)}, the commit that merged ${pr.label}, isn't here even after fetching ${pr.target}: ${firstLine(e.message)}`, 'error');
+  }
+  ctx.showText(`Backport ${pr.label} to ${branch}`, backportSteps({ pr, branch, name, remote, how: how.how, picks, hostName: host.name }).join('\n'), { markdown: true });
+  const ok = await ctx.confirm({ title: `Backport ${pr.label} to ${branch}?`, detail: 'Listed above: each step in turn, stopping if one fails.', options: YES_NO('Yes, backport it') });
+  ctx.closeOverlay();
+  if (!ok) return;
+  const job = { id: pr.id, label: pr.label, title: pr.title, url: pr.url, branch, name, remote };
+  const made = await ctx.exec(['switch', '--no-track', '-c', name, `${remote}/${branch}`], { label: 'Creating branch' });
+  if (!made.ok) return made;
+  await writeFile(backportFile(ctx), JSON.stringify(job));
+  const picked = await ctx.exec(['cherry-pick', '-x', ...(how.mainline ? ['-m', '1'] : []), ...how.picks], { label: 'Cherry-picking' });
+  if (!picked.ok) {
+    if (ctx.data.state === 'cherry-picking') {
+      ctx.note(`The backport of ${pr.label} stopped while cherry-picking.\nFix it in Changes (2), then /continue picks the rest, pushes ${name} and opens the pull request (/abort stops).`, 'error');
+    } else await rm(backportFile(ctx), { force: true });
+    return picked;
+  }
+  return finishBackport(ctx, job);
+}
+
+// The rest of a backport, once its commits are picked: push the branch, open the pull request.
+async function finishBackport(ctx, job) {
+  await rm(backportFile(ctx), { force: true });
+  const host = needHost(ctx);
+  if (!host) return;
+  const pushed = await ctx.exec(['push', '-u', job.remote, job.name], { label: 'Pushing' });
+  if (!pushed.ok) {
+    ctx.note(`The commits are picked on ${job.name}. Push it (P), then open the pull request: /pr ${backportTitle(job.branch, job.title)} --into ${job.branch}`, 'error');
+    return pushed;
+  }
+  const title = backportTitle(job.branch, job.title);
+  const r = await hostTask(ctx, `${cliName(host)} create "${title}"`, (signal) => host.create({ title, body: backportBody(job, job.branch), source: job.name, target: job.branch }, signal), {
+    label: 'Opening pull request',
+    refresh: false,
+  });
+  if (r.ok) {
+    ctx.prsChanged();
+    ctx.note(`Backported ${job.label} to ${job.branch}.`, 'ok');
+  }
+  return r;
+}
+
+/**
+ * /changelog [since-tag] [--into-release <tag>]: Claude writes release notes, grouped into features, fixes
+ * and the rest, from the commits since a tag (by default the latest one HEAD has) and the pull requests
+ * merged since, where the host can list those by when they were merged. They open in the viewer, where y
+ * copies them. With --into-release, they're the notes of the release /release then makes for that tag
+ * (the commits up to it, from the tag before it).
+ */
+export async function changelog(ctx, text) {
+  if (!needClaude(ctx)) return;
+  const args = changelogArgs(text);
+  if (args.error) return ctx.note(args.error, 'error');
+  const { release } = args;
+  const host = ctx.host();
+  if (release) {
+    if (!needHost(ctx)) return;
+    if (!host.createRelease) return ctx.note(`${host.name} has no releases made from tags, so there's no release to put the notes in. /changelog alone writes them.`, 'error');
+    if (!ctx.data.refs.tags.some((t) => t.name === release)) return ctx.note(`No tag called ${release}. t on a commit in the graph makes one.`, 'error');
+  }
+  const until = release ?? 'HEAD';
+  let since = args.since;
+  if (since && !(await ctx.git(['rev-parse', '--verify', '--quiet', `${since}^{commit}`]).then(() => true, () => false))) return ctx.note(`No tag or commit called ${since}.`, 'error');
+  since ??= (await ctx.git(['describe', '--tags', '--abbrev=0', release ? `${release}^` : 'HEAD']).catch(() => '')).trim() || null;
+  const log = await ctx.git(['log', '--no-merges', '-n', '500', '--format=%h%x1f%s%x1f%b%x1e', since ? `${since}..${until}` : until, '--']).catch(() => '');
+  if (!changelogCount(log)) return ctx.note(`There are no commits ${since ? `since ${since}` : 'yet'}${release ? ` up to ${release}` : ''}, so there's nothing to write notes about.`, 'error');
+  const upTo = release ?? ctx.data.status.branch.head ?? 'HEAD';
+  // The pull requests merged into what's released: the default branch for a tag, else the branch you're on.
+  const into = release ? defaultBranch(ctx.data.refs, ctx.data.remotes)?.name : ctx.data.status.branch.head;
+  const r = await askClaude(ctx, `release notes ${since ? `since ${since}` : 'from the start'}`, changelogPrompt(since, upTo), async (signal) => {
+    let prs = null;
+    if (host?.mergedSince && since) {
+      const from = (await ctx.git(['log', '-1', '--format=%cI', since, '--'])).trim();
+      prs = await host.mergedSince(from, signal).catch((e) => {
+        if (e.cancelled) throw e;
+        return null;
+      });
+      if (prs && into) prs = prs.filter((p) => p.target === into);
+    }
+    return changelogInput({ since, until: upTo, log, prs });
+  });
+  if (!r.ok) return r;
+  const notes = r.out.trim();
+  ctx.showText(`Release notes${release ? ` for ${release}` : ''}${since ? `, since ${since}` : ''}`, notes, { markdown: true, copy: { text: notes, what: 'the release notes' } });
+  if (!release) return r;
+  const file = join(ctx.data.gitDir, 'splice-release-notes.md');
+  try {
+    await writeFile(file, `${notes}\n`);
+  } catch (e) {
+    return ctx.note(`Couldn't write ${file}: ${firstLine(e.message)}`, 'error');
+  }
+  return createRelease(ctx, `${release} --notes-file "${file}"`);
 }
 
 /** H on a file, or /history <path>: the commits that touched it, following renames. Works for deleted files too. */

@@ -49,7 +49,7 @@ const HINTS = {
   changes: 'space stage · ↵ hunks/lines · a all · u unstage all · d discard · i ignore · s stash file · v select files · c commit · A amend · M message in your editor · F fix up · H history · B blame · W Claude writes it · S splits it · R review · on a submodule: I init/update · o open',
   branches: '↵ checkout · n new · m merge · e rebase · d delete · D diff vs default · o open PR · C clean up · U upstream · M remotes · on a tag: u push · R release',
   stash: '↵ diff · s stash · S with a message · a apply · o pop · x drop · F files, to restore one',
-  prs: '↵ diff · c checkout · a approve · m merge · s checks · A reviewers · D draft/ready · E title · B description · C comment · o open in browser · n new PR · W Claude drafts one · e/R explain/review',
+  prs: '↵ diff · c checkout · w review in a worktree · a approve · m merge · s checks · A reviewers · D draft/ready · E title · B description · C comment · o open in browser · n new PR · W Claude drafts one · e/R explain/review',
   repos: '↵ open · F fetch them all · s scan folder · x forget',
   worktrees: '↵ open · n new · x remove or prune · C clean up',
 };
@@ -412,6 +412,8 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
       return ctx.hostCache.host;
     },
     prsChanged: () => setPrVersion((v) => v + 1),
+    // Whether a command is running (the spinner): what the PR list's poll checks before asking anything.
+    isBusy: () => Boolean(busyRef.current),
     // What the PR list's poll found on your own pull requests (prList.js): checks finished, a new review.
     prNews: (news) => {
       for (const n of news) {

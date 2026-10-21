@@ -641,20 +641,32 @@ export function bodyArgs(text) {
   return { text: s.replace(/\\n/g, '\n') };
 }
 
-/** Reads "/release <tag> [--draft] [title]": the title is the rest, kept as typed. */
+/**
+ * Reads "/release <tag> [--draft] [--notes-file <path>] [title]": the title is the rest, kept as typed. The
+ * path may be in double quotes; `notesFile` is there only when given.
+ */
 export function releaseArgs(text) {
   let draft = false;
-  const rest = (text ?? '').replace(/(^|\s)--draft(?=\s|$)/g, (_, space) => {
-    draft = true;
-    return space;
-  });
+  let notesFile = null;
+  const rest = (text ?? '')
+    .replace(/(^|\s)--notes-file\s+(?:"([^"]*)"|(\S+))/g, (_, space, quoted, bare) => {
+      notesFile = quoted ?? bare;
+      return space;
+    })
+    .replace(/(^|\s)--draft(?=\s|$)/g, (_, space) => {
+      draft = true;
+      return space;
+    });
   const m = /^\s*(\S+)\s*([\s\S]*)$/.exec(rest);
-  return { tag: m ? m[1] : null, title: m ? m[2].replace(/\s+/g, ' ').trim() : '', draft };
+  return { tag: m ? m[1] : null, title: m ? m[2].replace(/\s+/g, ' ').trim() : '', draft, ...(notesFile ? { notesFile } : {}) };
 }
 
-/** `gh release create` arguments: only for a tag the server already has, with notes GitHub writes. */
-export function githubReleaseArgs(repo, { tag, title, draft }) {
-  return ['release', 'create', tag, '-R', repo, '--verify-tag', '--generate-notes', ...(title ? ['--title', title] : []), ...(draft ? ['--draft'] : [])];
+/**
+ * `gh release create` arguments: only for a tag the server already has, with notes GitHub writes, or with
+ * `notes` given (sent on stdin: --notes-file -).
+ */
+export function githubReleaseArgs(repo, { tag, title, draft, notes }) {
+  return ['release', 'create', tag, '-R', repo, '--verify-tag', ...(notes != null ? ['--notes-file', '-'] : ['--generate-notes']), ...(title ? ['--title', title] : []), ...(draft ? ['--draft'] : [])];
 }
 
 /** `gh pr merge` arguments. --auto merges once the required checks and reviews pass. */
@@ -670,6 +682,84 @@ export function azureMergeArgs(pr, { method, deleteBranch, auto }) {
     '--squash', method === 'squash' ? 'true' : 'false',
     '--delete-source-branch', deleteBranch ? 'true' : 'false',
   ];
+}
+
+// One pull request by its number, whatever its state, with what /ship, /review-pr and /backport need:
+// `state` ('open', 'merged' or 'closed'), `mergeCommit` (the commit on the target that merged it: a merge
+// commit, the squashed one, or the last of the rebased ones) and its own `commits` ({ hash, subject }, oldest first).
+
+const GH_STATE = { OPEN: 'open', MERGED: 'merged', CLOSED: 'closed' };
+
+/** A GitHub PR from `gh pr view --json` (with state, mergeCommit and commits), in Splice's shape plus those. */
+export function githubPrFull(p) {
+  return {
+    ...githubPr(p, ''),
+    state: GH_STATE[p.state] ?? lower(p.state),
+    mergeCommit: p.mergeCommit?.oid ?? null,
+    mergedAt: p.mergedAt ?? null,
+    fork: Boolean(p.isCrossRepository),
+    commits: (p.commits ?? []).map((c) => ({ hash: c.oid, subject: c.messageHeadline ?? '' })),
+  };
+}
+
+const AZ_STATE = { active: 'open', completed: 'merged', abandoned: 'closed' };
+
+/** An Azure DevOps PR (`az repos pr show`) and its commits (pullRequestCommits, newest first), in githubPrFull's shape. */
+export function azurePrFull(p, commits, remote) {
+  return {
+    ...azurePr(p, '', remote),
+    state: AZ_STATE[p.status] ?? lower(p.status),
+    mergeCommit: p.status === 'completed' ? (p.lastMergeCommit?.commitId ?? null) : null,
+    mergedAt: p.status === 'completed' ? (p.closedDate ?? null) : null,
+    fork: Boolean(p.forkSource),
+    commits: [...(commits ?? [])].reverse().map((c) => ({ hash: c.commitId, subject: firstLineOf(c.comment) })),
+  };
+}
+
+const GL_STATE = { opened: 'open', merged: 'merged', closed: 'closed', locked: 'closed' };
+
+/**
+ * A GitLab merge request (REST) and its commits (newest first), in githubPrFull's shape. GitLab names the
+ * merge commit, or else the squashed one; a fast-forward merge leaves the branch's own head on the target.
+ */
+export function gitlabPrFull(mr, commits, remote) {
+  const merged = mr.state === 'merged';
+  return {
+    ...gitlabPr(mr, '', remote),
+    state: GL_STATE[mr.state] ?? lower(mr.state),
+    mergeCommit: merged ? (mr.merge_commit_sha ?? mr.squash_commit_sha ?? mr.sha ?? null) : null,
+    mergedAt: mr.merged_at ?? null,
+    fork: mr.source_project_id != null && mr.source_project_id !== mr.target_project_id,
+    commits: [...(commits ?? [])].reverse().map((c) => ({ hash: c.id, subject: c.title ?? firstLineOf(c.message) })),
+  };
+}
+
+const firstLineOf = (s) => String(s ?? '').split('\n')[0];
+
+/**
+ * Where a pull request's head is on the host's remote, to fetch it from: GitHub keeps every PR's (forks'
+ * too) at refs/pull/<n>/head, GitLab at refs/merge-requests/<iid>/head; Azure DevOps keeps only the merge
+ * it would make, so there it's the source branch.
+ */
+export function prHeadRef(kind, pr) {
+  if (kind === 'github') return `refs/pull/${pr.id}/head`;
+  if (kind === 'gitlab') return `refs/merge-requests/${pr.id}/head`;
+  return `refs/heads/${pr.source}`;
+}
+
+/** The number in a pull request's link, as the hosts' create answers with it (…/pull/12, …/merge_requests/12, …/pullrequest/12). */
+export function prIdFromUrl(url) {
+  const m = /\/(?:pull|pulls|merge_requests|pullrequest)\/(\d+)\/?(?:[?#].*)?$/.exec(String(url ?? '').trim());
+  return m ? Number(m[1]) : null;
+}
+
+/** A merged pull request, for release notes: { id, label, title, url, author, target, mergedAt }. */
+const mergedEntry = (pr, mergedAt) => ({ id: pr.id, label: pr.label, title: pr.title, url: pr.url, author: pr.author, target: pr.target, mergedAt });
+
+/** The ones merged at `since` (an ISO date) or after, newest first. */
+export function mergedAfter(list, since) {
+  const from = Date.parse(since);
+  return list.filter((p) => p.mergedAt && !(Date.parse(p.mergedAt) < from)).sort((a, b) => Date.parse(b.mergedAt) - Date.parse(a.mergedAt));
 }
 
 /** Your review requests first, then your own PRs, then the rest; newest first within each. */
@@ -771,12 +861,25 @@ function github(root, remote) {
       ]);
       return sortPrs(list.map((p) => githubPr(p, login)));
     },
-    // The latest merged PRs, for /cleanup. A fork's branch names aren't this repository's.
+    // The latest merged PRs, for /cleanup. A fork's branch names aren't this repository's (`fork`).
     async merged(signal) {
       const list = await json(gh(['pr', 'list', ...repoArg, '--state', 'merged', '--limit', '200', '--json',
         'number,title,headRefName,headRefOid,baseRefName,isCrossRepository,url,updatedAt'], { signal }));
-      return list.filter((p) => !p.isCrossRepository).map((p) => githubPr(p, ''));
+      return list.map((p) => ({ ...githubPr(p, ''), fork: Boolean(p.isCrossRepository) }));
     },
+    // One PR by number, in any state, with its merge commit and its own commits.
+    async pr(id, signal) {
+      return githubPrFull(await json(gh(['pr', 'view', String(id), ...repoArg, '--json',
+        'number,title,author,headRefName,baseRefName,headRefOid,isDraft,url,updatedAt,body,state,mergeCommit,mergedAt,commits,isCrossRepository'], { signal })));
+    },
+    // The PRs merged since a date, for release notes: GitHub's search goes by merge time.
+    async mergedSince(since, signal) {
+      const day = new Date(since).toISOString().replace(/\.\d+Z$/, 'Z');
+      const list = await json(gh(['pr', 'list', ...repoArg, '--state', 'merged', '--search', `merged:>=${day}`, '--limit', '200', '--json',
+        'number,title,author,url,baseRefName,headRefName,mergedAt,updatedAt'], { signal }));
+      return mergedAfter(list.map((p) => mergedEntry(githubPr(p, ''), p.mergedAt)), since);
+    },
+    headRef: (pr) => prHeadRef('github', pr),
     async detail(pr) {
       const d = await json(gh(['pr', 'view', String(pr.id), ...repoArg, '--json', 'comments,latestReviews,reviewRequests,statusCheckRollup,mergeable']));
       const voted = (d.latestReviews ?? []).map((r) => ({
@@ -834,7 +937,7 @@ function github(root, remote) {
     releaseDrafts: true,
     releaseNotesBy: 'GitHub writes the notes from what was merged since the last release.',
     async createRelease(opts, signal) {
-      return (await gh(githubReleaseArgs(`${remote.owner}/${remote.repo}`, opts), { signal })).trim().split('\n').at(-1);
+      return (await gh(githubReleaseArgs(`${remote.owner}/${remote.repo}`, opts), { signal, input: opts.notes ?? undefined })).trim().split('\n').at(-1);
     },
     addReviewers: (pr, names, signal) => gh(['pr', 'edit', String(pr.id), ...repoArg, '--add-reviewer', names.join(',')], { signal }),
     setDraft: (pr, draft, signal) => gh(['pr', 'ready', String(pr.id), ...repoArg, ...(draft ? ['--undo'] : [])], { signal }),
@@ -884,11 +987,28 @@ function azure(root, remote, remoteName) {
       ]);
       return sortPrs(list.map((p) => azurePr(p, user, remote)));
     },
-    // The latest completed (merged) PRs, for /cleanup. A fork's branch names aren't this repository's.
+    // The latest completed (merged) PRs, for /cleanup. A fork's branch names aren't this repository's (`fork`).
     async merged(signal) {
       const list = await json(az(['repos', 'pr', 'list', '--project', remote.project, '--repository', remote.repo, '--status', 'completed', '--top', '200'], { signal }));
-      return list.filter((p) => !p.forkSource).map((p) => azurePr(p, '', remote));
+      return list.map((p) => ({ ...azurePr(p, '', remote), fork: Boolean(p.forkSource) }));
     },
+    async pr(id, signal) {
+      const [p, commits] = await Promise.all([
+        json(az(['repos', 'pr', 'show', '--id', String(id)], { signal })),
+        json(az(['devops', 'invoke', '--area', 'git', '--resource', 'pullRequestCommits', '--api-version', '7.0', '--route-parameters',
+          `project=${remote.project}`, `repositoryId=${remote.repo}`, `pullRequestId=${id}`], { signal })).catch((e) => {
+          if (e.cancelled) throw e;
+          return { value: [] };
+        }),
+      ]);
+      return azurePrFull(p, commits.value, remote);
+    },
+    // The CLI can't ask for a date, so the latest completed ones are read and the older ones left out.
+    async mergedSince(since, signal) {
+      const list = await json(az(['repos', 'pr', 'list', '--project', remote.project, '--repository', remote.repo, '--status', 'completed', '--top', '200'], { signal }));
+      return mergedAfter(list.map((p) => mergedEntry(azurePr(p, '', remote), p.closedDate)), since);
+    },
+    headRef: (pr) => prHeadRef('azure', pr),
     async detail(pr) {
       const [threads, policies] = await Promise.all([
         json(az(threadsRoute(pr))).catch(() => ({ value: [] })),
@@ -1029,12 +1149,25 @@ function gitlab(root, remote, remoteName) {
       const [user, list] = await Promise.all([whoami().catch(() => ''), openMrs()]);
       return sortPrs(list.map((m) => gitlabPr(m, user, remote)));
     },
-    // The latest merged merge requests, for /cleanup. A fork's branch names aren't this project's.
+    // The latest merged merge requests, for /cleanup. A fork's branch names aren't this project's (`fork`).
     async merged(signal) {
       const page = (n) => read(`${project}/merge_requests?state=merged&order_by=updated_at&per_page=100&page=${n}`, { signal });
       const list = (await Promise.all([page(1), page(2)])).flat();
-      return list.filter((m) => m.source_project_id == null || m.source_project_id === m.target_project_id).map((m) => gitlabPr(m, '', remote));
+      return list.map((m) => ({ ...gitlabPr(m, '', remote), fork: m.source_project_id != null && m.source_project_id !== m.target_project_id }));
     },
+    async pr(id, signal) {
+      const [m, commits] = await Promise.all([read(mr({ id }), { signal }), readAll(mr({ id }, '/commits?per_page=100'), { signal }).catch((e) => {
+        if (e.cancelled) throw e;
+        return [];
+      })]);
+      return gitlabPrFull(m, commits, remote);
+    },
+    // merged_after needs GitLab 15.11 or later; the dates are checked here too, for older ones that ignore it.
+    async mergedSince(since, signal) {
+      const list = await readAll(`${project}/merge_requests?state=merged&merged_after=${encodeURIComponent(new Date(since).toISOString())}&per_page=100`, { signal });
+      return mergedAfter(list.map((m) => mergedEntry(gitlabPr(m, '', remote), m.merged_at)), since);
+    },
+    headRef: (pr) => prHeadRef('gitlab', pr),
     async detail(pr) {
       const [notes, jobs] = await Promise.all([readAll(mr(pr, '/notes?sort=asc&order_by=created_at&per_page=100')).catch(() => []), checks(pr).catch(() => [])]);
       return { reviewers: pr.reviewers, checks: jobs, comments: gitlabComments(notes), conflicts: pr.conflicts };
@@ -1080,10 +1213,14 @@ function gitlab(root, remote, remoteName) {
     },
     releaseDrafts: false, // GitLab has no draft releases
     releaseNotesBy: 'The notes list the commits since the tag before it.',
-    async createRelease({ tag, title }, signal) {
-      const since = (await git(root, ['describe', '--tags', '--abbrev=0', `${tag}^`]).catch(() => '')).trim();
-      const log = await git(root, ['log', '--no-merges', '--format=%s', '-n', '200', since ? `${since}..${tag}` : tag]);
-      const description = gitlabReleaseNotes(log.split('\n'), since);
+    // The notes given (/changelog's), or else the subjects of the commits since the tag before.
+    async createRelease({ tag, title, notes }, signal) {
+      let description = notes;
+      if (description == null) {
+        const since = (await git(root, ['describe', '--tags', '--abbrev=0', `${tag}^`]).catch(() => '')).trim();
+        const log = await git(root, ['log', '--no-merges', '--format=%s', '-n', '200', since ? `${since}..${tag}` : tag]);
+        description = gitlabReleaseNotes(log.split('\n'), since);
+      }
       const made = JSON.parse(await send('POST', `${project}/releases`, { tag_name: tag, name: title || tag, description }, signal));
       return made?._links?.self ?? `${remote.url}/-/releases/${encodeURIComponent(tag)}`;
     },
