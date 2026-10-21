@@ -137,13 +137,16 @@ test('the PR list poll says when the checks of your pull request finish, and whe
     [pr({ checks: { passed: 1, failed: 0, pending: 1 } })],
     [pr({ checks: { passed: 2, failed: 0, pending: 0 }, reviews: [{ by: 'bo', state: 'APPROVED', at: '2026-10-21T10:00:00Z' }] })],
   ];
+  // The host answers with the list as it stands, which changes only when the test says so: a refetch of
+  // its own (the poll's, when a minute turns over) then finds nothing new, as it would for real.
   let calls = 0;
+  let now = 0;
   const host = {
     kind: 'github',
     name: 'GitHub',
     signIn: 'gh auth login',
     remoteName: 'origin',
-    list: async () => lists[Math.min(calls++, lists.length - 1)].map((p) => ({ ...p, source: 'bump', target: 'main', draft: false, url: 'https://example.invalid/7', time: 0, review: { text: 'Approved', tone: 'good' }, reviewers: [], description: '' })),
+    list: async () => (calls++, lists[now]).map((p) => ({ ...p, source: 'bump', target: 'main', draft: false, url: 'https://example.invalid/7', time: 0, review: { text: 'Approved', tone: 'good' }, reviewers: [], description: '' })),
     detail: async () => ({ reviewers: [], checks: [], comments: [], conflicts: false }),
   };
   const app = start({ notify: (title, body) => told.push([title, body]), makeHost: () => host });
@@ -151,11 +154,13 @@ test('the PR list poll says when the checks of your pull request finish, and whe
   try {
     await until(() => frame().includes('First commit'), 'the graph');
     app.stdin.write('6');
-    await until(() => /❯.*Bump b/.test(frame()) && calls === 1, 'the PR');
+    await until(() => /❯.*Bump b/.test(frame()) && calls >= 1, 'the PR');
     assert.deepEqual(told, [], 'the first list has nothing to compare with');
-    // r fetches the list again, as the minute's poll does.
+    // The checks finish and a review lands; r fetches the list again, as the minute's poll does.
+    now = 1;
+    const before = calls;
     app.stdin.write('r');
-    await until(() => told.length === 2, 'the news');
+    await until(() => calls > before && told.length === 2, 'the news');
     assert.deepEqual(told, [
       ['Splice: #7 Bump b', 'All 2 checks passed'],
       ['Splice: #7 Bump b', 'bo approved it'],
