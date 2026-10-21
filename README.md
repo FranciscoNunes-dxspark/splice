@@ -70,7 +70,7 @@ Press `?` inside for every shortcut: the sections down the left, opening on the 
 | Stash | `↵` diff · `s` stash · `S` stash with a message · `a` apply · `o` pop · `x` drop · `F` its files, to restore one (`↵`) or see its diff (`d`) |
 | PRs | `↵` diff, with its review comments (`t`/`T` from one to the next, `r` reply) · `c` check out · `a` approve · `m` merge · `C` comment · `o` open in the browser · `n` new PR from the current branch · `W` Claude drafts one · `e` / `R` Claude explains / reviews it |
 | Reflog (`/reflog`) | `↵` the commit's diff · `X` reset the current branch to it · `c` check it out |
-| Repos | `↵` open · `s` add a folder to scan · `x` forget |
+| Repos | `↵` open · `F` fetch them all · `s` add a folder to scan · `x` forget |
 | Viewer (diffs, output, help, Claude's answers) | `j`/`k` scroll · `space` page · `n`/`N` next or previous hunk · `/` search: matches show as you type, `↵` keeps the search, then `n`/`N` go from match to match · `esc` clears the search, then closes |
 
 The mouse works too: click a tab, a row or the prompt, double-click a row to do what `↵` does, and scroll the list or pane under the pointer with the wheel. In Changes, clicking a `+` or `-` line puts the cursor in the diff, ready to stage that hunk with `space`. Drag to select text as you would in the terminal: it's copied when you let go (to the system clipboard, or through the terminal over SSH), and stays highlighted until the next key or click. With the mouse turned off in the settings, the terminal does its own selecting again. On Windows the downloaded Splice handles the mouse itself; run from a checkout, it needs Node 22.17 or later.
@@ -155,6 +155,10 @@ The Worktrees view (`4`) lists the main working tree and every worktree added to
 - **Branches on the remote** go when their pull request was merged and nobody has pushed to them since. Never the default branch, or one that an open pull request comes from or goes into. One already deleted on the server just has its remote-tracking branch removed.
 
 Worktrees are removed first with a plain `git worktree remove`, then branches deleted with `git branch -d`; `-D` is used only for branches it refuses because they aren't merged into the one you're on, which were already checked against the remotes, the default branch and the pull requests. Branches on the remote go last, with `git push --delete`. Something that fails is reported and the rest carries on. Without `gh` or `az` signed in, the list says the pull requests couldn't be asked about, and a squash-merged branch whose remote branch was deleted isn't caught, since its commits are on neither a remote branch nor the default branch: delete it yourself (`d`). Only the last 200 merged pull requests are looked at. Fetch first (`f`) so Splice knows which remote branches are gone.
+
+### Repositories
+
+The Repos view (`7`) lists the repositories you've opened and the ones found in the folders you scan (`s`, or `/scan <folder>`), each with its branch, how far it is ahead (`↑`) of and behind (`↓`) its upstream, and how many changed files it has (`●`; `✓` when there's nothing to say). `F` fetches them all, four at a time, with the count so far in the panel's title and `fetching…` on the rows under way; then each row shows where it stands against what's on its remotes now. A repository that can't be fetched (its remote is gone, or it needs a sign-in Splice can't ask for) says why on its row, and the rest carry on. Esc stops it; what's fetched by then stays fetched.
 
 ### Running git directly
 

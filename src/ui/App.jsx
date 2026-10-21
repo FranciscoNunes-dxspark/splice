@@ -50,7 +50,7 @@ const HINTS = {
   branches: '↵ checkout · n new · m merge · e rebase · d delete · D diff vs default · o open PR · C clean up · U upstream · M remotes · on a tag: u push · R release',
   stash: '↵ diff · s stash · S with a message · a apply · o pop · x drop · F files, to restore one',
   prs: '↵ diff · c checkout · a approve · m merge · s checks · A reviewers · D draft/ready · E title · B description · C comment · o open in browser · n new PR · W Claude drafts one · e/R explain/review',
-  repos: '↵ open · s scan folder · x forget',
+  repos: '↵ open · F fetch them all · s scan folder · x forget',
   worktrees: '↵ open · n new · x remove or prune · C clean up',
 };
 
@@ -151,6 +151,10 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
   const [entries, setEntries] = useState([]);
   const [busy, setBusy] = useState(null);
   const [repos, setRepos] = useState([]);
+  const reposRef = useRef(repos);
+  reposRef.current = repos;
+  // F in Repos: how many of the listed repositories have been fetched so far, while it runs.
+  const [fetchProgress, setFetchProgress] = useState(null);
   const [filter, setFilter] = useState(null);
   const [welcome, setWelcome] = useState(true);
   const [update, setUpdate] = useState(null);
@@ -345,7 +349,11 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
     const list = paths.map((p) => ({ path: p, name: basename(p) }))
       .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }) || a.path.localeCompare(b.path));
     // The summaries from last time stay up while new ones come in: git status takes up to a second in a big repo.
-    setRepos((cur) => list.map((r) => ({ ...r, summary: cur.find((x) => samePath(x.path, r.path))?.summary })));
+    // So does what the last F said about each one's fetch.
+    setRepos((cur) => list.map((r) => {
+      const was = cur.find((x) => samePath(x.path, r.path));
+      return { ...r, summary: was?.summary, fetch: was?.fetch };
+    }));
     if (!summaries) return;
     eachLimited(list, 4, (r) => summarize(r.path), (r, summary) =>
       setRepos((cur) => cur.map((x) => (x.path === r.path ? { ...x, summary } : x))),
@@ -383,7 +391,7 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
   };
 
   const ctxRef = useRef(null);
-  if (!ctxRef.current) ctxRef.current = { get data() { return dataRef.current; }, get config() { return configRef.current; }, mouseHandlers: [] };
+  if (!ctxRef.current) ctxRef.current = { get data() { return dataRef.current; }, get config() { return configRef.current; }, get repos() { return reposRef.current; }, mouseHandlers: [] };
   const ctx = ctxRef.current;
   Object.assign(ctx, {
     exec,
@@ -481,6 +489,13 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
       // Added from the folders list in /settings: show it there.
       a.redrawSettings(ctx);
     },
+    // A Repos row's fetch (F): { state: 'fetching' | 'done' | 'failed', error }, and its summary after it.
+    // `path` null clears every row's.
+    setRepoFetch: (path, fetch, summary) =>
+      setRepos((cur) =>
+        cur.map((x) => (path === null ? { ...x, fetch: undefined } : samePath(x.path, path) ? { ...x, fetch, ...(summary ? { summary } : {}) } : x)),
+      ),
+    setFetchProgress,
     forgetRepo: (path) => {
       setConfig((c) => ({ ...c, recent: c.recent.filter((r) => !samePath(r, path)) }));
       refreshRepos();
@@ -858,7 +873,7 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
   } else if (overlay) {
     main = <TextViewer {...overlay} ctx={ctx} width={W} height={mainH} active={focus === 'view' && !confirmReq} onClose={ctx.closeOverlay} />;
   } else if (view === 'repos') {
-    main = <ReposView repos={repos} roots={[...config.roots, ...extraRoots.current]} current={data?.root} ctx={ctx} width={W} height={mainH} active={viewActive} />;
+    main = <ReposView repos={repos} roots={[...config.roots, ...extraRoots.current]} current={data?.root} progress={fetchProgress} ctx={ctx} width={W} height={mainH} active={viewActive} />;
   } else if (!data) {
     main = (
       <Panel title={VIEWS.find((v) => v.id === view).label} width={W} height={mainH}>

@@ -23,6 +23,7 @@ import {
   planSummary,
   prepare,
 } from './rebase.js';
+import { eachLimited, fetchRepo } from './repos.js';
 import { settingRows, settingSegments } from './settings.js';
 import { SIGNING_KEYS, checkGpgKey, explainSigning, needsPinentryCheck, signingConfig } from './signing.js';
 import { fit } from './text.js';
@@ -69,6 +70,49 @@ function afterConflicts(ctx) {
 export function fetch(ctx, args = []) {
   if (!needRepo(ctx)) return;
   return ctx.exec(['fetch', ...(args.length ? args : ['--all', '--prune'])], { label: 'Fetching' });
+}
+
+/**
+ * F in Repos: fetches every listed repository, four at a time, then each row shows how far it is ahead
+ * and behind its upstream. A repository that can't be fetched says why on its row, and the rest carry
+ * on; esc stops the lot (what's fetched stays fetched).
+ */
+export function fetchRepos(ctx) {
+  const list = ctx.repos;
+  if (!list.length) return ctx.note('No repositories listed yet: /scan <folder> adds a folder of them.', 'error');
+  const total = list.length;
+  const plural = (n) => `${n} repositor${n === 1 ? 'y' : 'ies'}`;
+  return ctx.task(
+    `Fetch ${plural(total)}`,
+    async (signal) => {
+      ctx.setRepoFetch(null);
+      let done = 0;
+      const failed = [];
+      ctx.setFetchProgress({ done, total });
+      await eachLimited(
+        list,
+        4,
+        async (r) => {
+          if (signal.aborted) return null;
+          ctx.setRepoFetch(r.path, { state: 'fetching' });
+          return fetchRepo(r.path, signal).catch(() => null);
+        },
+        (r, res) => {
+          // Not fetched (cancelled): the row goes back to how it was.
+          if (!res) return ctx.setRepoFetch(r.path, undefined);
+          done++;
+          if (res.error) failed.push(`${r.name}: ${res.error}`);
+          ctx.setRepoFetch(r.path, res.error ? { state: 'failed', error: res.error } : { state: 'done' }, res.summary);
+          ctx.setFetchProgress({ done, total });
+        },
+      );
+      ctx.setFetchProgress(null);
+      if (signal.aborted) throw Object.assign(new Error(`Cancelled after fetching ${done} of ${total}`), { cancelled: true });
+      const head = failed.length ? `Fetched ${done - failed.length} of ${plural(total)}; ${failed.length} couldn't be:` : `Fetched ${plural(total)}`;
+      return { stdout: [head, ...failed].join('\n'), stderr: '' };
+    },
+    { label: 'Fetching repositories' },
+  ).finally(() => ctx.setFetchProgress(null));
 }
 
 export function pull(ctx, args = []) {
