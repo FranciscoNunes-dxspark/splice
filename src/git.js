@@ -39,26 +39,12 @@ function failure(stdout, stderr, fallback, code) {
  */
 export function run(cwd, args, { signal, input, env, tree = false } = {}) {
   const all = ['-c', 'core.quotepath=false', '-c', 'color.ui=false', ...args];
-  const fullEnv = env ? { ...ENV, ...env } : ENV;
-  if (tree) return runTree(cwd, all, { signal, input, env: fullEnv });
-  return new Promise((resolve, reject) => {
-    const child = execFile(
-      'git',
-      all,
-      { cwd, env: fullEnv, maxBuffer: 256 * 1024 * 1024, windowsHide: true, detached: DETACH, signal, encoding: 'utf8' },
-      (err, stdout, stderr) => {
-        if (!err) return resolve({ stdout, stderr });
-        if (err.name === 'AbortError') return reject(new GitError('Cancelled', { cancelled: true }));
-        reject(failure(stdout, stderr, err.message, err.code));
-      },
-    );
-    if (input != null) child.stdin.end(input);
-  });
+  return spawnGit(cwd, all, { signal, input, env: env ? { ...ENV, ...env } : ENV, tree });
 }
 
-// spawn rather than execFile, which doesn't pass `detached` on: started detached, git leads a process
-// group of its own, which what it runs is in too, so cancelling can stop the lot.
-function runTree(cwd, args, { signal, input, env }) {
+// spawn rather than execFile, which doesn't pass `detached` on. Started detached, git also leads a
+// process group of its own, which what it runs is in too, so with `tree` cancelling can stop the lot.
+function spawnGit(cwd, args, { signal, input, env, tree }) {
   return new Promise((resolve, reject) => {
     const child = spawn('git', args, { cwd, env, windowsHide: true, detached: DETACH });
     const out = [];
@@ -68,7 +54,8 @@ function runTree(cwd, args, { signal, input, env }) {
     let stopped = false;
     const stop = () => {
       stopped = true;
-      if (process.platform === 'win32') execFile('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true }, () => {});
+      if (!tree) child.kill();
+      else if (process.platform === 'win32') execFile('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true }, () => {});
       else {
         try {
           process.kill(-child.pid, 'SIGTERM');
@@ -91,8 +78,9 @@ function runTree(cwd, args, { signal, input, env }) {
       if (code === 0) return resolve({ stdout, stderr });
       reject(failure(stdout, stderr, `git exited with ${code}`, code));
     });
+    // Nothing waits on stdin: git gets the input, or an end of it at once.
     child.stdin.on('error', () => {});
-    if (input != null) child.stdin.end(input);
+    child.stdin.end(input ?? undefined);
   });
 }
 
