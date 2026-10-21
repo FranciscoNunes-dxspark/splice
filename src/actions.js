@@ -7,6 +7,7 @@ import { READ_ONLY, blameInput, blamePrompt, clip, commitPrompt, lookPrompt, par
 import { cleanupChoice, cleanupCount, cleanupOptions, cleanupText, planCleanup, readCleanup } from './cleanup.js';
 import { configFile } from './config.js';
 import { droppedPaths, insideRepo } from './drop.js';
+import { ignoreChoices, withIgnoreLine } from './ignore.js';
 import { matchLineEndings, parseConflicts, takeSide, unifiedDiff } from './conflict.js';
 import { blamePicker, historyPicker, lineLogArgs, linesRange, repoPath } from './history.js';
 import { commentChar, messageFileText, readMessage } from './message.js';
@@ -36,6 +37,7 @@ import {
   describeUndo,
   dropDiscard,
   forgetCapture,
+  lastRewrite,
   parseReflog,
   planUndo,
   readDiscards,
@@ -522,8 +524,16 @@ export async function rebase(ctx, ref) {
     options: YES_NO('Yes, rebase'),
   });
   if (!ok) return;
-  await ctx.exec(['rebase', ref], { label: 'Rebasing' });
+  const was = ctx.data.status.branch.oid;
+  const r = await ctx.exec(['rebase', ref], { label: 'Rebasing' });
+  if (r.ok && !ctx.data.state) afterRewrite(ctx, was);
   afterConflicts(ctx);
+}
+
+// Once a rebase has rewritten the branch (moved it from `was`), say how to see what it did to each commit.
+function afterRewrite(ctx, was = null) {
+  if (was && ctx.data.status.branch.oid === was) return;
+  ctx.note(`${currentName(ctx)} is rewritten. /range-diff shows what changed in each commit.`);
 }
 
 const OP = { merging: 'merge', rebasing: 'rebase', 'cherry-picking': 'cherry-pick', reverting: 'revert', bisecting: 'bisect' };
@@ -535,8 +545,11 @@ export async function continueOp(ctx) {
   if (state === 'bisecting') return ctx.note('A bisect goes on as you mark commits: B on one in the graph, or /bisect good, bad or skip.', 'error');
   if (ctx.data.changes.conflicts.length) return ctx.note('Some files still have conflicts. Resolve and stage them first.', 'error');
   // A merge is finished by committing it; the others have --continue.
-  await ctx.exec(state === 'merging' ? ['commit', '--no-edit'] : [OP[state], '--continue'], { label: 'Continuing' });
-  if (!ctx.data.state) await cleanup(ctx.data.gitDir);
+  const r = await ctx.exec(state === 'merging' ? ['commit', '--no-edit'] : [OP[state], '--continue'], { label: 'Continuing' });
+  if (!ctx.data.state) {
+    await cleanup(ctx.data.gitDir);
+    if (r.ok && state === 'rebasing') afterRewrite(ctx);
+  }
   afterConflicts(ctx);
 }
 
@@ -565,6 +578,8 @@ export async function bisectMark(ctx, c) {
   const { state } = ctx.data;
   if (state && state !== 'bisecting') return ctx.note(`A ${OP[state]} is in progress. Finish it first (/continue or /abort).`, 'error');
   const on = state === 'bisecting';
+  // With a good and a bad commit marked, git can test the rest itself.
+  const marks = on ? await bisectMarks(ctx) : {};
   const how = await ctx.confirm({
     title: on ? `Mark ${short(c.hash)} as` : `Find the commit that brought in a problem: is ${short(c.hash)} bad or good?`,
     detail: on ? c.subject : 'Then mark one of the other kind, and git checks out commits in between for you to try, halving the range each time.',
@@ -572,10 +587,51 @@ export async function bisectMark(ctx, c) {
       { label: 'Bad: it has the problem', value: 'bad' },
       { label: 'Good: from before the problem', value: 'good' },
       ...(on ? [{ label: "Skip: can't tell (it doesn't build, say)", value: 'skip' }] : []),
+      ...(marks.good && marks.bad ? [{ label: 'Run a command on each commit to test it for me (/bisect run)', value: 'run' }] : []),
       { label: 'Cancel', value: null },
     ],
   });
+  if (how === 'run') return ctx.prefill('/bisect run ');
   if (how) await bisect(ctx, how, c.hash);
+}
+
+/** Whether the bisect in progress has a bad commit and a good one marked. */
+async function bisectMarks(ctx) {
+  const refs = (await ctx.git(['for-each-ref', '--format=%(refname)', 'refs/bisect/']).catch(() => '')).split('\n');
+  return { bad: refs.includes('refs/bisect/bad'), good: refs.some((r) => r.startsWith('refs/bisect/good')) };
+}
+
+// The end of a bisect: the cursor goes to the commit, and the activity line names it.
+async function foundIt(ctx, hash) {
+  const subject = (await ctx.git(['log', '-1', '--format=%s', hash]).catch(() => '')).trim();
+  ctx.showInGraph(hash);
+  ctx.note(`Found it: ${short(hash)} is the first bad commit${subject ? `, "${subject}"` : ''}.\nThe cursor is on it in the graph (↵ shows its diff). /abort ends the bisect and goes back to where you were.`);
+}
+
+/**
+ * /bisect run <command…>: once a bad and a good commit are marked, git tests the rest itself, running the
+ * command on each commit it checks out. Its exit code says how that went: 0 good, 125 skip (can't be
+ * tested), any other up to 127 bad; 128 or more stops the run. The words go to git as they are, and git
+ * runs them in its own shell (sh, Git Bash's on Windows) at the top of the repository. esc stops it,
+ * leaving the bisect where it got to.
+ */
+export async function bisectRun(ctx, words) {
+  if (!needRepo(ctx)) return;
+  if (ctx.data.state !== 'bisecting') {
+    return ctx.note('Start a bisect first: B on a commit in the graph marks it bad or good. With one of each, /bisect run <command> tests the rest.', 'error');
+  }
+  if (!words.length) return ctx.prefill('/bisect run ');
+  const marks = await bisectMarks(ctx);
+  if (!marks.bad || !marks.good) return ctx.note(`Mark a ${marks.bad ? 'good' : 'bad'} commit too (B in the graph), so git knows which commits to test.`, 'error');
+  const shown = words.map((w) => (/[\s"]/.test(w) || w === '' ? JSON.stringify(w) : w)).join(' ');
+  // stdin closed, so a command that reads it doesn't wait for ever.
+  const r = await ctx.exec(['bisect', 'run', ...words], { label: 'Testing each commit', input: '', tree: true });
+  if (r.error?.cancelled) {
+    return ctx.note('Stopped the bisect run. The bisect stays where it got to, with what was tested so far marked:\n/bisect run again, B on the commit checked out to go on by hand, or /abort to stop.');
+  }
+  ctx.showText(`git bisect run ${shown}`, r.ok ? r.out : r.error.message);
+  const found = r.ok && firstBadCommit(r.out);
+  if (found) await foundIt(ctx, found);
 }
 
 /** /bisect good|bad|skip [ref] (HEAD if none), and /bisect reset: what B does, from the prompt. */
@@ -595,7 +651,7 @@ export async function bisect(ctx, how, ref) {
   }
   const r = await ctx.exec(['bisect', how, ...(ref ? [ref] : [])], { label: 'Bisecting' });
   const found = r.ok && firstBadCommit(r.out);
-  if (found) ctx.note(`Found it: ${short(found)} is the first bad commit (↵ on it shows its diff). /abort ends the bisect and goes back to where you were.`);
+  if (found) await foundIt(ctx, found);
 }
 
 /**
@@ -647,6 +703,56 @@ export function stashFiles(ctx, list) {
  * (stash -p asks), so the stash is made by hand: its base and index are the index as it is, its working tree
  * the index plus the picked lines. Applying or popping it later brings back just those lines.
  */
+/**
+ * i on an untracked file in Changes: asks what to ignore (the file, its folder, every file with its
+ * extension, or the file in its own folder's .gitignore) and adds that line. A tracked file can't be
+ * ignored that way; it says how to stop tracking it.
+ */
+export async function ignoreFile(ctx, f) {
+  if (!needRepo(ctx)) return;
+  if (f.kind !== 'untracked') {
+    const path = /[\s"']/.test(f.path) ? JSON.stringify(f.path) : f.path;
+    return ctx.note(
+      `${f.path} is tracked, and .gitignore only keeps untracked files out.\nTo stop tracking it but keep the file: !rm --cached ${path}, then i on it here, and commit both.`,
+      'error',
+    );
+  }
+  const choice = await ctx.confirm({
+    title: `Ignore ${f.path}?`,
+    detail: 'Adds a line to the .gitignore, which shows here as a change to commit.',
+    options: [...ignoreChoices(f.path).map((c) => ({ label: c.label, value: c })), { label: 'Cancel', value: null }],
+  });
+  if (choice) return addIgnore(ctx, choice.file, choice.pattern);
+}
+
+/** /ignore <pattern>: adds it to the repository's .gitignore as typed. */
+export function ignore(ctx, text) {
+  if (!needRepo(ctx)) return;
+  const pattern = (text ?? '').trim();
+  if (!pattern) return ctx.prefill('/ignore ');
+  return addIgnore(ctx, '.gitignore', pattern);
+}
+
+// Adds `pattern` to `file` (a .gitignore, relative to the root, made if missing) in its own line endings.
+async function addIgnore(ctx, file, pattern) {
+  const path = join(ctx.data.root, ...file.split('/'));
+  let text = '';
+  try {
+    text = await readFile(path, 'utf8');
+  } catch (e) {
+    if (e.code !== 'ENOENT') return ctx.note(`Couldn't read ${file}: ${firstLine(e.message)}`, 'error');
+  }
+  const next = withIgnoreLine(text, pattern);
+  if (!next.added) return ctx.note(`${file} has ${pattern} already.`, 'error');
+  try {
+    await writeFile(path, next.text);
+  } catch (e) {
+    return ctx.note(`Couldn't write ${file}: ${firstLine(e.message)}`, 'error');
+  }
+  await ctx.reload();
+  ctx.note(`Added ${pattern} to ${file}${text ? '' : ', a new file'}.\nCommit ${file} as well (it's in Changes), so the repository keeps ignoring it.`);
+}
+
 export async function stashLines(ctx, f, diffText, picks) {
   if (!needRepo(ctx)) return;
   if (f.area !== 'unstaged' || f.kind === 'untracked') {
@@ -971,6 +1077,72 @@ export async function cherryPick(ctx, c) {
   afterConflicts(ctx);
 }
 
+/**
+ * C on commits selected in the graph (V), and /cherry-pick <a>..<b>: copies them onto the current branch,
+ * `list` oldest first, in one git cherry-pick, so /continue after a conflict goes on with the rest. Merge
+ * commits are refused: git would need telling which side of each to keep, so C takes those one at a time.
+ */
+export async function cherryPickMany(ctx, list) {
+  if (!needRepo(ctx)) return;
+  if (!list.length) return ctx.note('No commits to cherry-pick.', 'error');
+  if (list.length === 1) return cherryPick(ctx, list[0]);
+  const { state } = ctx.data;
+  if (state) return ctx.note(`A ${OP[state]} is in progress. Finish it first (/continue or /abort).`, 'error');
+  const merges = list.filter((c) => c.parents.length > 1);
+  if (merges.length) {
+    const one = merges.length === 1;
+    return ctx.note(
+      `${merges.map((c) => short(c.hash)).join(', ')} ${one ? 'is a merge commit' : 'are merge commits'}, which can't be picked along with others: git would need telling which side of each to keep.\nLeave ${one ? 'it' : 'them'} out of the selection, or cherry-pick ${one ? 'it' : 'each'} on its own with C (which keeps the side it was merged into).`,
+      'error',
+    );
+  }
+  // Commits the branch has already would come out empty, and stop the pick.
+  const onto = currentName(ctx);
+  const out = await ctx.git(['rev-list', ...list.map((c) => c.hash), '--not', 'HEAD']).catch(() => null);
+  const outside = out == null ? null : new Set(out.split('\n').filter(Boolean));
+  const picks = outside ? list.filter((c) => outside.has(c.hash)) : list;
+  const had = list.filter((c) => !picks.includes(c));
+  if (!picks.length) return ctx.note(`${onto} has ${list.length === 2 ? 'both' : 'all'} of them already.`, 'error');
+  const line = (c) => `${short(c.hash)}  ${c.subject}`;
+  const text = [...picks.map(line), ...(had.length ? ['', `Left out, as ${onto} has them already:`, ...had.map(line)] : [])].join('\n');
+  // The list goes in the viewer, so the question stays short however many there are.
+  ctx.showText(`Cherry-pick onto ${onto}, oldest first`, text);
+  const ok = await ctx.confirm({
+    title: `Cherry-pick ${picks.length === 1 ? 'this commit' : `these ${picks.length} commits`} onto ${onto}, oldest first?`,
+    detail: 'Listed above. If one stops on a conflict, fix it in Changes, then /continue goes on with the rest (or /abort).',
+    options: YES_NO('Yes, cherry-pick'),
+  });
+  ctx.closeOverlay();
+  if (!ok) return;
+  await ctx.exec(['cherry-pick', ...picks.map((c) => c.hash)], { label: 'Cherry-picking' });
+  afterConflicts(ctx);
+}
+
+/** /cherry-pick <ref>: one commit, as C does it; /cherry-pick <a>..<b>: the commits in a..b, oldest first. */
+export async function cherryPickRefs(ctx, text) {
+  if (!needRepo(ctx)) return;
+  const spec = (text ?? '').trim();
+  if (!spec) return ctx.prefill('/cherry-pick ');
+  if (spec.includes('...')) return ctx.note('Give a range as a..b: the commits b has that a doesn\'t.', 'error');
+  if (!spec.includes('..')) {
+    let c;
+    try {
+      [c] = parseCommitList(await ctx.git(['log', '-1', '--no-walk', `--format=${COMMIT_LIST_FORMAT}`, spec, '--']));
+    } catch {
+      // Not a commit; said below.
+    }
+    return c ? cherryPick(ctx, c) : ctx.note(`No commit called ${spec}.`, 'error');
+  }
+  let list;
+  try {
+    list = parseCommitList(await ctx.git(['log', '--reverse', '--topo-order', `--format=${COMMIT_LIST_FORMAT}`, spec, '--']));
+  } catch (e) {
+    return ctx.note(`Couldn't list ${spec}: ${firstLine(e.message)}`, 'error');
+  }
+  if (!list.length) return ctx.note(`There are no commits in ${spec}.`, 'error');
+  return cherryPickMany(ctx, list);
+}
+
 export async function revert(ctx, c) {
   const ok = await ctx.confirm({
     title: `Revert ${short(c.hash)}?`,
@@ -1258,9 +1430,12 @@ export async function runRebase(ctx, base, rows) {
   if (!ok) return false;
   const { env } = await prepare(ctx.data.gitDir, rows);
   ctx.closeOverlay();
-  await ctx.exec(['rebase', '-i', base ?? '--root'], { label: 'Rebasing', env });
-  if (!ctx.data.state) await cleanup(ctx.data.gitDir);
-  else if (ctx.data.changes.conflicts.length) afterConflicts(ctx);
+  const was = branch.oid;
+  const r = await ctx.exec(['rebase', '-i', base ?? '--root'], { label: 'Rebasing', env });
+  if (!ctx.data.state) {
+    await cleanup(ctx.data.gitDir);
+    if (r.ok) afterRewrite(ctx, was);
+  } else if (ctx.data.changes.conflicts.length) afterConflicts(ctx);
   else ctx.note('Stopped for editing. Change what you need, amend (A in Changes), then /continue.');
   return true;
 }
@@ -1365,6 +1540,7 @@ async function fixupInto(ctx, target, { stageAll }) {
   if (!fold) return ctx.note(later);
   // GIT_EDITOR is already `true`; this also beats a sequence.editor in the user's config. The todo is taken as autosquash ordered it.
   const r = await ctx.exec(foldArgs(target, { autostash }), { label: 'Folding the fixup in', env: { GIT_SEQUENCE_EDITOR: 'true' } });
+  if (r.ok && !ctx.data.state) afterRewrite(ctx);
   if (ctx.data.state) {
     if (ctx.data.changes.conflicts.length) afterConflicts(ctx);
     else ctx.note('The rebase stopped. /continue carries on, /abort puts everything back.', 'error');
@@ -2289,6 +2465,42 @@ async function restoreDiscard(ctx, root, gitDir, d) {
 }
 
 /** /reflog: everywhere HEAD has been, in a picker. ↵ shows the commit, X resets the branch to it, c checks it out. */
+const REWRITE_NAMES = { rebase: 'rebase', pull: 'rebase', amend: 'amend' };
+
+/**
+ * /range-diff [branch]: what the branch's last rewrite (a rebase, an amend, a reset) did to each of its
+ * commits: git range-diff between the branch before it (found in the branch's reflog) and now. A rebase's
+ * reflog entry says what it went onto, so commits it rebased over don't show as new. /range-diff <a> <b>
+ * compares any two versions (a...b); a range, or <base> <a> <b>, goes to git as it is.
+ */
+export async function rangeDiff(ctx, text) {
+  if (!needRepo(ctx)) return;
+  const args = splitArgs(text ?? '');
+  if (args.length > 3) return ctx.note('Use /range-diff [branch], /range-diff <a> <b>, or /range-diff <base> <a> <b>.', 'error');
+  if (args.length > 1 || args[0]?.includes('..')) {
+    const spec = args.length === 2 ? [`${args[0]}...${args[1]}`] : args;
+    return showRangeDiff(ctx, `git range-diff ${spec.join(' ')}`, spec);
+  }
+  const name = args[0] ?? ctx.data.status.branch.head;
+  if (!name) return ctx.note('HEAD is detached, so there is no branch to look back on. Name one (/range-diff <branch>), or two versions: /range-diff <a> <b>.', 'error');
+  if (!ctx.data.refs.local.some((b) => b.name === name)) return ctx.note(`${name} isn't a local branch. To compare two versions: /range-diff <a> <b>.`, 'error');
+  const log = await readReflog(ctx, `refs/heads/${name}`, 300);
+  const rewrite = lastRewrite(log);
+  const before = rewrite && log[rewrite.index + 1];
+  if (!before) return ctx.note(`${name}'s reflog has no rebase, amend or reset to look back across. /range-diff <a> <b> compares two versions.`, 'error');
+  let spec = [`${before.hash}...${name}`];
+  if (rewrite.onto) {
+    const base = (await ctx.git(['merge-base', before.hash, rewrite.onto]).catch(() => '')).trim();
+    if (base) spec = [`${base}..${before.hash}`, `${rewrite.onto}..${name}`];
+  }
+  const what = REWRITE_NAMES[rewrite.entry.kind] ?? 'reset';
+  return showRangeDiff(ctx, `${name} before its last ${what} (${name}@{${rewrite.index + 1}}) and now`, spec);
+}
+
+function showRangeDiff(ctx, title, spec) {
+  ctx.showAsync(title, async () => (await ctx.git(['range-diff', ...spec])) || 'Nothing to compare: neither side has commits of its own.', { rangeDiff: true });
+}
+
 export function showReflog(ctx) {
   if (!needRepo(ctx)) return;
   const done = (r) => r?.ok && ctx.closeOverlay();

@@ -8,7 +8,7 @@ import { theme } from '../theme.js';
 import { clean } from '../text.js';
 import { useMouse } from './hooks.js';
 import { Panel, Row } from './parts.jsx';
-import { diffSegments } from './diffstyle.js';
+import { RANGE_COMMIT, diffSegments, rangeDiffSegments } from './diffstyle.js';
 
 /**
  * Full-height scrollable text: diffs, command output, help, Claude's answers (`markdown`: formatted and
@@ -16,9 +16,10 @@ import { diffSegments } from './diffstyle.js';
  * diff (`pr`) comes with its review `threads`, drawn under the lines they're about: t/T go from one to
  * the next, r replies to the one picked (or the first on screen) through /reply, x resolves it or opens
  * it again. That diff has a line cursor, which j/k move rather than scroll: c comments on its line
- * through /review-comment, and moving into a thread's box picks that thread.
+ * through /review-comment, and moving into a thread's box picks that thread. `rangeDiff`: git
+ * range-diff's output, coloured as such, n/N going from commit to commit.
  */
-export function TextViewer({ title, text, loading, diff, markdown, threads, pr, ctx, width, height, active, onClose }) {
+export function TextViewer({ title, text, loading, diff, rangeDiff, markdown, threads, pr, ctx, width, height, active, onClose }) {
   const [threadId, setThreadId] = useState(null);
   const lineCursor = Boolean(pr) && !markdown;
   const { lines, starts, rows } = useMemo(() => {
@@ -172,7 +173,7 @@ export function TextViewer({ title, text, loading, diff, markdown, threads, pr, 
         show(input === 'n' ? Math.max(after, 0) : ((after >= 0 ? after : n) - 1 + n) % n, list);
       } else if (input === 'n' || input === 'N') {
         // Jump to the next (or previous) hunk or file.
-        const isMark = (l) => typeof l === 'string' && (l.startsWith('@@') || l.startsWith('diff --git'));
+        const isMark = (l) => typeof l === 'string' && (rangeDiff ? RANGE_COMMIT.test(l) : l.startsWith('@@') || l.startsWith('diff --git'));
         const from = lineCursor ? cur() : offset;
         if (input === 'n') {
           const i = lines.findIndex((l, j) => j > from && isMark(l));
@@ -192,7 +193,7 @@ export function TextViewer({ title, text, loading, diff, markdown, threads, pr, 
 
   const find = matcher(search.query);
   const segmentsOf = (l, idx) => {
-    const segs = typeof l !== 'string' ? l : diff ? diffSegments(l, words.get(idx)) : [{ text: l }];
+    const segs = typeof l !== 'string' ? l : rangeDiff ? rangeDiffSegments(l) : diff ? diffSegments(l, words.get(idx)) : [{ text: l }];
     if (!find) return segs;
     const hereLine = here >= 0 && matches[here] === idx;
     return markRanges(segs, find(lineText(segs)), { bg: hereLine ? theme.matchHere : theme.match, color: theme.ink });

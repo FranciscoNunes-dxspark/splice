@@ -111,6 +111,7 @@ test('F picks an older commit, commits the fixup and folds it in, keeping other 
     assert.equal(g('status', '--porcelain'), 'M Gamma.txt');
     assert.equal(readFileSync(join(dir, 'Gamma.txt'), 'utf8'), 'Gamma\nwork in progress\n');
     await until(() => !frame().includes('REBASING'), 'no rebase left in progress', 30000);
+    await until(() => frame().includes('main is rewritten. /range-diff shows'), 'the hint about /range-diff');
   } finally {
     app.unmount();
   }

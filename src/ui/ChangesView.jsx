@@ -172,6 +172,7 @@ export function ChangesView({ data, ctx, width, height, active }) {
     if (input === 'H') return a.fileHistory(ctx, f.orig ?? f.path);
     if (input === 'B') return a.blame(ctx, f.path);
     if (input === 's') return a.stashFile(ctx, f);
+    if (input === 'i') return a.ignoreFile(ctx, f);
     if (input === 'O' && f.area === 'conflict') return a.resolveWith(ctx, f, 'ours');
     if (input === 'T' && f.area === 'conflict') return a.resolveWith(ctx, f, 'theirs');
     if (input === 'C' && f.area === 'conflict') return a.claudeResolve(ctx, f);
@@ -261,7 +262,9 @@ export function ChangesView({ data, ctx, width, height, active }) {
     ? `${selectedFiles().length} selected · s stash`
     : f?.area === 'conflict'
       ? 'space resolved · O ours · T theirs · C Claude'
-      : 'space stage/unstage';
+      : f?.kind === 'untracked'
+        ? 'space stage · i ignore'
+        : 'space stage/unstage';
 
   return (
     <Box width={width} height={height}>

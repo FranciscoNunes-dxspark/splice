@@ -12,6 +12,8 @@ export const COMMANDS = [
   { name: 'delete', args: '<branch|tag>', desc: 'Delete a branch (local or remote) or a tag', complete: 'refs', run: (ctx, s) => a.deleteRef(ctx, s) },
   { name: 'cleanup', desc: 'Delete branches and remove worktrees with nothing of yours on them, and merged PRs\' branches on the remote (asks first)', run: (ctx) => a.cleanUp(ctx) },
   { name: 'merge', args: '<ref>', desc: 'Merge a ref into the current branch', complete: 'refs', run: (ctx, s) => a.merge(ctx, s) },
+  { name: 'cherry-pick', args: '<ref | a..b>', desc: 'Copy a commit onto the current branch, or the commits in a..b, oldest first (asks first)', complete: 'refs', run: (ctx, s) => a.cherryPickRefs(ctx, s) },
+  { name: 'range-diff', args: '[branch | <a> <b>]', desc: "What the branch's last rebase, amend or reset changed in each commit (the current branch if none given); or compare two versions", complete: 'refs', run: (ctx, s) => a.rangeDiff(ctx, s) },
   { name: 'rebase', args: '[-i] <ref>', desc: 'Rebase the current branch onto a ref (-i: edit the commits after it)', complete: 'refs', run: (ctx, s) => a.rebase(ctx, s) },
   { name: 'compare', args: '<ref> [base]', desc: 'Full diff of what a branch adds to the default branch (or to base)', complete: 'refs', run: (ctx, s) => a.compare(ctx, s) },
   { name: 'fetch', args: '[remote]', desc: 'Fetch all remotes and prune deleted branches', run: (ctx, s) => a.fetch(ctx, splitArgs(s)) },
@@ -21,6 +23,7 @@ export const COMMANDS = [
   { name: 'upstream', args: '[branch] <remote/branch>', desc: 'Set the branch a local branch tracks (--unset to stop)', complete: 'refs', run: (ctx, s) => a.upstream(ctx, s) },
   { name: 'stash', args: '[-u | --no-untracked] [message]', desc: 'Stash all changes (untracked files too, unless set off in /settings), with an optional message', run: (ctx, s) => a.stash(ctx, s) },
   { name: 'submodule-update', args: '[path]', desc: 'Initialise and check out the recorded commit of every submodule, or one', run: (ctx, s) => a.updateSubmodules(ctx, s) },
+  { name: 'ignore', args: '<pattern>', desc: "Add a pattern to the repository's .gitignore (i on an untracked file in Changes offers some)", run: (ctx, s) => a.ignore(ctx, s) },
   { name: 'discard', desc: 'Discard all uncommitted changes (asks first)', run: (ctx) => a.discardAll(ctx) },
   { name: 'undo', desc: 'Undo the last commit, amend, merge, rebase, reset, switch or discard (asks first)', run: (ctx) => a.undo(ctx) },
   { name: 'reflog', desc: 'Where HEAD has been: see, reset to or check out any earlier position', run: (ctx) => a.showReflog(ctx) },
@@ -58,11 +61,11 @@ export const COMMANDS = [
   },
   {
     name: 'bisect',
-    args: '<good|bad|skip|reset> [ref]',
-    desc: 'Find the commit that brought in a problem: mark commits good or bad (HEAD if no ref), reset to stop',
+    args: '<good|bad|skip|reset|run> [ref | command…]',
+    desc: 'Find the commit that brought in a problem: mark commits good or bad (HEAD if no ref), run a command that tests each (exit 0 good, 125 skip, else bad), reset to stop',
     run: (ctx, s) => {
-      const [how, ref] = splitArgs(s);
-      return a.bisect(ctx, how, ref);
+      const [how, ...rest] = splitArgs(s);
+      return how === 'run' ? a.bisectRun(ctx, rest) : a.bisect(ctx, how, rest[0]);
     },
   },
   { name: 'continue', desc: 'Continue the merge, rebase, cherry-pick or revert', run: (ctx) => a.continueOp(ctx) },

@@ -45,8 +45,8 @@ const VIEWS = [
 const HELP_SECTIONS = [...HELP, commandsSection(COMMANDS)];
 
 const HINTS = {
-  graph: '↵ diff · c checkout · b branch · m merge · i rebase from here · C cherry-pick · v revert · X reset · B bisect · e/R Claude explains/reviews',
-  changes: 'space stage · ↵ hunks/lines · a all · u unstage all · d discard · s stash file · v select files · c commit · A amend · M message in your editor · F fix up · H history · B blame · W Claude writes it · S splits it · R review · on a submodule: I init/update · o open',
+  graph: '↵ diff · c checkout · b branch · m merge · i rebase from here · C cherry-pick · V select several · v revert · X reset · B bisect · e/R Claude explains/reviews',
+  changes: 'space stage · ↵ hunks/lines · a all · u unstage all · d discard · i ignore · s stash file · v select files · c commit · A amend · M message in your editor · F fix up · H history · B blame · W Claude writes it · S splits it · R review · on a submodule: I init/update · o open',
   branches: '↵ checkout · n new · m merge · e rebase · d delete · D diff vs default · o open PR · C clean up · U upstream · M remotes · on a tag: u push · R release',
   stash: '↵ diff · s stash · S with a message · a apply · o pop · x drop · F files, to restore one',
   prs: '↵ diff · c checkout · a approve · m merge · s checks · A reviewers · D draft/ready · E title · B description · C comment · o open in browser · n new PR · W Claude drafts one · e/R explain/review',
@@ -165,6 +165,8 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
     return () => clearTimeout(t);
   }, [entries]);
   const [prVersion, setPrVersion] = useState(0);
+  // Counts ctx.showInGraph calls, so the graph looks for the commit asked for (ctx.pendingJump).
+  const [jump, setJump] = useState(0);
   // A word in the bottom line for a moment ("Copied 3 lines"), where it moves nothing on screen.
   const [flash, setFlash] = useState(null);
   useEffect(() => {
@@ -305,14 +307,15 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
     }
   };
 
-  const exec = (args, { anywhere = false, input, env, ...opts } = {}) => {
+  // `tree`: esc stops what git runs as well (git bisect run's command), not git alone.
+  const exec = (args, { anywhere = false, input, env, tree, ...opts } = {}) => {
     const repo = repoRef.current;
     if (!repo && !anywhere) {
       note('Open a repository first.', 'error');
       return Promise.resolve({ ok: false, error: new Error('no repository') });
     }
     const title = `git ${args.map(showArg).join(' ')}`;
-    return task(title, (signal) => run(repo?.root ?? process.cwd(), args, { signal, input, env }), { label: 'Running git', ...opts });
+    return task(title, (signal) => run(repo?.root ?? process.cwd(), args, { signal, input, env, tree }), { label: 'Running git', ...opts });
   };
 
   const confirm = (req) =>
@@ -475,6 +478,11 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
       reload({ graphLimit: d.graphLimit + 400 }).finally(() => (loadingMore.current = false));
     },
     // The graph's filter: text matches the loaded commits; { mode: 'S' | 'G', query, rows } holds a history search's results.
+    // Puts the graph's cursor on a commit (the first bad one a bisect found), now or when the graph is next on screen.
+    showInGraph: (hash) => {
+      ctx.pendingJump = { hash, root: repoRef.current?.root };
+      setJump((n) => n + 1);
+    },
     find: (f) => {
       setFilter(typeof f === 'string' ? (f.trim() ? { mode: 'text', query: f.trim() } : null) : f);
       setView('graph');
@@ -894,7 +902,7 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
     );
   } else {
     const View = { graph: GraphView, changes: ChangesView, branches: BranchesView, stash: StashView, prs: PrView, worktrees: WorktreesView }[view];
-    main = <View data={data} ctx={ctx} width={W} height={mainH} active={viewActive} filter={filter} prVersion={prVersion} />;
+    main = <View data={data} ctx={ctx} width={W} height={mainH} active={viewActive} filter={filter} prVersion={prVersion} jump={jump} />;
   }
 
   const left = flash

@@ -266,3 +266,18 @@ export async function untrackedInTheWay(root, d) {
   const names = (await git(root, ['ls-tree', '-r', '-z', '--name-only', d.untracked])).split('\0').filter(Boolean);
   return names.filter((n) => existsSync(join(root, n)));
 }
+
+/**
+ * Where a branch's reflog (parseReflog, newest first) last had its commits rewritten: a rebase or a
+ * pull --rebase finishing, an amend, a reset (an undo's or redo's too). Returns { index, entry, onto }
+ * (`onto`: the commit a rebase put the branch on, from the entry's message), or null. The branch as it
+ * was before is the entry after it, <branch>@{index + 1}.
+ */
+export function lastRewrite(entries) {
+  const index = entries.findIndex(
+    (e) => ((e.kind === 'rebase' || e.kind === 'pull') && e.phase === 'finish') || ['amend', 'reset', 'undo', 'redo'].includes(e.kind),
+  );
+  if (index < 0) return null;
+  const entry = entries[index];
+  return { index, entry, onto: entry.message.match(/ onto ([0-9a-f]{40})$/)?.[1] ?? null };
+}
