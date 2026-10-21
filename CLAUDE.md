@@ -20,6 +20,8 @@ node scripts/shared-check.js ../trawl [--diff]                 # drift in the fi
 
 `bin/splice.js` sets `NODE_ENV=production` only while it imports React and Ink, which picks React's production build (several times faster to render), then removes it so git hooks don't inherit it. The compiled builds define it in the bundle instead. Tests run React's development build.
 
+`patches/ink+6.8.0.patch` (applied by `patch-package` on `npm install`, so CI and the release builds get it too) keeps Ink's width and tokenize caches from one frame to the next rather than starting each frame empty; the same patch as Trawl's, where it took about 30% off a keystroke. Upgrading Ink means checking `build/output.js` still has `OutputCaches` and remaking the patch (`npx patch-package ink`), or dropping it once Ink does this itself.
+
 `--import ./src/register.js` is required whenever Node loads `.jsx`: it installs a module hook (`src/jsx-hooks.js`) that compiles `.jsx` with esbuild on import. There is no dev build step. CI runs `npm test` on Linux and Windows, so path handling and line endings must work on both (`.gitattributes` forces LF).
 
 Releases are automatic: every push to main (except Markdown-only ones) runs the Release workflow, which publishes the latest release's version with the patch raised, or `package.json`'s version when that's higher (bump it there for minor or major). It sets the version in the runner before building and commits nothing back, so `package.json` on main lags behind the releases. Compiled builds get the version via `process.env.SPLICE_VERSION` (defined by `scripts/build.js`), which also sets `COMPILED`; from a checkout `src/version.js` reads `package.json`, and the update check is skipped.
