@@ -27,16 +27,18 @@ export class GitError extends Error {
 
 /**
  * Runs git in `cwd` and resolves with { stdout, stderr }. Rejects with a GitError carrying git's own message.
- * `input` is written to git's stdin (patches for `git apply -`).
+ * `input` is written to git's stdin (patches for `git apply -`). `codes`: exit codes other than 0 that aren't
+ * failures (merge-tree's 1 for "it would conflict"); the result then carries the `code`.
  */
-export function run(cwd, args, { signal, input, env } = {}) {
+export function run(cwd, args, { signal, input, env, codes = [] } = {}) {
   return new Promise((resolve, reject) => {
     const child = execFile(
       'git',
       ['-c', 'core.quotepath=false', '-c', 'color.ui=false', ...args],
       { cwd, env: env ? { ...ENV, ...env } : ENV, maxBuffer: 256 * 1024 * 1024, windowsHide: true, detached: DETACH, signal, encoding: 'utf8' },
       (err, stdout, stderr) => {
-        if (!err) return resolve({ stdout, stderr });
+        if (!err) return resolve({ stdout, stderr, code: 0 });
+        if (codes.includes(err.code)) return resolve({ stdout, stderr, code: err.code });
         if (err.name === 'AbortError') return reject(new GitError('Cancelled', { cancelled: true }));
         const message = (stderr || stdout || err.message).trim();
         // A commit that couldn't be signed says why, and what to do, before git's own words.

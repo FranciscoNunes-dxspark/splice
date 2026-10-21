@@ -140,6 +140,7 @@ export function describeUndo(plan, { pushed = null, now = Date.now() / 1000 } = 
     reset: `Undo the reset of ${who} (${e.message})?`,
     'cherry-pick': `Undo the cherry-pick of "${e.subject}"?`,
     revert: `Undo the revert "${e.subject}"?`,
+    sync: `Undo the sync of ${who} with its upstream?`,
     undo: 'Redo what was just undone?',
     redo: 'Undo that again?',
   };
@@ -149,7 +150,9 @@ export function describeUndo(plan, { pushed = null, now = Date.now() / 1000 } = 
       : e.kind === 'amend'
         ? `${who} goes back to ${to}, as it was before; what the amend changed goes back to staged.`
         : `${who} goes back to ${to}. Your uncommitted changes stay (git stops rather than overwrite them).`;
-  if (pushed) detail = `It's already on ${pushed}: this only undoes it here, so pushing again would need /push --force. ${detail}`;
+  // A sync only fast-forwarded the branch to what its upstream already had: undoing it leaves the branch behind, nothing to push.
+  if (e.kind === 'sync') detail = `${who} goes back to ${to}, behind its upstream again (/sync or p brings it forward). Your uncommitted changes stay.`;
+  else if (pushed) detail = `It's already on ${pushed}: this only undoes it here, so pushing again would need /push --force. ${detail}`;
   return {
     title: titles[e.kind] ?? `Undo "${e.action}${e.message ? `: ${e.message}` : ''}"?`,
     detail,
