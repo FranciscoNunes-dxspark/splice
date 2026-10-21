@@ -8,7 +8,7 @@ import { samePath, saveConfig, withRecent } from '../config.js';
 import { git, run } from '../git.js';
 import { HELP } from '../help.js';
 import { commandsSection, sectionFor } from '../help-layout.js';
-import { changeDiff, commitPatch, findRepo, loadRepo, snapshot, stashFileDiff, stashPatch } from '../repo.js';
+import { canonical, changeDiff, commitPatch, findRepo, loadRepo, snapshot, stashFileDiff, stashPatch } from '../repo.js';
 import { discover, eachLimited, summarize } from '../repos.js';
 import { BULLET, theme } from '../theme.js';
 import { fitSegments, stringWidth } from '../text.js';
@@ -86,10 +86,13 @@ function Header({ data, width, loading, mood }) {
   } else if (loading) {
     segs.push({ text: '  loading…', color: theme.dim });
   }
-  // The path gives way first, keeping its end (the repo folder) and losing its start.
+  // The path gives way first, keeping its end (the repo folder) and losing its start: the branch, the changes
+  // and a merge or rebase in progress matter more, however long the path (as in a Windows temp folder).
   const full = data ? data.root : '';
-  const pathW = Math.min(stringWidth(full), Math.max(0, width - 60));
-  const path = pathW < full.length ? `…${full.slice(-(pathW - 1))}` : full;
+  const room = width - 1 - segs.reduce((n, s) => n + stringWidth(s.text), 0);
+  const pathW = room >= 12 ? Math.min(stringWidth(full), room) : 0;
+  if (!pathW) return <Row pointer={false} width={width} segments={fitSegments(segs, width)} />;
+  const path = pathW < stringWidth(full) ? `…${full.slice(-(pathW - 1))}` : full;
   return <Row pointer={false} width={width} segments={[...fitSegments(segs, width - pathW - 1), { text: ' ' }, { text: path, color: theme.dim }]} />;
 }
 
@@ -542,9 +545,9 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
     setFetchProgress,
     // A dropped folder that isn't a repository: the Repos view, with the ones inside it (as `splice <folder>`).
     showReposIn: (dir) => {
-      const full = resolve(dir);
+      const full = canonical(resolve(dir));
       extraRoots.current = [...extraRoots.current.filter((r) => !samePath(r, full)), full];
-      note(`${full} isn't a git repository. Repos lists the ones inside it.`);
+      note(`${basename(full)} isn't a git repository. Repos lists the ones inside it.`);
       if (view === 'repos') refreshRepos();
       else setView('repos');
     },
@@ -736,10 +739,11 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
       }
       setLoading(false);
       if (reopened) {
-        note(`Opened ${basename(reopened)}, the repository you had open last (${initialPath} isn't one). Repos lists the others.`);
+        note(`Opened ${basename(reopened)}, the repository you had open last (${basename(resolve(initialPath))} isn't one). Repos lists the others.`);
       } else if (!here) {
         setView('repos');
-        note(`${initialPath} isn't inside a git repository. Pick one below, or /open <path>.`);
+        // By its name: the Repos view's "Scanning" line has the whole path.
+        note(`${basename(resolve(initialPath))} isn't inside a git repository. Pick one below, or /open <path>.`);
       }
       // Opening a repo only needs the paths (for /open completion); the Repos view fills in the rest when shown.
       refreshRepos(here ? [] : [initialPath], { summaries: !here && !reopened });

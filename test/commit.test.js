@@ -128,7 +128,8 @@ test('\\n in /commit, then M and /amend --file write the message to a file to ed
     await until(() => existsSync(commitFile) && frame().includes('splice-commit-message.txt'), 'an empty message file');
     app.stdin.write(KEYS.enter);
     await until(() => frame().includes('The message is empty'), 'the note that the message is empty');
-    assert.match(frame(), /> \/commit --file .*splice-commit-message\.txt/);
+    // The file from the repository's root, short enough to read in the prompt whatever the folder.
+    assert.ok(frame().includes('> /commit --file .git/splice-commit-message.txt '), frame());
     assert.equal(g('rev-list', '--count', 'HEAD'), '3');
   } finally {
     app.unmount();

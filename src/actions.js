@@ -2,7 +2,7 @@
 // `ctx` is the app's handle: data, exec, confirm, note, prefill, and so on (see App.jsx).
 import { existsSync, realpathSync, statSync } from 'node:fs';
 import { readFile, rm, writeFile } from 'node:fs/promises';
-import { basename, join, relative, resolve } from 'node:path';
+import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { READ_ONLY, blameInput, blamePrompt, changelogPrompt, clip, commitPrompt, lookPrompt, parseCommitMessage, parsePrDraft, parseResolution, parseSplit, prPrompt, resolveInput, resolvePrompt, splitInput, splitPrompt } from './claude.js';
 import { absorbFiles, absorbSummary, absorbText, blameMap, blameTargets, groupPatch, lineRanges, planAbsorb } from './absorb.js';
 import { cleanupChoice, cleanupCount, cleanupOptions, cleanupText, planCleanup, readCleanup } from './cleanup.js';
@@ -321,7 +321,7 @@ export async function commit(ctx, text, { amend = false } = {}) {
     }
     if (!readMessage(written, await commentFor(ctx))) {
       ctx.note(`The message is empty, so nothing was ${amend ? 'amended' : 'committed'}.\nWrite one in ${file}, save it, then press enter here.`, 'error');
-      return ctx.prefill(`/${amend ? 'amend' : 'commit'} --file ${file}`);
+      return ctx.prefill(`/${amend ? 'amend' : 'commit'} --file ${promptPath(ctx, file)}`);
     }
   }
   const { staged, unstaged, conflicts } = ctx.data.changes;
@@ -342,12 +342,24 @@ export async function commit(ctx, text, { amend = false } = {}) {
     label: `${signing ? 'Signing and ' : ''}${amend ? 'amending' : 'committing'}`.replace(/^./, (c) => c.toUpperCase()),
   });
   // A message file Splice wrote has done its job.
-  if (r.ok && file && [false, true].some((a) => messagePath(ctx, a) === file)) await rm(file, { force: true });
+  if (r.ok && file && [false, true].some((a) => samePath(messagePath(ctx, a), file))) await rm(file, { force: true });
   return r;
 }
 
 // The files the message for a commit, or an amend, is written to for editing (one each, so neither overwrites the other).
 const messagePath = (ctx, amend) => join(ctx.data.gitDir, amend ? 'splice-amend-message.txt' : 'splice-commit-message.txt');
+
+/**
+ * A file Splice wrote, as it goes in the prompt after --file: from the repository's root (which is where a
+ * relative path typed there starts), as .git/splice-commit-message.txt, so the command stays short enough
+ * to read whatever the folder; the whole path when that's shorter, or on another drive.
+ */
+function promptPath(ctx, file) {
+  const rel = relative(ctx.data.root, file);
+  if (!rel || isAbsolute(rel) || rel.length >= file.length) return file;
+  return rel.split(sep).join('/');
+}
+
 const commentFor = async (ctx) => commentChar(await ctx.git(['config', '--get', 'core.commentChar']).catch(() => ''));
 
 /** What an amended commit will hold: HEAD's changes with the staged ones, from its parent (all files for a first commit). */
@@ -381,7 +393,7 @@ export async function editMessage(ctx, { amend = false, message = '' } = {}) {
     return ctx.note(`Couldn't write ${file}: ${firstLine(e.message)}`, 'error');
   }
   ctx.note(`Wrote the ${amend ? "amended commit's" : 'commit'} message to ${file}\nEdit it in your editor and save, then press enter here to ${amend ? 'amend' : 'commit'}.`);
-  return ctx.prefill(`/${amend ? 'amend' : 'commit'} --file ${file}`);
+  return ctx.prefill(`/${amend ? 'amend' : 'commit'} --file ${promptPath(ctx, file)}`);
 }
 
 /**
@@ -2326,19 +2338,21 @@ export async function prBody(ctx, text) {
     const file = join(ctx.data.gitDir, `splice-pr-${String(pr.id).replace(/[^\w-]/g, '')}.md`);
     await writeFile(file, pr.description ?? '');
     ctx.note(`Wrote ${pr.label}'s description to ${file}\nEdit it in your editor and save, then press enter here to send it.`);
-    return ctx.prefill(`/body --file ${file}`);
+    return ctx.prefill(`/body --file ${promptPath(ctx, file)}`);
   }
   let body = args.text;
+  const file = args.file && resolve(ctx.data.root, args.file);
   if (args.file !== undefined) {
-    if (!args.file) return ctx.prefill('/body --file ');
+    if (!file) return ctx.prefill('/body --file ');
     try {
-      body = (await readFile(args.file, 'utf8')).replace(/\r\n/g, '\n').trimEnd();
+      body = (await readFile(file, 'utf8')).replace(/\r\n/g, '\n').trimEnd();
     } catch (e) {
-      return ctx.note(`Couldn't read ${args.file}: ${firstLine(e.message)}`, 'error');
+      return ctx.note(`Couldn't read ${file}: ${firstLine(e.message)}`, 'error');
     }
   }
   const r = await prEdit(ctx, host, pr, `${pr.label}: new description`, 'Updating the description', (signal) => host.edit(pr, { body }, signal));
-  if (r.ok && args.file?.startsWith(ctx.data.gitDir)) await rm(args.file, { force: true });
+  // A description file Splice wrote has done its job.
+  if (r.ok && file && insideRepo(ctx.data.gitDir, file)) await rm(file, { force: true });
   return r;
 }
 
@@ -3576,7 +3590,8 @@ function scanFolders(ctx, { replace = false, index } = {}) {
       hint: 'x remove · s add a folder',
       empty: 'No folders yet. s adds one (or /scan <folder>).',
       index,
-      items: () => (ctx.config.roots ?? []).map((path) => ({ path, segments: [{ text: path }] })),
+      // The folder's name first, which the row keeps however long the path after it.
+      items: () => (ctx.config.roots ?? []).map((path) => ({ path, segments: [{ text: basename(path) || path, bold: true }, { text: `  ${path}`, color: theme.dim }] })),
       redraw: (at) => scanFolders(ctx, { replace: true, index: at }),
       keys: {
         x: (it) => {

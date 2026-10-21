@@ -60,10 +60,13 @@ const type = async (stdin, text) => {
   }
 };
 
+// Whether the prompt holds `text`: all of it, or its end, when a long path has scrolled the start out of the box.
+const typed = (frame, text) => [...frame.matchAll(/│ > (.*?) *│/g)].some(([, shown]) => shown && text.endsWith(shown));
+
 const command = async (app, text) => {
   app.stdin.write('/');
   await type(app.stdin, text);
-  await until(() => app.lastFrame().includes(`/${text}`), `the typed /${text}`);
+  await until(() => typed(app.lastFrame(), `/${text}`), `the typed /${text}`);
   app.stdin.write('\r');
 };
 

@@ -2,6 +2,7 @@ import { readdir } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { git, run } from './git.js';
 import { parseStatus } from './parse.js';
+import { canonical } from './repo.js';
 
 const SKIP = new Set(['node_modules', 'bin', 'obj', 'dist', 'build', 'vendor', 'packages']);
 
@@ -23,7 +24,9 @@ export async function discover(roots, depth = 2) {
     const dirs = entries.filter((e) => e.isDirectory() && !e.name.startsWith('.') && !SKIP.has(e.name));
     await Promise.all(dirs.map((e) => walk(join(dir, e.name), left - 1)));
   }
-  for (const root of roots) await walk(resolve(root), depth);
+  // From the folder's own name for itself, so a repository found here matches the same one opened
+  // elsewhere (whose root git names that way), whatever form the folder was given in.
+  for (const root of roots) await walk(canonical(resolve(root)), depth);
   return found.sort((a, b) => a.localeCompare(b));
 }
 
@@ -37,11 +40,16 @@ export async function summarize(path) {
   }
 }
 
-/** Why a fetch failed, in a few words for a Repos row: git's first error line, without its "fatal: ". */
+/**
+ * Why a fetch failed, in a few words for a Repos row: git's first error line, without its "fatal: ", and a
+ * folder it names in quotes cut to its last part ('nowhere.git'), which is what still fits in the row.
+ */
 export function fetchError(message) {
   const lines = String(message ?? '').split('\n').map((l) => l.trim()).filter(Boolean);
   const line = lines.find((l) => /^(fatal|error):/i.test(l)) ?? lines[0] ?? 'the fetch failed';
-  return line.replace(/^(fatal|error):\s*/i, '');
+  return line
+    .replace(/^(fatal|error):\s*/i, '')
+    .replace(/'((?:[a-z]:[\\/]|\\\\|\/)[^']*?)[\\/]*'/gi, (all, path) => `'${path.split(/[\\/]/).pop() || path}'`);
 }
 
 /**

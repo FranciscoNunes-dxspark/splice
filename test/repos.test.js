@@ -12,11 +12,15 @@ import { removeTemp } from './temp.js';
 import { fetchError } from '../src/repos.js';
 import { App } from '../src/ui/App.jsx';
 
-test("a fetch's failure in a few words: git's first error line, without fatal:", () => {
+test("a fetch's failure in a few words: git's first error line, without fatal:, a folder it names cut to its last part", () => {
   assert.equal(
     fetchError("fatal: '/x/gone.git' does not appear to be a git repository\nfatal: Could not read from remote repository.\n\nPlease make sure you have the correct access rights"),
-    "'/x/gone.git' does not appear to be a git repository",
+    "'gone.git' does not appear to be a git repository",
   );
+  assert.equal(fetchError("fatal: 'C:\\Users\\RUNNER~1\\AppData\\Local\\Temp\\r\\nowhere.git\\' does not appear to be a git repository"), "'nowhere.git' does not appear to be a git repository");
+  assert.equal(fetchError("fatal: '\\\\server\\share\\repo.git' does not appear to be a git repository"), "'repo.git' does not appear to be a git repository");
+  assert.equal(fetchError("fatal: repository 'https://example.invalid/a/b.git/' not found"), "repository 'https://example.invalid/a/b.git/' not found", 'a URL stays whole');
+  assert.equal(fetchError("fatal: couldn't find remote ref 'main'"), "couldn't find remote ref 'main'");
   assert.equal(fetchError('warning: redirecting\nerror: could not fetch origin'), 'could not fetch origin');
   assert.equal(fetchError(''), 'the fetch failed');
 });

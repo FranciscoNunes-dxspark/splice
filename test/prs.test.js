@@ -179,13 +179,14 @@ test('A asks for reviewers, D makes it a draft, E retitles it and B edits its de
 
     app.stdin.write('B');
     const file = join(dir, '.git', 'splice-pr-7.md');
-    // The prompt scrolls to its end, so a long temp path (Windows) hides the start of the command.
-    await until(() => existsSync(file) && frame().includes('Edit it in your editor') && /splice-pr-7\.md *│/.test(frame()), 'the body file in the prompt');
+    // The file from the repository's root, so a long temp path (Windows) doesn't scroll the command away.
+    await until(() => existsSync(file) && frame().includes('Edit it in your editor') && frame().includes('> /body --file .git/splice-pr-7.md '), 'the body file in the prompt');
     assert.equal(readFileSync(file, 'utf8'), 'Old body');
     writeFileSync(file, 'New body\r\n\r\nWith a second paragraph\r\n');
     app.stdin.write('\r');
     await until(() => calls.length === 4, 'the new description');
     assert.deepEqual(calls[3], ['edit', 7, { body: 'New body\n\nWith a second paragraph' }]);
+    await until(() => !existsSync(file), 'the file removed once sent');
   } finally {
     app.unmount();
   }

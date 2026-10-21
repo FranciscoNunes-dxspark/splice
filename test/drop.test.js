@@ -104,7 +104,7 @@ test('a dropped file of the open repository shows its history; a dropped folder 
 
     // A folder that isn't a repository: the ones inside it.
     app.stdin.write(quote(many));
-    await until(() => frame().includes("isn't a git repository. Repos lists the ones inside it") && frame().includes('three') && frame().includes('two'), 'the repositories inside');
+    await until(() => frame().includes("many repos isn't a git repository. Repos lists the ones inside it") && frame().includes('three') && frame().includes('two'), 'the repositories inside');
 
     // A repository's folder opens it.
     app.stdin.write(quote(join(many, 'two')));

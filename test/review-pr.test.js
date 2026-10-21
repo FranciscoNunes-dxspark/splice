@@ -70,6 +70,9 @@ async function until(check, what, ms = 10000) {
   throw new Error(`Timed out waiting for ${what}. Last frame:\n${lastApp?.lastFrame()}`);
 }
 
+// Whether the prompt holds `text`: all of it, or its end, when a long path has scrolled the start out of the box.
+const typed = (frame, text) => [...frame.matchAll(/│ > (.*?) *│/g)].some(([, shown]) => shown && text.endsWith(shown));
+
 async function command(app, text) {
   app.stdin.write('/');
   await until(() => app.lastFrame().includes('> /'), 'the prompt');
@@ -77,7 +80,7 @@ async function command(app, text) {
     app.stdin.write(ch);
     await new Promise((r) => setTimeout(r, 5));
   }
-  await until(() => app.lastFrame().includes(`> /${text}`), `/${text} typed`);
+  await until(() => typed(app.lastFrame(), `/${text}`), `/${text} typed`);
   app.stdin.write('\r');
 }
 
