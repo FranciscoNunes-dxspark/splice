@@ -712,38 +712,55 @@ async function findDefaultBranch(ctx) {
 
 /**
  * /cleanup: removes the linked worktrees with no uncommitted changes (pruning those whose folder is gone),
- * then deletes the local branches with no commits that exist only here: all on a remote, or merged into
- * the default branch. Lists them first and asks.
+ * then deletes the local branches with no commits that exist only here: all on a remote, merged into
+ * the default branch, or in a pull request that was merged. With a PR host, also the branches on its
+ * remote whose pull request was merged and that haven't moved since. Lists them first and asks.
  */
 export async function cleanUp(ctx) {
   if (!needRepo(ctx)) return;
   const { root, refs, remotes } = ctx.data;
+  const host = ctx.host();
   let plan;
+  let unasked = '';
   const read = await ctx.task(
     'Looking for branches and worktrees to clean up',
-    async () => {
-      const { name, remote } = await findDefaultBranch(ctx);
+    async (signal) => {
+      // The host's merged PRs catch squash merges, which git alone can't see. It's asked while git
+      // reads the rest; when it can't answer, the cleanup goes ahead without it.
+      const look = host?.merged
+        ? Promise.all([host.merged(signal), host.list()]).then(
+            ([merged, open]) => ({ remoteName: host.remoteName, merged, open }),
+            (e) => {
+              if (e.cancelled) throw e;
+              unasked = `${host.name} couldn't be asked about merged pull requests: ${firstLine(e.message)}`;
+              return null;
+            },
+          )
+        : null;
+      const [{ name, remote }, server] = await Promise.all([findDefaultBranch(ctx), look]);
       const mergedRefs = name ? [name, remote && `${remote}/${name}`].filter((r) => refs.local.some((b) => b.name === r) || refs.remote.some((b) => b.name === r)) : [];
-      plan = planCleanup(await readCleanup(root, { defaultBranch: name, mergedRefs, hasRemotes: remotes.length > 0 }));
+      plan = planCleanup(await readCleanup(root, { defaultBranch: name, mergedRefs, hasRemotes: remotes.length > 0, server }));
       return { stdout: '', stderr: '' };
     },
     { label: 'Looking for things to clean up', refresh: false, quiet: true },
   );
   if (!read.ok) return read;
-  if (!plan.worktrees.length && !plan.branches.length) {
-    return ctx.note('Nothing to clean up: every other branch and worktree has something of yours on it.');
+  if (!plan.worktrees.length && !plan.branches.length && !plan.remote.length) {
+    return ctx.note(['Nothing to clean up: every other branch and worktree has something of yours on it.', unasked].filter(Boolean).join('\n'));
   }
   // The full list goes in the viewer, so the question stays short however much there is.
-  ctx.showText('Clean up: what goes and what stays', cleanupText(plan, root));
+  ctx.showText('Clean up: what goes and what stays', [cleanupText(plan, root), unasked].filter(Boolean).join('\n\n'));
   const choice = await ctx.confirm({
     title: `Delete ${cleanupCount(plan)} with nothing of yours on them?`,
-    detail: 'Listed above, with why. Branches that have commits only here, and worktrees with changes, stay.',
+    detail: `Listed above, with why. Branches that have commits only here, and worktrees with changes, stay.${
+      plan.remote.length ? ` On ${plan.remote[0].remote}, only branches whose pull request was merged and that haven't moved since go.` : ''
+    }`,
     options: cleanupOptions(plan),
     danger: true,
   });
   ctx.closeOverlay();
   if (!choice) return;
-  const { worktrees, branches } = cleanupChoice(plan, choice);
+  const { worktrees, branches, remote } = cleanupChoice(plan, choice);
   const problems = [];
   const removed = new Set();
   let stopped = false;
@@ -777,9 +794,29 @@ export async function cleanUp(ctx) {
     const refused = names.filter((n) => message.includes(`'${n}' is not fully merged`));
     if (refused.length && !stopped) await step(['branch', '-D', ...refused], 'Deleting branches');
   }
+  let pushed = '';
+  if (remote.length && !stopped) {
+    const where = remote[0].remote;
+    const push = async (list) => {
+      const r = await step(['push', where, '--delete', ...list.map((b) => b.branch)], `Deleting branches on ${where}`, { quietError: true });
+      pushed = r.ok ? '' : r.error.message;
+    };
+    await push(remote);
+    // A branch already gone from the server (deleted when its PR was merged, say, and not fetched
+    // since) makes git push nothing at all. Its remote-tracking branch is all that's left of it;
+    // without those, the rest go.
+    const gone = remote.filter((b) => pushed.includes(`unable to delete '${b.branch}': remote ref does not exist`));
+    if (gone.length && !stopped) {
+      await step(['branch', '-d', '-r', ...gone.map((b) => b.name)], 'Removing branches already gone from the remote');
+      const rest = remote.filter((b) => !gone.includes(b));
+      if (rest.length && !stopped) await push(rest);
+    }
+  }
   await ctx.reload();
   const left = new Set(ctx.data.refs.local.map((b) => b.name));
   const deleted = names.filter((n) => !left.has(n));
+  const remoteLeft = new Set(ctx.data.refs.remote.map((b) => b.name));
+  const deletedRemote = remote.filter((b) => !remoteLeft.has(b.name));
   for (const b of branches) {
     if (!left.has(b.name)) continue;
     if (!names.includes(b.name)) problems.push(`${b.name}: kept, as its worktree is still there`);
@@ -788,9 +825,20 @@ export async function cleanUp(ctx) {
       problems.push(`${b.name}: ${line ? line.replace(/^error:\s*/, '') : 'not deleted'}`);
     }
   }
-  const done = cleanupCount({ worktrees: [...removed], branches: deleted });
+  if (!stopped) {
+    for (const b of remote.filter((x) => remoteLeft.has(x.name))) {
+      // "error: unable to delete 'x': ..." or " ! [remote rejected] x (protected branch)"
+      const line = pushed.split('\n').find((l) => l.includes(`'${b.branch}'`) || (/^\s*!/.test(l) && l.split(/\s+/).includes(b.branch)));
+      problems.push(`${b.name}: ${line ? line.replace(/^error:\s*/, '') : firstLine(pushed) || 'not deleted'}`);
+    }
+  }
+  const done = cleanupCount({ worktrees: [...removed], branches: deleted, remote: deletedRemote });
   const head = stopped ? `Stopped${done ? ` after ${done}` : ''}` : done ? `Cleaned up ${done}` : 'Nothing was cleaned up';
-  const lines = [...(deleted.length ? [`Deleted ${deleted.join(', ')}`] : []), ...problems];
+  const lines = [
+    ...(deleted.length ? [`Deleted ${deleted.join(', ')}`] : []),
+    ...(deletedRemote.length ? [`Deleted on ${deletedRemote[0].remote}: ${deletedRemote.map((b) => b.branch).join(', ')}`] : []),
+    ...problems,
+  ];
   ctx.note([head, ...lines].join('\n'), problems.length || stopped ? 'error' : 'ok');
 }
 

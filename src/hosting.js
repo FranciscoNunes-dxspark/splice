@@ -60,6 +60,7 @@ export function githubPr(p, me) {
     reviewMe: !same(p.author?.login, me) && (p.reviewRequests ?? []).some((r) => same(r.login, me)),
     source: p.headRefName,
     target: p.baseRefName,
+    head: p.headRefOid ?? null,
     draft: Boolean(p.isDraft),
     url: p.url,
     time: Date.parse(p.updatedAt) / 1000,
@@ -104,6 +105,7 @@ export function azurePr(p, me, remote) {
     reviewMe: !same(p.createdBy?.uniqueName, me) && reviewers.some((r) => r.me && r.vote === 'none'),
     source: stripRef(p.sourceRefName),
     target: stripRef(p.targetRefName),
+    head: p.lastMergeSourceCommit?.commitId ?? null,
     draft: Boolean(p.isDraft),
     url: `${remote.orgUrl}/${encodeURIComponent(remote.project)}/_git/${encodeURIComponent(remote.repo)}/pullrequest/${id}`,
     time: Date.parse(p.creationDate) / 1000,
@@ -283,6 +285,15 @@ export function sortPrs(prs) {
 }
 
 /**
+ * The branch name on the host's remote that local branch `b`'s pull requests come from: what it
+ * tracks there, else its own name when it tracks nothing. Null when it tracks another remote.
+ */
+export function prSource(b, remoteName) {
+  const prefix = `${remoteName}/`;
+  return !b.upstream ? b.name : b.upstream.startsWith(prefix) ? b.upstream.slice(prefix.length) : null;
+}
+
+/**
  * The open PR of each branch, for the Branches view, keyed `local:<name>` and `remote:<name>`.
  * A PR's source is a branch name on the host's remote (`remoteName`): it matches that remote's
  * branch (origin/feature), and a local branch that tracks it, or has the same name and no upstream
@@ -298,7 +309,7 @@ export function prsByBranch(prs, refs, remoteName) {
     if (b.name.startsWith(prefix) && bySource.has(b.name.slice(prefix.length))) out.set(`remote:${b.name}`, bySource.get(b.name.slice(prefix.length)));
   }
   for (const b of refs.local) {
-    const source = !b.upstream ? b.name : b.upstream.startsWith(prefix) ? b.upstream.slice(prefix.length) : null;
+    const source = prSource(b, remoteName);
     if (source && bySource.has(source)) out.set(`local:${b.name}`, bySource.get(source));
   }
   return out;
@@ -353,6 +364,12 @@ function github(root, remote) {
           'number,title,author,headRefName,baseRefName,isDraft,reviewDecision,url,updatedAt,reviewRequests,statusCheckRollup,body'])),
       ]);
       return sortPrs(list.map((p) => githubPr(p, login)));
+    },
+    // The latest merged PRs, for /cleanup. A fork's branch names aren't this repository's.
+    async merged(signal) {
+      const list = await json(gh(['pr', 'list', ...repoArg, '--state', 'merged', '--limit', '200', '--json',
+        'number,title,headRefName,headRefOid,baseRefName,isCrossRepository,url,updatedAt'], { signal }));
+      return list.filter((p) => !p.isCrossRepository).map((p) => githubPr(p, ''));
     },
     async detail(pr) {
       const d = await json(gh(['pr', 'view', String(pr.id), ...repoArg, '--json', 'comments,latestReviews,reviewRequests,statusCheckRollup,mergeable']));
@@ -450,6 +467,11 @@ function azure(root, remote, remoteName) {
         json(az(['repos', 'pr', 'list', '--project', remote.project, '--repository', remote.repo, '--status', 'active', '--top', '100'])),
       ]);
       return sortPrs(list.map((p) => azurePr(p, user, remote)));
+    },
+    // The latest completed (merged) PRs, for /cleanup. A fork's branch names aren't this repository's.
+    async merged(signal) {
+      const list = await json(az(['repos', 'pr', 'list', '--project', remote.project, '--repository', remote.repo, '--status', 'completed', '--top', '200'], { signal }));
+      return list.filter((p) => !p.forkSource).map((p) => azurePr(p, '', remote));
     },
     async detail(pr) {
       const [threads, policies] = await Promise.all([
