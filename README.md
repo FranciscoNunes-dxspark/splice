@@ -62,7 +62,7 @@ Press `?` inside for every shortcut: the sections down the left, opening on the 
 | Rebase editor | `p` pick · `r` reword · `e` edit · `s` squash · `f` fix up · `d` drop · `J`/`K` move · `↵` start · `esc` cancel |
 | Changes | `space` stage/unstage · `↵` step into the diff · `a` stage all · `u` unstage all · `d` discard · `s` stash just this file · `v` select several files, then `s` stashes them · `c` commit · `A` amend · `M` write the message in your own editor · `F` fix up an earlier commit · `H` the file's history · `B` blame · `W` Claude writes the message · `S` Claude splits your changes into commits · `R` Claude reviews · on conflicts `↵` resolve block by block, `O` ours / `T` theirs for the whole file, `C` Claude proposes a resolution · on a submodule `I` initialise or update it, `o` open it |
 | File history | `↵` the commit's diff of the file · `B` blame as of that commit · `esc` close |
-| Blame | `↵` diff of the commit behind the line · `H` the file's history · `v` select lines, then `L` every commit that changed them · `esc` close |
+| Blame | `↵` diff of the commit behind the line · `H` the file's history · `v` select lines, then `L` every commit that changed them · `e` Claude explains why they are the way they are · `esc` close |
 | Changes, in the diff | `j`/`k` changed lines · `n`/`N` hunks · `space` stage (or unstage) the hunk · `v` select lines, then `space` stages just those · `d` discard them · `s` stash them · `esc` back |
 | Changes, in a conflict | `j`/`k` or `n`/`N` conflict blocks · `o` take ours · `t` take theirs · `b` keep both · `esc` back |
 | Branches | `↵` check out (remote branches get a tracking branch) · `n` new from here · `m` merge · `e` rebase onto · `d` delete · `D` diff with the default branch · `o` open its pull request · `C` clean up · `U` set a local branch's upstream · `M` the remotes: add, rename, remove, change a URL, fetch or push to one · on a tag: `u` push it, `d` delete it here or on the remote, `R` create a GitHub release |
@@ -115,6 +115,8 @@ On a file in Changes, `H` lists the commits that touched it, newest first, follo
 
 To see how a few lines came to be, put the cursor on the first in blame, press `v`, move to the last, and press `L` (or just `L` for the line under the cursor). Every commit that changed them is listed with what it did to those lines, newest first (`git log -L`), following them as other lines move around them. Lines you've changed but not committed are matched to where they were in the last commit; ones you've only just written have no history yet.
 
+`e` instead asks Claude why those lines are the way they are, from the commits that changed them (see [Claude](#claude)).
+
 ### Pull requests
 
 The PRs view (`6`) lists the open pull requests of the repository's remote, on **GitHub** or **Azure DevOps** (`dev.azure.com` and `*.visualstudio.com`). Ones asking for your review come first (◆), then yours (●). The right-hand pane shows reviewers and their votes, checks (GitHub checks, Azure DevOps branch policies), the description and comments, with their Markdown formatted (headings, bold, lists, code, links, tables). The list refreshes every minute while you're on it, and on `r`.
@@ -143,8 +145,9 @@ With [Claude Code](https://claude.com/claude-code) installed and signed in, Spli
 - **Pull requests.** In PRs, `W` (or `/draft-pr [--into <branch>]`) has Claude draft a title and description from the branch's commits and diff. The draft opens in the viewer and the title goes in the prompt as `/pr …`; opening it asks whether to include the description.
 - **Conflicts.** In Changes, `C` on a conflicted file has Claude propose the whole resolved file, from the file with its markers and the commit messages of both sides (it may read other files for context). The proposal opens as a diff against the file as it is; Splice asks before writing it, and leaves it unstaged for you to check and mark resolved.
 - **Explain and review.** `e` explains and `R` reviews the commit under the cursor in the graph, or the pull request in PRs. In Changes (or on the working-tree row of the graph), `R` reviews your staged changes, or the unstaged ones if nothing is staged. `/explain [ref]` and `/review [ref]` do the same from the prompt. The answer opens in the viewer, its Markdown formatted.
+- **Why lines are the way they are.** In blame, `e` asks Claude about the line under the cursor, or the lines selected with `v`. It gets the lines with who last changed each, the file around them, and every commit that changed them with its message (as `L` lists them, up to 30), and says how the lines came to be. The answer opens in the viewer, like an explanation.
 
-Writing messages and splitting changes give Claude no tools at all. Explaining, reviewing and resolving conflicts let it read files in the repository for context (`Read`, `Grep`, `Glob`), but never change them or run anything. Diffs over 200,000 characters are cut, and Claude is told where. To save time, Splice starts Claude without MCP servers, settings files or skills, so your hooks and permission rules don't apply to these calls (they can't change anything anyway).
+Writing messages and splitting changes give Claude no tools at all. Explaining (blame lines too), reviewing and resolving conflicts let it read files in the repository for context (`Read`, `Grep`, `Glob`), but never change them or run anything. Diffs over 200,000 characters are cut, and Claude is told where. To save time, Splice starts Claude without MCP servers, settings files or skills, so your hooks and permission rules don't apply to these calls (they can't change anything anyway).
 
 ### Worktrees
 

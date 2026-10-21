@@ -2,6 +2,7 @@
 // sees a key. The prompts and the parsing of answers are pure, for tests; `ask` runs the CLI.
 import { hasMarkers } from './conflict.js';
 import { cli } from './hosting.js';
+import { isoDate } from './parse.js';
 
 // Each flag takes seconds off a call: no MCP servers to start, no settings files (whose hooks and
 // plugins load on every run), no skills, and nothing saved to your session history.
@@ -74,6 +75,45 @@ export function lookPrompt(mode, subject) {
     'Standard input has the change.',
     "You may read other files in the repository for context; the working tree may have moved on since the change was made.",
     FORMAT,
+  ].join('\n');
+}
+
+const lineSpan = (from, to) => (from === to ? `line ${from}` : `lines ${from}–${to}`);
+
+/** What to ask for explaining lines `from` to `to` of `path` from its blame; `blameInput` makes what goes on stdin. */
+export function blamePrompt(path, from, to) {
+  return [
+    `Explain why ${lineSpan(from, to)} of ${path} ${from === to ? 'is' : 'are'} the way ${from === to ? 'it is' : 'they are'}: what the code does, and how and why it came to be written like this, going by the commits that changed it and their messages.`,
+    'Standard input has the lines with who last changed each one, the file around them, and the history of the lines (git log -L): the commits that changed them, newest first, each with its message and what it did to them.',
+    'Start with a two or three sentence answer, then the changes that shaped the lines, naming commits by their short hash. Where the history does not say why, say so plainly rather than guessing.',
+    'You may read other files in the repository for context.',
+    FORMAT,
+  ].join('\n');
+}
+
+const MAX_LINE_HISTORY = 80_000;
+
+/**
+ * Claude's input for explaining some lines: `lines` are the blame rows picked ({ line, text, commit }),
+ * `around` the file's rows near them (the same shape), `history` the `git log -L` output for them (cut
+ * to a size), `rev` the commit the file was blamed at (null for the working tree).
+ */
+export function blameInput({ path, rev = null, lines, around, history }) {
+  const from = lines[0].line;
+  const to = lines.at(-1).line;
+  const numW = String(around.at(-1)?.line ?? to).length;
+  const who = (c) => (c.uncommitted ? 'not committed yet' : `${c.hash.slice(0, 7)} ${c.author}, ${isoDate(c.time, c.tz)}: ${c.summary}`);
+  return [
+    `File: ${path}${rev ? ` as of ${rev}` : ', as it is in the working tree'}`,
+    '',
+    `${lineSpan(from, to).replace(/^./, (c) => c.toUpperCase())}, each with the commit that last changed it:`,
+    ...lines.map((l) => `${String(l.line).padStart(numW)} │ ${l.text}    [${who(l.commit)}]`),
+    '',
+    `The file around them (lines ${around[0].line}–${around.at(-1).line}):`,
+    ...around.map((l) => `${String(l.line).padStart(numW)} │ ${l.text}`),
+    '',
+    'The history of the lines (git log -L), newest first:',
+    history.trim() ? clip(history.trim(), MAX_LINE_HISTORY) : 'None: the lines are not committed yet.',
   ].join('\n');
 }
 

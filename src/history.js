@@ -1,6 +1,8 @@
 // A file's history and blame, as pickers (ctx.showPicker): each one opens the other, and ↵ shows a commit's diff.
 import { existsSync } from 'node:fs';
 import { isAbsolute, join, relative } from 'node:path';
+// actions.js imports this module too; only functions cross, called long after both have loaded.
+import { claudeBlame } from './actions.js';
 import { HISTORY_FORMAT, isoDate, parseBlame, parseFileHistory, relTime } from './parse.js';
 import { parseDiff } from './patch.js';
 import { theme } from './theme.js';
@@ -118,22 +120,33 @@ export function committedRange(diffText, from, to) {
 }
 
 /**
- * L in blame: every commit that changed lines `from` to `to` of `path` (of `rev`, or else the working
- * tree), with what each did to them (`git log -L`), in the viewer.
+ * What `git log -L` should look at for lines `from` to `to` of `path` (of `rev`, or else the working tree):
+ * { range: { from, to }, rev } in the committed file, the range null when none of the lines is committed.
  */
-export async function lineHistory(ctx, path, from, to, rev) {
-  let range = { from, to };
+export async function linesRange(ctx, path, from, to, rev) {
   // A file gone from the working tree was blamed as of HEAD (see blamePicker).
   if (!rev && !existsSync(join(ctx.data.root, path))) rev = 'HEAD';
   if (!rev && (await ctx.git(['diff', '--quiet', 'HEAD', '--', path]).then(() => false, () => true))) {
     // Changed since the last commit: git log -L counts lines in the committed file.
-    range = committedRange(await ctx.git(['diff', '--no-color', '-U0', 'HEAD', '--', path]), from, to);
-    if (!range) return ctx.note(from === to ? `Line ${from} isn't committed yet.` : `Lines ${from}–${to} aren't committed yet.`);
+    return { range: committedRange(await ctx.git(['diff', '--no-color', '-U0', 'HEAD', '--', path]), from, to), rev };
   }
+  return { range: { from, to }, rev };
+}
+
+/** `git log -L` for `range` of `path`, as of `rev` (else HEAD); `n` caps the commits. */
+export const lineLogArgs = (path, range, rev, n) => ['log', '--no-color', '--date=short', ...(n ? [`-n${n}`] : []), `-L${range.from},${range.to}:${path}`, ...(rev ? [rev] : [])];
+
+/**
+ * L in blame: every commit that changed lines `from` to `to` of `path` (of `rev`, or else the working
+ * tree), with what each did to them (`git log -L`), in the viewer.
+ */
+export async function lineHistory(ctx, path, from, to, rev) {
+  const { range, rev: at } = await linesRange(ctx, path, from, to, rev);
+  if (!range) return ctx.note(from === to ? `Line ${from} isn't committed yet.` : `Lines ${from}–${to} aren't committed yet.`);
   const what = range.from === range.to ? `Line ${range.from}` : `Lines ${range.from}–${range.to}`;
   ctx.showAsync(
-    `${what} of ${path}${rev ? ` at ${rev.replace(/^[0-9a-f]{40,64}/, short)}` : ''}`,
-    async () => (await ctx.git(['log', '--no-color', '--date=short', `-L${range.from},${range.to}:${path}`, ...(rev ? [rev] : [])])) || `No commits changed ${what.toLowerCase()}.`,
+    `${what} of ${path}${at ? ` at ${at.replace(/^[0-9a-f]{40,64}/, short)}` : ''}`,
+    async () => (await ctx.git(lineLogArgs(path, range, at))) || `No commits changed ${what.toLowerCase()}.`,
     { diff: true },
   );
 }
@@ -143,16 +156,19 @@ export async function lineHistory(ctx, path, from, to, rev) {
  * or as of `rev`. ↵ shows the diff of the line's commit to that file; H opens the file's history.
  */
 export function blamePicker(ctx, path, { rev = null } = {}) {
+  // Every row, for the file around lines Claude explains.
+  let all = [];
   return {
     title: `Blame ${path}${rev ? ` at ${rev.replace(/^[0-9a-f]{40,64}/, short)}` : ''}`,
-    hint: '↵ diff · H history · v select · L lines’ history',
+    hint: '↵ diff · H history · v select · L lines’ history · e why',
     range: true,
     empty: `${path} is empty.`,
     load: async () => {
       // A file deleted from the working tree still has a blame in HEAD.
       const at = rev ?? (existsSync(join(ctx.data.root, path)) ? null : 'HEAD');
       const raw = await ctx.git(['blame', '--porcelain', ...(at ? [at] : []), '--', path]);
-      return blameItems(parseBlame(raw));
+      all = blameItems(parseBlame(raw));
+      return all;
     },
     onPick: (l) => {
       const c = l.commit;
@@ -163,6 +179,7 @@ export function blamePicker(ctx, path, { rev = null } = {}) {
     keys: {
       H: () => ctx.showPicker(historyPicker(ctx, path)),
       L: (l, lines) => lineHistory(ctx, path, lines[0].line, lines.at(-1).line, rev),
+      e: (l, lines) => claudeBlame(ctx, path, lines, all, rev),
       y: (l) => (l.commit.uncommitted ? ctx.note(`Line ${l.line} isn't committed yet.`) : ctx.copy(l.commit.hash, `the hash of ${short(l.commit.hash)}`)),
     },
   };

@@ -126,6 +126,7 @@ export const HELP = [
       ['↵', 'Diff of the commit that last changed the line (esc comes back here)'],
       ['H', 'The file\'s history'],
       ['v  L', 'Select lines (v, move, v) · Every commit that changed them, and how (git log -L)'],
+      ['e', 'Claude explains why the line, or the selected lines, are the way they are, from the file and the commits that changed them'],
     ],
   },
   {
@@ -193,7 +194,7 @@ export const HELP = [
   {
     title: 'Claude',
     about: 'through the Claude Code CLI, signed in as you already are; answers take several seconds, esc cancels',
-    rows: ['W, S, R, e and C above, and /describe, /split, /draft-pr [--into <branch>], /explain [ref] and /review [ref] (in Slash commands).'],
+    rows: ['W, S, R, e and C above (e in blame too), and /describe, /split, /draft-pr [--into <branch>], /explain [ref] and /review [ref] (in Slash commands).'],
   },
   {
     title: 'Reflog',

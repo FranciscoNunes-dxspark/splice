@@ -3,11 +3,11 @@
 import { existsSync } from 'node:fs';
 import { readFile, rm, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
-import { READ_ONLY, clip, commitPrompt, lookPrompt, parseCommitMessage, parsePrDraft, parseResolution, parseSplit, prPrompt, resolveInput, resolvePrompt, splitInput, splitPrompt } from './claude.js';
+import { READ_ONLY, blameInput, blamePrompt, clip, commitPrompt, lookPrompt, parseCommitMessage, parsePrDraft, parseResolution, parseSplit, prPrompt, resolveInput, resolvePrompt, splitInput, splitPrompt } from './claude.js';
 import { cleanupChoice, cleanupCount, cleanupOptions, cleanupText, planCleanup, readCleanup } from './cleanup.js';
 import { configFile } from './config.js';
 import { matchLineEndings, parseConflicts, takeSide, unifiedDiff } from './conflict.js';
-import { blamePicker, historyPicker, repoPath } from './history.js';
+import { blamePicker, historyPicker, lineLogArgs, linesRange, repoPath } from './history.js';
 import { commentChar, messageFileText, readMessage } from './message.js';
 import { MERGE_LABELS, bodyArgs, mergePrArgs, releaseArgs } from './hosting.js';
 import { defaultBranch, filterArgs, filterLabel, filterLogArgs, findArgs, firstBadCommit, parseLog, parseNameStatus, parseStatus, relTime, remoteArgs, searchArgs, splitArgs, stashArgs, upstreamArgs } from './parse.js';
@@ -1916,6 +1916,35 @@ export async function claudeRef(ctx, mode, ref) {
   }
   const [hash, subject] = out.trim().split('\x1f');
   return claudeLook(ctx, mode, { kind: 'commit', hash, subject });
+}
+
+// How much of the file goes with lines to explain (either side), and how many of their commits.
+const AROUND = 40;
+const LINE_COMMITS = 30;
+
+/**
+ * e in blame: Claude explains why some lines are the way they are, from the lines (`picked`, blame rows),
+ * the file around them (`all`, the whole blame) and the commits that changed them (git log -L, capped).
+ * The answer opens in the viewer.
+ */
+export async function claudeBlame(ctx, path, picked, all, rev = null) {
+  if (!needClaude(ctx)) return;
+  const from = picked[0].line;
+  const to = picked.at(-1).line;
+  const what = from === to ? `line ${from} of ${path}` : `lines ${from}–${to} of ${path}`;
+  if (picked.every((l) => l.commit.uncommitted)) {
+    return ctx.note(`${from === to ? `Line ${from} isn't` : `Lines ${from}–${to} aren't`} committed yet, so there's no history to explain.`);
+  }
+  const around = all.filter((l) => l.line >= from - AROUND && l.line <= to + AROUND);
+  const shown = rev && rev.replace(/^[0-9a-f]{40,64}/, short);
+  const input = async () => {
+    const { range, rev: at } = await linesRange(ctx, path, from, to, rev);
+    const history = range ? await ctx.git(lineLogArgs(path, range, at, LINE_COMMITS)).catch((e) => `(git log -L failed: ${firstLine(e.message)})`) : '';
+    return blameInput({ path, rev: shown, lines: picked, around, history });
+  };
+  const r = await askClaude(ctx, `explain ${what}`, blamePrompt(path, from, to), input, READ_ONLY);
+  if (r.ok) ctx.showText(`Claude explains ${what}${shown ? ` at ${shown}` : ''}`, r.out, { markdown: true });
+  return r;
 }
 
 // The commit on the other side of a conflict, by operation; a stash leaves none of these.
