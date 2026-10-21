@@ -10,6 +10,7 @@ import { render } from 'ink-testing-library';
 import { removeTemp } from './temp.js';
 import { App } from '../src/ui/App.jsx';
 import { committedRange } from '../src/history.js';
+import { READ_ONLY } from '../src/claude.js';
 
 let base;
 let dir;
@@ -93,6 +94,52 @@ test('in blame, v selects lines and L shows the commits that changed them', asyn
     app.stdin.write('\x1b');
     await until(() => frame().includes('/ search · esc close'), 'the search cancelled');
     // Back to the blame.
+    app.stdin.write('\x1b');
+    await until(() => frame().includes('Blame f.txt'), 'back in the blame');
+  } finally {
+    app.unmount();
+  }
+});
+
+test('in blame, e asks Claude why the lines are the way they are, from the file and their history', async () => {
+  const asked = [];
+  const askClaude = async (prompt, opts) => {
+    asked.push({ prompt, ...opts });
+    return '## Why\n\nLine two was **shouted** in a later commit.';
+  };
+  lastApp = render(React.createElement(App, { initialPath: dir, config: { recent: [], roots: [], history: [] }, askClaude }));
+  const app = lastApp;
+  const frame = () => app.lastFrame() ?? '';
+  try {
+    await until(() => frame().includes('Start the file'), 'the graph');
+    app.stdin.write('2');
+    await until(() => /❯ M f\.txt/.test(frame()), 'the changed file');
+    app.stdin.write('B');
+    await until(() => frame().includes('Blame f.txt') && frame().includes('Not committed yet'), 'the blame');
+    // The line written just now has no history to go on.
+    app.stdin.write('e');
+    await until(() => frame().includes("Line 1 isn't committed yet"), 'the note about the new line');
+    assert.equal(asked.length, 0);
+    app.stdin.write('j');
+    await until(() => /❯.*│ one/.test(frame()), 'the cursor on one');
+    app.stdin.write('j');
+    await until(() => /❯.*│ TWO/.test(frame()), 'the cursor on TWO');
+    app.stdin.write('v');
+    app.stdin.write('j');
+    await until(() => frame().includes('2 selected'), 'two lines selected');
+    app.stdin.write('e');
+    await until(() => frame().includes('Claude explains lines 3–4 of f.txt') && frame().includes('shouted'), 'the answer in the viewer');
+    // Markdown formatted.
+    assert.doesNotMatch(frame(), /\*\*shouted\*\*|## Why/);
+    const [q] = asked;
+    assert.match(q.prompt, /lines 3–4 of f\.txt/);
+    assert.deepEqual(q.tools, READ_ONLY);
+    // The lines with their commits, the file around them, and the commits that changed them (lines 2-3 in HEAD).
+    assert.match(q.input, /3 │ TWO {4}\[[0-9a-f]{7} Test, \d{4}-\d\d-\d\d: Shout line two\]/);
+    assert.match(q.input, /4 │ three {4}\[[0-9a-f]{7} Test, [^\]]*: Start the file\]/);
+    assert.match(q.input, /1 │ zero\n2 │ one\n3 │ TWO\n4 │ three\n5 │ FOUR/);
+    assert.match(q.input, /git log -L[\s\S]*Shout line two[\s\S]*Start the file/);
+    assert.doesNotMatch(q.input, /Shout line four/);
     app.stdin.write('\x1b');
     await until(() => frame().includes('Blame f.txt'), 'back in the blame');
   } finally {

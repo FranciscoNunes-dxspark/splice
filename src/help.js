@@ -74,9 +74,10 @@ export const HELP = [
       ['d', 'Discard the file\'s changes'],
       ['s', 'Stash just this file, staged and unstaged changes (its path is the stash\'s message)'],
       ['v', 'Select several files (v, move, then s stashes them all together; esc clears it)'],
-      ['c  A', 'Commit · Amend the last commit'],
+      ['c  A', 'Commit · Amend the last commit (/commit <message>, \\n for a new line)'],
+      ['M', 'Write the message in your own editor: a file in .git, started from what follows /commit (or /amend: the commit\'s message) in the prompt and listing what\'s staged; then /commit --file <it> commits it'],
       ['F', 'Fix up an earlier commit with the staged changes (pick it; then fold it in, or keep it for later)'],
-      ['W', 'Claude writes the commit message for the staged changes, into the prompt to edit'],
+      ['W', 'Claude writes the commit message for the staged changes: a subject into the prompt to edit, or with a body, into the message file (as M) to edit or just commit'],
       ['S', 'Claude splits all your changes into logical commits: each one shown as a diff, then commit it, skip it (its changes stay uncommitted) or stop (/split)'],
       ['R', 'Claude reviews the staged changes (or the unstaged ones, if nothing is staged)'],
       ['O  T', 'On a conflict: take ours · take theirs, for the whole file'],
@@ -126,6 +127,7 @@ export const HELP = [
       ['↵', 'Diff of the commit that last changed the line (esc comes back here)'],
       ['H', 'The file\'s history'],
       ['v  L', 'Select lines (v, move, v) · Every commit that changed them, and how (git log -L)'],
+      ['e', 'Claude explains why the line, or the selected lines, are the way they are, from the file and the commits that changed them'],
     ],
   },
   {
@@ -199,7 +201,7 @@ export const HELP = [
   {
     title: 'Claude',
     about: 'through the Claude Code CLI, signed in as you already are; answers take several seconds, esc cancels',
-    rows: ['W, S, R, e and C above, and /describe, /split, /draft-pr [--into <branch>], /explain [ref] and /review [ref] (in Slash commands).'],
+    rows: ['W, S, R, e and C above (e in blame too), and /describe, /split, /draft-pr [--into <branch>], /explain [ref] and /review [ref] (in Slash commands).'],
   },
   {
     title: 'Reflog',

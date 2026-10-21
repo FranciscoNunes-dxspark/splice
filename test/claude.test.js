@@ -7,7 +7,7 @@ import { join, resolve } from 'node:path';
 import React from 'react';
 import { render } from 'ink-testing-library';
 import { removeTemp } from './temp.js';
-import { READ_ONLY, cleanSubject, clip, commitPrompt, parsePrDraft } from '../src/claude.js';
+import { READ_ONLY, blameInput, blamePrompt, cleanSubject, clip, commitPrompt, parseCommitMessage, parsePrDraft } from '../src/claude.js';
 import { prArgs } from '../src/actions.js';
 import { App } from '../src/ui/App.jsx';
 
@@ -26,6 +26,43 @@ test('a pull request draft splits into a title and a description', () => {
   });
   assert.deepEqual(parsePrDraft('\n\nTitle only'), { title: 'Title only', body: '' });
   assert.deepEqual(parsePrDraft(''), { title: '', body: '' });
+});
+
+test('a commit message from Claude: a subject, and a body when it wrote one', () => {
+  assert.deepEqual(parseCommitMessage('Add worktrees view'), { subject: 'Add worktrees view', body: '' });
+  assert.deepEqual(parseCommitMessage('\n"Fix the poll"\n\n\n\nIt reloaded twice   \nper tick.\n\n'), { subject: 'Fix the poll', body: 'It reloaded twice\nper tick.' });
+  assert.deepEqual(parseCommitMessage('```text\r\nSubject: Drop the cache\r\n\r\nBody: Nothing read it.\r\n```'), { subject: 'Drop the cache', body: 'Nothing read it.' });
+  assert.deepEqual(parseCommitMessage(''), { subject: '', body: '' });
+});
+
+test('the commit prompt shows recent subjects, and their bodies indented, cut when long', () => {
+  const p = commitPrompt(['Add the thing\n\nBecause it was missing.\nTwo lines.', 'Fix the other', `Long one\n\n${'x'.repeat(700)}`]);
+  assert.match(p, /- Add the thing\n {2}Because it was missing\.\n {2}Two lines\.\n- Fix the other\n- Long one\n {2}x{600}…\n?/);
+  assert.match(p, /blank line and a short body/);
+  assert.match(p, /subject alone/);
+});
+
+test('explaining blame lines: the lines with their commits, the file around them, and their history', () => {
+  const commit = (hash, summary) => ({ hash: hash.repeat(40), author: 'Ana', time: 1700000000, tz: '+0000', summary, uncommitted: false });
+  const a = commit('a', 'Start the file');
+  const b = commit('b', 'Shout line two');
+  const rows = [
+    { line: 8, text: 'one', commit: a },
+    { line: 9, text: 'TWO', commit: b },
+    { line: 10, text: 'new', commit: { uncommitted: true } },
+  ];
+  const input = blameInput({ path: 'src/f.js', lines: rows.slice(1), around: rows, history: 'commit bbb\n\n    Shout line two\n' });
+  assert.match(input, /^File: src\/f\.js, as it is in the working tree\n\nLines 9–10, each with the commit that last changed it:\n 9 │ TWO {4}\[bbbbbbb Ana, 2023-11-14: Shout line two\]\n10 │ new {4}\[not committed yet\]/);
+  assert.match(input, /The file around them \(lines 8–10\):\n 8 │ one\n 9 │ TWO\n10 │ new\n/);
+  assert.match(input, /git log -L\), newest first:\ncommit bbb\n\n {4}Shout line two$/);
+  const one = blameInput({ path: 'f', rev: 'abc1234', lines: [rows[0]], around: rows.slice(0, 1), history: '' });
+  assert.match(one, /^File: f as of abc1234\n\nLine 8, each/);
+  assert.match(one, /None: the lines are not committed yet\.$/);
+  // A long history is cut, saying so.
+  assert.match(blameInput({ path: 'f', lines: [rows[0]], around: [rows[0]], history: 'y'.repeat(90_000) }), /\[Cut here: the rest \(10,000 more characters\)/);
+  assert.match(blamePrompt('src/f.js', 9, 10), /^Explain why lines 9–10 of src\/f\.js are the way they are/);
+  assert.match(blamePrompt('src/f.js', 9, 9), /^Explain why line 9 of src\/f\.js is the way it is/);
+  assert.match(blamePrompt('f', 1, 1), /formats Markdown/);
 });
 
 test('/pr arguments: flags anywhere, and the title kept as typed', () => {
