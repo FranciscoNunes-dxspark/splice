@@ -187,6 +187,7 @@ export const HELP = [
       '◆ asks for your review · ● yours · others below',
       ['↵', 'Full diff, with review comments under their lines (below: In its diff)'],
       ['c', 'Check out its branch'],
+      ['w', 'Review it in a worktree of its own, ../<repo>-pr-<n> on a branch pr-<n>, opened in Splice (/review-pr <number>); again brings it up to date'],
       ['a  X', 'Approve · Request changes (/request-changes [text]; GitHub needs the text, Azure DevOps votes "waiting for author", GitLab comments and takes back your approval); both ask first'],
       ['C', 'Comment (/comment <text>)'],
       ['m', 'Merge it: squash, merge commit or rebase; now or once checks pass (auto-merge), deleting the branch or not (/merge-pr [squash|merge|rebase] [--delete-branch] [--auto])'],
@@ -198,6 +199,10 @@ export const HELP = [
       ['n', 'New pull request from the current branch (/pr <title> [--into <branch>] [--draft])'],
       ['W', 'Claude drafts one: title into the prompt, description offered when you open it'],
       ['e  R', 'Claude explains it · Claude reviews it'],
+      { heading: 'From the prompt', about: 'on the current branch, or a pull request by its number' },
+      ['/ship [--into <branch>]', 'Push the branch, open its pull request (Claude drafts it) and turn on auto-merge, in one go after showing the plan; the merge method is asked once and remembered. Once it\'s merged, Splice offers to finish: switch to the default branch, pull it, delete the branch and its worktree'],
+      ['/backport <pr-number> <branch>', 'Cherry-pick a merged pull request onto backport/<n>-to-<branch> from the remote\'s <branch>, push it and open a pull request "[<branch>] <title>"; after a conflict, /continue carries on'],
+      ['/changelog [since-tag] [--into-release <tag>]', 'Claude writes release notes (features, fixes, other) from the commits and merged PRs since a tag; y copies them; --into-release: the notes of that tag\'s release'],
       { heading: 'In its diff', about: 'a line cursor, and the review comments under their lines' },
       ['j k', 'Move the cursor (space, g G as in the viewer)'],
       ['c', 'Comment on the line under the cursor (/review-comment <text>): a changed line or one around it'],
@@ -210,7 +215,7 @@ export const HELP = [
   {
     title: 'Claude',
     about: 'through the Claude Code CLI, signed in as you already are; answers take several seconds, esc cancels',
-    rows: ['W, S, R, e and C above (e in blame too), and /describe, /split, /draft-pr [--into <branch>], /explain [ref] and /review [ref] (in Slash commands).'],
+    rows: ['W, S, R, e and C above (e in blame too), and /describe, /split, /draft-pr [--into <branch>], /ship, /changelog, /explain [ref] and /review [ref] (in Slash commands).'],
   },
   {
     title: 'Reflog',

@@ -23,7 +23,7 @@ import { RANGE_COMMIT, diffSegments, rangeDiffSegments } from './diffstyle.js';
  * sideBySide setting. Everything else goes by line, whichever way it's drawn: scrolling counts the
  * rows on screen, and the cursor is on one side of a pair (h/l pick which).
  */
-export function TextViewer({ title, text, loading, diff, rangeDiff, markdown, threads, pr, ctx, width, height, active, onClose }) {
+export function TextViewer({ title, text, loading, diff, rangeDiff, markdown, threads, pr, copy, ctx, width, height, active, onClose }) {
   const [threadId, setThreadId] = useState(null);
   const lineCursor = Boolean(pr) && !markdown;
   const { lines, starts, rows } = useMemo(() => {
@@ -186,6 +186,8 @@ export function TextViewer({ title, text, loading, diff, rangeDiff, markdown, th
         return jump(starts[next].at, rowOf[starts[next].at] - 2);
       }
       if (input === 'w' && canSplit) return a.toggleSideBySide(ctx, { width, need: SPLIT_WIDTH });
+      // `copy`: { text, what }, what y puts on the clipboard (release notes, say).
+      if (input === 'y' && copy) return ctx.copy(copy.text, copy.what);
       // Side by side, the cursor goes to the line on the other side of its row.
       if (split && lineCursor && (key.leftArrow || key.rightArrow || input === 'h' || input === 'l')) {
         setSide(key.leftArrow || input === 'h' ? 'old' : 'new');
@@ -280,7 +282,7 @@ export function TextViewer({ title, text, loading, diff, rangeDiff, markdown, th
     ? `/${search.query}▏ ${search.query ? found : ''} · ↵ done · esc cancel`
     : search.query
       ? `"${search.query}" ${found} · n/N · esc clears`
-      : `${pos}${pos ? ' · ' : ''}${starts.length ? `${starts.length} comment${starts.length === 1 ? '' : 's'} · t/T · r reply · x resolve · ` : ''}${pr ? 'c comment · ' : ''}${splitHint}/ search · esc close`;
+      : `${pos}${pos ? ' · ' : ''}${starts.length ? `${starts.length} comment${starts.length === 1 ? '' : 's'} · t/T · r reply · x resolve · ` : ''}${pr ? 'c comment · ' : ''}${copy ? 'y copy · ' : ''}${splitHint}/ search · esc close`;
   return (
     <Panel title={title} hint={hint} width={width} height={height} focused={active}>
       {loading ? (

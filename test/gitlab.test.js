@@ -421,3 +421,18 @@ test("the GitLab host diffs a merge request from GitLab's refs/merge-requests/<i
   assert.equal(await h.createRelease({ tag: 'v1.1', title: 'One one' }), 'https://gitlab.com/grp/sub/app/-/releases/v1.1');
   assert.deepEqual(calls()[0].body, { tag_name: 'v1.1', name: 'One one', description: 'Changes since v1.0:\n\n- Second' });
 });
+
+test('the GitLab host reads one merge request by its number, with its commits, and the ones merged since a date', { skip }, async () => {
+  routes([
+    [`${P}/merge_requests/5/commits`, [{ id: 'c2', title: 'Two' }, { id: 'c1', title: 'One' }]],
+    [`${P}/merge_requests/5$`, { iid: 5, title: 'Add search', state: 'merged', source_branch: 'search', target_branch: 'main', sha: 'c2', merge_commit_sha: 'm5', author: { username: 'ana', name: 'Ana' }, source_project_id: 1, target_project_id: 1 }],
+    ['merged_after=', [{ iid: 5, title: 'Add search', state: 'merged', target_branch: 'main', merged_at: '2026-10-02T00:00:00Z', author: { name: 'Ana' } }, { iid: 4, title: 'Old', state: 'merged', target_branch: 'main', merged_at: '2026-09-01T00:00:00Z', author: {} }]],
+  ]);
+  const pr = await host().pr(5);
+  assert.deepEqual([pr.label, pr.state, pr.mergeCommit, pr.source, pr.head], ['!5', 'merged', 'm5', 'search', 'c2']);
+  assert.deepEqual(pr.commits.map((c) => c.subject), ['One', 'Two']);
+  assert.equal(host().headRef(pr), 'refs/merge-requests/5/head');
+  const merged = await host().mergedSince('2026-10-01T00:00:00Z');
+  assert.deepEqual(merged.map((p) => [p.label, p.title, p.author]), [['!5', 'Add search', 'Ana']], 'one older than the date left out');
+  assert.ok(calls().some((c) => c.args.at(-1).includes('merged_after=2026-10-01T00%3A00%3A00.000Z')));
+});
