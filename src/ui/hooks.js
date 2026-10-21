@@ -16,11 +16,14 @@ export function useTerminalSize() {
 /**
  * Cursor and scroll position for a list of `count` rows shown `height` at a time.
  * Rows where `selectable(i)` is false (section headers) are skipped over.
- * `resetKey` puts the cursor back on top when it changes (another repo, another filter).
+ * `resetKey` puts the cursor back on top when it changes (another repo, another filter), or on
+ * row `start` (where it also starts).
  */
-export function useListNav(count, height, { selectable = () => true, resetKey } = {}) {
-  const [index, setIndex] = useState(0);
+export function useListNav(count, height, { selectable = () => true, resetKey, start = 0 } = {}) {
+  const [index, setIndex] = useState(start);
   const offset = useRef(0);
+  // The index as of the last key, which may not have rendered yet (j then d, typed fast).
+  const latest = useRef(start);
   const lastKey = useRef(resetKey);
   // Scrolled with the wheel, the view leaves the cursor where it was, out of sight if need be,
   // until the cursor moves again.
@@ -29,10 +32,10 @@ export function useListNav(count, height, { selectable = () => true, resetKey } 
   let i = index;
   if (lastKey.current !== resetKey) {
     lastKey.current = resetKey;
-    i = 0;
+    i = start;
     offset.current = 0;
     free.current = false;
-    if (index !== 0) setIndex(0);
+    if (index !== start) setIndex(start);
   }
 
   const find = (from, dir) => {
@@ -56,6 +59,7 @@ export function useListNav(count, height, { selectable = () => true, resetKey } 
 
   const moveTo = (j) => {
     free.current = false;
+    latest.current = j;
     setIndex(j);
   };
   const go = (target, dir) => {
@@ -67,10 +71,11 @@ export function useListNav(count, height, { selectable = () => true, resetKey } 
 
   const handle = (input, key) => {
     if (!count) return false;
-    if (key.downArrow || input === 'j') go(i + 1, 1);
-    else if (key.upArrow || input === 'k') go(i - 1, -1);
-    else if (key.pageDown || (key.ctrl && input === 'd')) go(i + h - 1, 1);
-    else if (key.pageUp || (key.ctrl && input === 'u')) go(i - h + 1, -1);
+    const at = latest.current;
+    if (key.downArrow || input === 'j') go(at + 1, 1);
+    else if (key.upArrow || input === 'k') go(at - 1, -1);
+    else if (key.pageDown || (key.ctrl && input === 'd')) go(at + h - 1, 1);
+    else if (key.pageUp || (key.ctrl && input === 'u')) go(at - h + 1, -1);
     else if (input === 'g' || key.home) go(0, 1);
     else if (input === 'G' || key.end) go(count - 1, -1);
     else return false;
@@ -93,22 +98,32 @@ export function useListNav(count, height, { selectable = () => true, resetKey } 
     setScrolled((s) => s + 1);
   };
 
-  return { index: i, offset: offset.current, handle, setIndex: moveTo, pick, scrollBy };
+  latest.current = i;
+  return { index: i, offset: offset.current, handle, setIndex: moveTo, pick, scrollBy, current: () => latest.current };
 }
 
 /**
- * Mouse events for the component in the main area: wheel notches and left presses, with `y` counted
- * from the top of the main area and `double` set on a double-click. App hands them to the handler of
- * the component mounted last, which is the one on screen (a view, or an overlay over it).
+ * Mouse events for a component in the main area: wheel notches and left clicks, with `y` counted
+ * from the component's top and `double` (or `triple`) set on a double-click. App hands each one to
+ * the component mounted last whose `top` (its first line in the main area) is above it: the view on
+ * screen, an overlay over it, or the results under the console. Where `drags(press)` says so, a drag
+ * from there comes too, move by move ({ drag, x, y, from }, the last with `release`), in place of the
+ * screen selection.
  */
-export function useMouse(ctx, handler) {
-  const ref = useRef(handler);
-  ref.current = handler;
+export function useMouse(ctx, handler, { top = 0, drags } = {}) {
+  const ref = useRef({ handler, top, drags });
+  ref.current = { handler, top, drags };
   useEffect(() => {
-    const fn = (e) => ref.current(e);
-    ctx.mouseHandlers.push(fn);
+    const entry = {
+      get top() {
+        return ref.current.top;
+      },
+      handle: (e) => ref.current.handler(e),
+      drags: (e) => ref.current.drags?.(e),
+    };
+    ctx.mouseHandlers.push(entry);
     return () => {
-      ctx.mouseHandlers = ctx.mouseHandlers.filter((h) => h !== fn);
+      ctx.mouseHandlers = ctx.mouseHandlers.filter((h) => h !== entry);
     };
   }, []);
 }
@@ -146,29 +161,4 @@ export function useAsync(key, load, delay = 60) {
     };
   }, [key]);
   return state;
-}
-
-// PR list requests by key, finished or not, so PRs and Branches share one fetch (and one failure).
-const prLists = new Map();
-
-/**
- * The open pull requests of the repository's host (null without one), shared by the PRs and Branches
- * views. A new key every minute refetches while you look, and `prVersion` (r, or after approving or
- * opening one) does so at once; the old list stays up until the new one lands.
- */
-export function usePrList(ctx, data, prVersion) {
-  const host = ctx.host();
-  const key = host ? `prs:${data.root}:${host.remoteName}:${prVersion}:${Math.floor(Date.now() / 60000)}` : null;
-  const state = useAsync(
-    key,
-    () => {
-      if (!prLists.has(key)) {
-        prLists.set(key, host.list());
-        if (prLists.size > 20) prLists.delete(prLists.keys().next().value);
-      }
-      return prLists.get(key);
-    },
-    0,
-  );
-  return { host, key, ...state };
 }

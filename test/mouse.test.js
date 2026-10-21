@@ -126,7 +126,6 @@ test('a press and release in one place is a click; a drag selects, paints and co
   t.sgr(32, 1, 2);
   t.sgr(0, 1, 2, 'm');
   assert.deepEqual(t.copied, ['text here\nmo']);
-  assert.ok(t.written.includes(osc52('text here\nmo')));
   assert.deepEqual(t.heard.at(-1), { type: 'copy', text: 'text here\nmo' });
   assert.equal(t.heard.length, 2);
 
@@ -144,4 +143,33 @@ test('a press and release in one place is a click; a drag selects, paints and co
 
   t.mouse.enable(false);
   assert.equal(t.written.at(-1), MOUSE_OFF);
+});
+
+test('a drag the app claims goes to it, move by move, and nothing is painted or copied', () => {
+  const t = fakeTerminal();
+  t.mouse.stdout.write('header\nsome text here\nmore\n');
+  t.mouse.claimDrags((p) => p.y === 1);
+  const written = t.written.length;
+  t.sgr(0, 5, 1);
+  t.sgr(32, 8, 1);
+  t.sgr(32, 2, 2);
+  t.sgr(0, 2, 2, 'm');
+  assert.deepEqual(
+    t.heard.map((e) => [e.x, e.y, e.drag, e.release, e.from]),
+    [
+      [8, 1, true, false, { x: 5, y: 1 }],
+      [2, 2, true, false, { x: 5, y: 1 }],
+      [2, 2, true, true, { x: 5, y: 1 }],
+    ],
+  );
+  assert.equal(t.written.length, written);
+  assert.deepEqual(t.copied, []);
+  // Without moving, it's still a click; elsewhere, a drag selects as before.
+  t.sgr(0, 3, 1);
+  t.sgr(0, 3, 1, 'm');
+  assert.deepEqual([t.heard.at(-1).x, t.heard.at(-1).drag], [3, false]);
+  t.sgr(0, 0, 2);
+  t.sgr(32, 3, 2);
+  t.sgr(0, 3, 2, 'm');
+  assert.deepEqual(t.copied, ['more']);
 });

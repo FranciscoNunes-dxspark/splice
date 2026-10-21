@@ -6,7 +6,8 @@ import { defaultBranch, isDefaultBranch, relTime } from '../parse.js';
 import { compareRefs, refLog } from '../repo.js';
 import { theme } from '../theme.js';
 import { fit } from '../text.js';
-import { useAsync, useListNav, useMouse, usePrList } from './hooks.js';
+import { useAsync, useListNav, useMouse } from './hooks.js';
+import { usePrList } from './prList.js';
 import { Lines, Panel, Row } from './parts.jsx';
 import { TONE, checksText } from './PrView.jsx';
 

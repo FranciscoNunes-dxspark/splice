@@ -18,7 +18,7 @@ export const theme = {
   local: '#5fafff',
   remote: '#af87ff',
   tag: '#ffd75f',
-  gitMode: '#ff87d7',
+  bangMode: '#ff87d7',
   lanes: ['#5fafff', '#ff875f', '#5fd787', '#d787ff', '#ffd75f', '#5fd7d7', '#ff5f87', '#afd75f'],
 };
 

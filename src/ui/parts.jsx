@@ -1,7 +1,6 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Box, Text, useInput } from 'ink';
 import { theme } from '../theme.js';
-import { markRanges } from '../search.js';
 import { clean, fit, fitSegments, stringWidth } from '../text.js';
 
 /**
@@ -22,6 +21,9 @@ export function Row({ segments, width, selected = false, marked = false, focused
           bold={s.bold || (selected && focused && s.strong)}
           dimColor={s.dim}
           italic={s.italic}
+          underline={s.underline}
+          strikethrough={s.strike}
+          inverse={s.inverse}
         >
           {s.text}
         </Text>
@@ -73,27 +75,9 @@ export function Lines({ lines, width, height, offset = 0 }) {
   ));
 }
 
-/** A diff line coloured by its prefix. */
-export function diffSegment(line) {
-  const text = clean(line);
-  if (/^(diff --git|index |--- |\+\+\+ |new file|deleted file|similarity|rename (from|to))/.test(line)) return { text, color: theme.dim, bold: true };
-  if (line.startsWith('@@')) return { text, color: theme.hunk };
-  if (line.startsWith('+')) return { text, color: theme.add };
-  if (line.startsWith('-')) return { text, color: theme.del };
-  if (/^commit [0-9a-f]{7,}/.test(line)) return { text, color: theme.warn, bold: true };
-  return { text };
-}
-
-/** A diff line as segments, with the words it changed (`ranges`, from search.js's wordChanges) picked out. */
-export function diffSegments(line, ranges) {
-  const seg = diffSegment(line);
-  if (!ranges) return [seg];
-  return markRanges([seg], ranges, { bg: line[0] === '+' ? theme.addWord : theme.delWord, bold: true });
-}
-
 const FRAMES = ['·', '✢', '✳', '✶', '✻', '✽', '✻', '✶', '✳', '✢'];
 
-/** "✻ Pushing… (3s · esc to cancel)", animated while a git command runs. */
+/** "✻ Running… (3s · esc to cancel)", animated while a command runs. */
 export function Spinner({ label, started, width }) {
   const [tick, setTick] = useState(0);
   useEffect(() => {
@@ -114,7 +98,65 @@ export function Spinner({ label, started, width }) {
 }
 
 export function confirmHeight(req) {
+  if (req.secret) return 4 + (req.detail ? 1 : 0) + (req.remember !== undefined ? 1 : 0);
   return 3 + (req.detail ? 1 : 0) + req.options.length;
+}
+
+/**
+ * A password field in the confirm box: what's typed shows as * (or as it is, with `req.plain`, for
+ * a value that isn't secret; `req.value` is what it starts with). ↵ gives { value, remember },
+ * esc null. With `req.remember` set, tab flips the "keep it" choice under the field.
+ */
+export function SecretPrompt({ req, width, onDone }) {
+  const [value, setValueState] = useState(req.value ?? '');
+  const [remember, setRemember] = useState(req.remember);
+  // ↵ can come before the render after the last key, so the text lives in a ref too.
+  const valueRef = useRef(req.value ?? '');
+  const setValue = (v) => {
+    valueRef.current = v;
+    setValueState(v);
+  };
+  useInput((input, key) => {
+    if (key.escape) return onDone(null);
+    if (key.return) return onDone({ value: valueRef.current, remember: Boolean(remember) });
+    if (key.tab) return remember !== undefined && setRemember((r) => !r);
+    if (key.backspace || key.delete) return setValue(valueRef.current.slice(0, -1));
+    if (key.ctrl && input === 'u') return setValue('');
+    if (key.ctrl || key.meta || !input) return;
+    const text = input.replace(/[\x00-\x1f\x7f]/g, '');
+    if (text) setValue(valueRef.current + text);
+  });
+  const inner = width - 4;
+  return (
+    <Box flexDirection="column" borderStyle="round" borderColor={req.danger ? theme.del : theme.accent} width={width} paddingX={1}>
+      <Text bold wrap="truncate">
+        {fit(req.title, inner).trimEnd()}
+      </Text>
+      {req.detail ? (
+        <Text color={theme.dim} wrap="truncate">
+          {fit(req.detail, inner).trimEnd()}
+        </Text>
+      ) : null}
+      <Text wrap="truncate">
+        <Text color={theme.accent} bold>
+          {'> '}
+        </Text>
+        {req.plain ? value.slice(-Math.max(1, inner - 3)) : '*'.repeat(Math.min(value.length, Math.max(0, inner - 3)))}
+        <Text inverse> </Text>
+      </Text>
+      {remember !== undefined ? (
+        <Row
+          pointer={false}
+          width={inner}
+          segments={[
+            { text: remember ? '[x] ' : '[ ] ', color: theme.accent, bold: true },
+            { text: req.rememberLabel ?? 'Remember it' },
+            { text: '  (tab changes it · ↵ connect · esc cancel)', color: theme.dim },
+          ]}
+        />
+      ) : null}
+    </Box>
+  );
 }
 
 /** A numbered choice in a box, like Claude Code's permission prompts. Esc picks null. */
@@ -155,8 +197,9 @@ export function Confirm({ req, width, onDone }) {
 
 /** The input box. Rendering only: App owns the text and handles the keys (see usePromptKeys). */
 export function PromptBox({ value, cursor, focused, width, placeholder }) {
-  const gitMode = value.startsWith('!');
-  const color = !focused ? theme.border : gitMode ? theme.gitMode : theme.accent;
+  // "!" runs what follows as it is (SQL, or a git command), and the box takes another colour.
+  const bangMode = value.startsWith('!');
+  const color = !focused ? theme.border : bangMode ? theme.bangMode : theme.accent;
   const inner = width - 6;
   let body;
   if (!focused && !value) {
@@ -182,7 +225,7 @@ export function PromptBox({ value, cursor, focused, width, placeholder }) {
   return (
     <Box borderStyle="round" borderColor={color} width={width} paddingX={1}>
       <Text color={focused ? color : theme.dim} bold>
-        {gitMode ? '! ' : '> '}
+        {bangMode ? '! ' : '> '}
       </Text>
       {body}
     </Box>

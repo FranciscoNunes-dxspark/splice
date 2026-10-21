@@ -73,7 +73,7 @@ Press `?` inside for every shortcut. The essentials:
 | Repos | `↵` open · `s` add a folder to scan · `x` forget |
 | Viewer (diffs, output, help, Claude's answers) | `j`/`k` scroll · `space` page · `n`/`N` next or previous hunk · `/` search: matches show as you type, `↵` keeps the search, then `n`/`N` go from match to match · `esc` clears the search, then closes |
 
-The mouse works too: click a tab, a row or the prompt, double-click a row to do what `↵` does, and scroll the list or pane under the pointer with the wheel. In Changes, clicking a `+` or `-` line puts the cursor in the diff, ready to stage that hunk with `space`. Drag to select text as you would in the terminal: it's copied when you let go (through the terminal and the system clipboard), and stays highlighted until the next key or click. With the mouse turned off in the settings, the terminal does its own selecting again. On Windows the downloaded Splice handles the mouse itself; run from a checkout, it needs Node 22.17 or later.
+The mouse works too: click a tab, a row or the prompt, double-click a row to do what `↵` does, and scroll the list or pane under the pointer with the wheel. In Changes, clicking a `+` or `-` line puts the cursor in the diff, ready to stage that hunk with `space`. Drag to select text as you would in the terminal: it's copied when you let go (to the system clipboard, or through the terminal over SSH), and stays highlighted until the next key or click. With the mouse turned off in the settings, the terminal does its own selecting again. On Windows the downloaded Splice handles the mouse itself; run from a checkout, it needs Node 22.17 or later.
 
 ### Slash commands
 

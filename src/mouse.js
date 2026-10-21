@@ -1,8 +1,8 @@
 // The mouse: asks the terminal to report clicks, drags and the wheel, and takes those reports out of
 // what Ink reads (it would turn them into junk key presses). Clicks are routed to the views by App;
 // drags select text (selection.js).
-import { spawn } from 'node:child_process';
-import { frameLines, osc52, selectedText, selectionRows } from './selection.js';
+import { copyToClipboard } from './clipboard.js';
+import { frameLines, selectedText, selectionRows } from './selection.js';
 
 // Button events plus drags (?1002), in the SGR encoding (?1006): ESC [ < b ; x ; y M (press) or m (release).
 export const MOUSE_ON = '\x1b[?1002h\x1b[?1006h';
@@ -94,39 +94,32 @@ async function keepVtInput(stdin) {
   };
 }
 
-/** Puts `text` on the system clipboard, in the background; failing quietly (OSC 52 may have done it). */
-export function copyText(text) {
-  const win = process.platform === 'win32';
-  const [cmd, ...args] = win ? ['clip.exe'] : process.platform === 'darwin' ? ['pbcopy'] : process.env.WAYLAND_DISPLAY ? ['wl-copy'] : ['xclip', '-selection', 'clipboard'];
-  try {
-    const child = spawn(cmd, args, { stdio: ['pipe', 'ignore', 'ignore'], windowsHide: true });
-    child.on('error', () => {});
-    child.stdin.on('error', () => {});
-    // clip.exe takes UTF-16 (it tells from the bytes; a byte order mark would end up on the clipboard).
-    child.stdin.end(win ? Buffer.from(text, 'utf16le') : text);
-  } catch {
-    // No clipboard program: OSC 52 is all there is.
-  }
-}
-
 const SAVE = '\x1b7';
 const RESTORE = '\x1b8';
 
 /**
  * The mouse over `stdin` and `stdout`: { subscribe(fn) → unsubscribe, enable(on), stdout, off() }.
  * Listeners get the wheel, and a left click once the button comes back up where it went down.
- * Dragging instead selects text, painted over the frame and copied on release; listeners then get
+ * Dragging instead selects text, painted over the frame and copied on release (clipboard.js, as y
+ * copies: the system clipboard, or OSC 52 through `stdout`); listeners then get
  * { type: 'copy', text }. A key, a click or the wheel clears the selection. Ink must draw through
  * `stdout` (the same stream, watched for frames to select from and paint over); `off` turns the
  * terminal's reporting off when Splice exits.
+ *
+ * `claimDrags(fn)`: where `fn(press)` says so, the app selects for itself (as a text editor in it
+ * would): listeners get each move as { drag: true, x, y, from } (`from` where the button went down),
+ * the last with `release` set, and nothing is painted.
  */
-export function mouseSession(stdin, stdout, { copy = copyText } = {}) {
+export function mouseSession(stdin, stdout, { copy = (text) => copyToClipboard(text, { write: (s) => stdout.write(s) }) } = {}) {
   const listeners = new Set();
   const emit = (e) => listeners.forEach((fn) => fn(e));
   let on = false;
   let frame = []; // the last frame Ink drew, styled lines from the top of the screen
   let press = null; // where the left button went down, until it comes back up
   let sel = null; // { a, b }: the cells a drag went from and to
+  let claims = () => false;
+  let claimed = false; // the press is where the app takes drags itself
+  let dragged = false; // and the button has moved since
 
   const paint = () =>
     selectionRows(frame, sel.a, sel.b)
@@ -151,20 +144,27 @@ export function mouseSession(stdin, stdout, { copy = copyText } = {}) {
     if (e.button === 'left' && !e.release && !e.drag) {
       clear();
       press = e;
+      claimed = Boolean(claims(e));
+      dragged = false;
       return;
     }
+    const from = press && { x: press.x, y: press.y };
     if (e.button === 'left' && e.drag) {
-      if (press && (sel || e.x !== press.x || e.y !== press.y)) select({ x: e.x, y: e.y });
+      if (press && claimed && (dragged || e.x !== press.x || e.y !== press.y)) {
+        dragged = true;
+        return emit({ ...e, from });
+      }
+      if (press && !claimed && (sel || e.x !== press.x || e.y !== press.y)) select({ x: e.x, y: e.y });
       return;
     }
     if (e.release) {
       const p = press;
       press = null;
       if (!p) return;
+      if (claimed && dragged) return emit({ ...e, button: 'left', drag: true, from });
       if (!sel) return emit(p);
       const text = selectedText(selectionRows(frame, sel.a, sel.b));
       if (!text.trim()) return clear();
-      stdout.write(osc52(text));
       copy(text);
       return emit({ type: 'copy', text });
     }
@@ -207,6 +207,9 @@ export function mouseSession(stdin, stdout, { copy = copyText } = {}) {
       on = want;
       press = null;
       stdout.write(want ? MOUSE_ON : MOUSE_OFF);
+    },
+    claimDrags: (fn) => {
+      claims = fn;
     },
     off: () => on && stdout.write(MOUSE_OFF),
   };

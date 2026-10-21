@@ -8,7 +8,8 @@ import { wordChanges } from '../search.js';
 import { codeColor, theme } from '../theme.js';
 import { clean } from '../text.js';
 import { useAsync, useListNav, useMouse } from './hooks.js';
-import { Lines, Panel, Row, diffSegments } from './parts.jsx';
+import { Lines, Panel, Row } from './parts.jsx';
+import { diffSegments } from './diffstyle.js';
 import { ConflictPane, useConflicts } from './ConflictPane.jsx';
 
 function fileSegments(f) {

@@ -5,7 +5,8 @@ import { renderMarkdown } from '../markdown.js';
 import { relTime } from '../parse.js';
 import { theme } from '../theme.js';
 import { fit, fitSegments, wrap } from '../text.js';
-import { useAsync, useListNav, useMouse, usePrList } from './hooks.js';
+import { useAsync, useListNav, useMouse } from './hooks.js';
+import { usePrList } from './prList.js';
 import { Lines, Panel, Row } from './parts.jsx';
 
 export const TONE = { good: theme.add, bad: theme.del, wait: theme.warn, none: theme.dim };
