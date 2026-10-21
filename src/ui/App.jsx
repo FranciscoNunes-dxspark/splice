@@ -175,6 +175,7 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
   const confirmRef = useRef(null);
   const extraRoots = useRef([]);
   const seq = useRef(0);
+  const latestLoad = useRef(null);
   const nextId = useRef(1);
   const historyPos = useRef(-1);
   const lastOutput = useRef(null);
@@ -238,16 +239,23 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
     const repo = repoRef.current;
     if (!repo) return;
     const mine = ++seq.current;
-    try {
-      const d = await loadRepo(repo, { graphLimit: graphLimit ?? dataRef.current?.graphLimit ?? 400 });
-      // A newer load (or another repo) wins over this one.
-      if (mine !== seq.current || repoRef.current !== repo) return;
-      d.loadedAt = mine;
-      dataRef.current = d;
-      setData(d);
-    } catch (e) {
-      if (repoRef.current === repo) note(`Couldn't read ${repo.name}: ${firstLine(e.message)}`, 'error');
-    }
+    const load = (async () => {
+      try {
+        const d = await loadRepo(repo, { graphLimit: graphLimit ?? dataRef.current?.graphLimit ?? 400 });
+        if (repoRef.current !== repo) return;
+        // A newer load wins over this one. It started later, so whoever awaits this one waits for it
+        // too: a command reading ctx.data after `await reload()` (the poller's reload having started
+        // in between) must not see the data from before it ran.
+        if (mine !== seq.current) return latestLoad.current;
+        d.loadedAt = mine;
+        dataRef.current = d;
+        setData(d);
+      } catch (e) {
+        if (repoRef.current === repo) note(`Couldn't read ${repo.name}: ${firstLine(e.message)}`, 'error');
+      }
+    })();
+    latestLoad.current = load;
+    return load;
   };
 
   // One command at a time, with the spinner, esc to cancel, and a line in the activity log.
