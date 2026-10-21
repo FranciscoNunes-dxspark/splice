@@ -13,7 +13,7 @@ export const HELP = [
       ['r', 'Refresh'],
       ['z', 'Undo the last commit, amend, merge, rebase, reset, switch or discard (asks first)'],
       ['esc', 'Cancel the running command, or clear the activity lines'],
-      [',', 'Settings (/settings): accent colour, mouse, updates, folders to scan, recent, history'],
+      [',', 'Settings (/settings): accent colour, mouse, updates, notifications, folders to scan, recent, history'],
       ['?', 'This help'],
       ['q / ctrl+c', 'Quit'],
       ['mouse', 'Click a tab, a row or the prompt · double-click does ↵ · the wheel scrolls\ndrag to select text, copied when you let go'],

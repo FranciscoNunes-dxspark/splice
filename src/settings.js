@@ -2,6 +2,7 @@
 // without the UI; actions.js shows it in a picker and makes the changes.
 import { DEFAULT_ACCENT, theme } from './theme.js';
 import { fit } from './text.js';
+import { notifySeconds } from './notify.js';
 
 const isOn = (value) => value !== false;
 const count = (n, one, many = `${one}s`) => (n ? `${n} ${n === 1 ? one : many}` : 'none');
@@ -38,6 +39,13 @@ export function settingRows(config, { file = '', mouse = true } = {}) {
       label: 'Stash untracked files',
       value: isOn(config.stashUntracked) ? 'on' : 'off',
       note: isOn(config.stashUntracked) ? 's and /stash take new files too (/stash --no-untracked)' : 'only changes to tracked files (/stash -u)',
+      action: 'toggle',
+    },
+    {
+      id: 'notify',
+      label: 'Notify when done',
+      value: isOn(config.notify) ? 'on' : 'off',
+      note: isOn(config.notify) ? `a bell and a notification after ${notifySeconds(config)} s, and for your PRs` : 'say nothing when a long command ends',
       action: 'toggle',
     },
     { id: 'roots', label: 'Folders to scan', value: count(roots.length, 'folder'), note: 'see them, add or remove', action: 'roots' },

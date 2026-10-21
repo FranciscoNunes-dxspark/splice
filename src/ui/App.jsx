@@ -29,6 +29,7 @@ import { Picker } from './Picker.jsx';
 import { RebaseEditor } from './RebaseEditor.jsx';
 import { WELCOME_HEIGHT, Welcome } from './Pet.jsx';
 import { FACES, moodFor } from '../pet.js';
+import { worthNotifying } from '../notify.js';
 
 const VIEWS = [
   { id: 'graph', label: 'Graph' },
@@ -132,8 +133,10 @@ const DOUBLE_CLICK_MS = 400;
 
 // `makeHost` stands in for hosting.js's hostFor in tests, so they never call gh or az. `mouse` is
 // mouse.js's terminalMouse() from cli.jsx (missing where the terminal can't report it); tests pass their own.
-// `copy` puts text on the clipboard (cli.jsx's; tests pass a stub).
-export function App({ initialPath, reopenLast = false, config: initialConfig, checkUpdate, installUpdate, askClaude, setTitle, makeHost = hostFor, mouse, copy }) {
+// `copy` puts text on the clipboard (cli.jsx's; tests pass a stub). `notify(title, body)` says something
+// finished (cli.jsx rings the terminal's bell and raises a desktop notification); without it, as in most
+// tests, nothing is said.
+export function App({ initialPath, reopenLast = false, config: initialConfig, checkUpdate, installUpdate, askClaude, setTitle, makeHost = hostFor, mouse, copy, notify }) {
   const { exit } = useApp();
   const { columns, rows } = useTerminalSize();
   const [config, setConfigState] = useState(initialConfig);
@@ -272,11 +275,15 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
     setBusy(b);
     const id = quiet ? null : addEntry({ title, status: 'running' });
     setWelcome(false);
+    // A long run that ends says so, for when you've looked away (Settings' "Notify when done"). Claude's
+    // answers run quietly, with no line of their own, so theirs just says it's done.
+    const tell = (line) => notify && worthNotifying(Date.now() - b.started, configRef.current) && notify(`Splice: ${title}`, `${line}${repo ? ` (${repo.name})` : ''}`);
     try {
       const { stdout, stderr } = await start(controller.signal);
       const out = [stdout.trimEnd(), stderr.trimEnd()].filter(Boolean).join('\n');
       lastOutput.current = { title, text: out || '(no output)' };
       if (id) updateEntry(id, { status: 'ok', lines: out ? out.split('\n') : ['Done'] });
+      tell(quiet || !out ? 'Done' : firstLine(out));
       return { ok: true, out };
     } catch (error) {
       lastOutput.current = { title, text: error.message };
@@ -285,6 +292,7 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
       else if (quietError) id && removeEntry(id);
       else if (id) updateEntry(id, { status: 'error', lines });
       else addEntry({ title, status: 'error', lines });
+      if (!error.cancelled && !quietError) tell(`Failed: ${firstLine(error.message)}`);
       return { ok: false, error };
     } finally {
       busyRef.current = null;
@@ -390,6 +398,13 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
       return ctx.hostCache.host;
     },
     prsChanged: () => setPrVersion((v) => v + 1),
+    // What the PR list's poll found on your own pull requests (prList.js): checks finished, a new review.
+    prNews: (news) => {
+      for (const n of news) {
+        note(`${n.title}: ${n.body}`);
+        if (notify && configRef.current.notify !== false) notify(`Splice: ${n.title}`, n.body);
+      }
+    },
     // claude.js's `ask`, from cli.jsx. Tests pass a stub, or nothing (and the Claude keys say it's unavailable).
     askClaude,
     // Whether this terminal can report the mouse at all (/settings says so).

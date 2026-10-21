@@ -66,6 +66,8 @@ export function githubPr(p, me) {
     time: Date.parse(p.updatedAt) / 1000,
     review: GH_REVIEW[p.reviewDecision] ?? { text: 'No reviews', tone: 'none' },
     checks: checkSummary(p.statusCheckRollup),
+    // Each reviewer's latest review, which notify.js compares from one poll to the next.
+    reviews: (p.latestReviews ?? []).map((r) => ({ by: r.author?.login ?? '', state: r.state, at: r.submittedAt ?? '' })),
     reviewers: [],
     description: p.body ?? '',
   };
@@ -111,6 +113,8 @@ export function azurePr(p, me, remote) {
     time: Date.parse(p.creationDate) / 1000,
     review: azureReview(reviewers),
     checks: null,
+    // The votes cast, as reviews: a vote that changes is a new one.
+    reviews: reviewers.filter((r) => r.vote !== 'none' && !r.me && !r.group).map((r) => ({ by: r.name, state: r.vote, at: '' })),
     conflicts: p.mergeStatus === 'conflicts',
     reviewers,
     description: p.description ?? '',
@@ -361,7 +365,7 @@ function github(root, remote) {
       const [login, list] = await Promise.all([
         whoami(),
         json(gh(['pr', 'list', ...repoArg, '--state', 'open', '--limit', '100', '--json',
-          'number,title,author,headRefName,baseRefName,isDraft,reviewDecision,url,updatedAt,reviewRequests,statusCheckRollup,body'])),
+          'number,title,author,headRefName,baseRefName,isDraft,reviewDecision,url,updatedAt,reviewRequests,statusCheckRollup,latestReviews,body'])),
       ]);
       return sortPrs(list.map((p) => githubPr(p, login)));
     },

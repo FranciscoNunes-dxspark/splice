@@ -9,6 +9,7 @@ import { checkForUpdate, installUpdate, removeOldExecutables } from './update.js
 import { ask } from './claude.js';
 import { copyToClipboard } from './clipboard.js';
 import { terminalMouse } from './mouse.js';
+import { notification } from './notify.js';
 
 const args = process.argv.slice(2);
 
@@ -66,6 +67,8 @@ const app = render(
     setTitle={setTitle}
     mouse={mouse}
     copy={copy}
+    // The bell and a desktop notification, written straight to the terminal (they draw nothing).
+    notify={(title, body) => process.stdout.write(notification(title, body))}
   />,
   // Through the mouse's stdout, which watches the frames to select text from.
   { exitOnCtrlC: false, stdout: mouse?.stdout ?? process.stdout },
