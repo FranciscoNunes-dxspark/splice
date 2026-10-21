@@ -26,6 +26,9 @@ before(() => {
   mkdirSync(dir);
   process.env.SPLICE_HOME = join(base, 'home');
   run(base, 'init', '-q', '--bare', '-b', 'main', origin);
+  // The server makes commits too (a squash merge), so it needs a name of its own on runners without one.
+  server('config', 'user.name', 'Server');
+  server('config', 'user.email', 'server@example.com');
   git('init', '-q', '-b', 'main');
   git('config', 'core.autocrlf', 'false');
   git('config', 'user.name', 'Test');
