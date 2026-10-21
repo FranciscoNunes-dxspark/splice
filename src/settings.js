@@ -48,6 +48,13 @@ export function settingRows(config, { file = '', mouse = true } = {}) {
       note: isOn(config.notify) ? `a bell and a notification after ${notifySeconds(config)} s, and for your PRs` : 'say nothing when a long command ends',
       action: 'toggle',
     },
+    {
+      id: 'checkBeforePush',
+      label: 'Check before pushing',
+      value: isOn(config.checkBeforePush) ? 'on' : 'off',
+      note: isOn(config.checkBeforePush) ? 'asks first when the commits have files over 50 MB or what look like secrets' : 'push without looking at the commits first',
+      action: 'toggle',
+    },
     { id: 'roots', label: 'Folders to scan', value: count(roots.length, 'folder'), note: 'see them, add or remove', action: 'roots' },
     { id: 'recent', label: 'Recent repositories', value: count(recent.length, 'repository', 'repositories'), note: recent.length ? 'forget them' : '', action: recent.length ? 'clear' : 'none' },
     { id: 'history', label: 'Prompt history', value: count(history.length, 'entry', 'entries'), note: history.length ? 'clear it' : '', action: history.length ? 'clear' : 'none' },

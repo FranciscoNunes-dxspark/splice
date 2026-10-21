@@ -26,6 +26,7 @@ import {
   planSummary,
   prepare,
 } from './rebase.js';
+import { blobIds, checkCommits, foundCount, foundSummary, parseBatchCheck, parsePushLog, pushCheckText, pushLogArgs, pushRange } from './pushcheck.js';
 import { eachLimited, fetchRepo } from './repos.js';
 import { settingRows, settingSegments } from './settings.js';
 import { SIGNING_KEYS, checkGpgKey, explainSigning, needsPinentryCheck, signingConfig } from './signing.js';
@@ -145,12 +146,14 @@ export async function push(ctx, args = []) {
       });
       if (!ok) return;
     }
+    if (!(await checkBeforePush(ctx, pushRange({ upstream: branch.upstream, remote: named })))) return { ok: false };
     // Only a branch without an upstream starts tracking the remote it was pushed to.
     return ctx.exec(['push', ...flags, ...(branch.upstream ? [] : ['-u']), named, branch.head], { label: 'Pushing' });
   }
   if (!branch.upstream) {
     const remote = remotes.includes('origin') ? 'origin' : remotes[0];
     if (!remote) return ctx.note('This repository has no remote. Add one with: !remote add origin <url>', 'error');
+    if (!(await checkBeforePush(ctx, pushRange()))) return { ok: false };
     return ctx.exec(['push', ...flags, '-u', remote, branch.head], { label: 'Pushing' });
   }
   if (flags.includes('--force-with-lease')) {
@@ -162,7 +165,41 @@ export async function push(ctx, args = []) {
     });
     if (!ok) return;
   }
+  if (!(await checkBeforePush(ctx, pushRange({ upstream: branch.upstream })))) return { ok: false };
   return ctx.exec(['push', ...flags], { label: 'Pushing' });
+}
+
+/**
+ * Before a push: the commits in `range` (pushcheck.js's pushRange) are scanned for files over 50 MB and for
+ * what look like secrets in their added lines. Anything found is listed in the viewer, and the push goes
+ * ahead only if you say so. True to push. Off in /settings ("Check before pushing"); a check that can't
+ * run doesn't hold the push up.
+ */
+async function checkBeforePush(ctx, range) {
+  if (ctx.config.checkBeforePush === false) return true;
+  let found = null;
+  const r = await ctx.task(
+    'Checking the commits to push',
+    async (signal) => {
+      const commits = parsePushLog(await ctx.git(pushLogArgs(range), { signal }));
+      const ids = blobIds(commits);
+      const sizes = ids.length ? parseBatchCheck(await ctx.git(['cat-file', '--batch-check'], { signal, input: `${ids.join('\n')}\n` })) : new Map();
+      found = checkCommits(commits, sizes);
+      return { stdout: '', stderr: '' };
+    },
+    { label: 'Checking the commits to push', refresh: false, quiet: true, quietError: true },
+  );
+  if (!r.ok) return !r.error?.cancelled && r.error?.message !== 'busy';
+  if (!foundCount(found)) return true;
+  ctx.showText(`Before pushing: ${foundSummary(found)}`, pushCheckText(found));
+  const ok = await ctx.confirm({
+    title: `Push anyway, with ${foundSummary(found)}?`,
+    detail: 'Listed above, with where they are. No leaves everything as it is, to take them out first.',
+    options: YES_NO('Yes, push anyway'),
+    danger: true,
+  });
+  ctx.closeOverlay();
+  return Boolean(ok);
 }
 
 /**
