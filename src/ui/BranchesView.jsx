@@ -126,7 +126,7 @@ export function BranchesView({ data, ctx, width, height, active, prVersion }) {
     else if (input === 'D') a.compare(ctx, name);
     else if (input === 'o') {
       if (selPr) ctx.openUrl(selPr.url);
-      else if (!prs.host) ctx.note("This repository's remote isn't on GitHub or Azure DevOps.", 'error');
+      else if (!prs.host) ctx.note("This repository's remote isn't on GitHub, Azure DevOps or GitLab.", 'error');
       else if (!prs.value) ctx.note(`Pull requests from ${prs.host.name} haven't loaded. Check the PRs view (6).`, 'error');
       else ctx.note(`${name} has no open pull request.`, 'error');
     }

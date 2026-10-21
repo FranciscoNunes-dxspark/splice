@@ -64,12 +64,15 @@ export function placeThreads(lines, threads, pos = diffPositions(lines)) {
 /**
  * Where a new comment on a diff line goes: { path, line, side, text } (`text` the line without its
  * + - or space), or null for a line no comment can go on (headers, hunk headers, "\ No newline").
- * Added lines and the unchanged ones around them are on the new side, removed lines on the old.
+ * Added lines and the unchanged ones around them are on the new side, removed lines on the old. An
+ * unchanged line also has `old`, its number before (GitLab wants both).
  */
 export function lineTarget(pos, line) {
   if (!pos?.path) return null;
   const side = pos.new != null ? 'new' : 'old';
-  return { path: pos.path, line: pos[side], side, text: (line ?? '').slice(1) };
+  const out = { path: pos.path, line: pos[side], side, text: (line ?? '').slice(1) };
+  if (side === 'new' && pos.old != null) out.old = pos.old;
+  return out;
 }
 
 /** A thread as viewer lines (segments): a box of its comments, Markdown formatted, `width` wide. */
