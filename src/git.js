@@ -35,16 +35,17 @@ function failure(stdout, stderr, fallback, code) {
 /**
  * Runs git in `cwd` and resolves with { stdout, stderr }. Rejects with a GitError carrying git's own message.
  * `input` is written to git's stdin (patches for `git apply -`). With `tree`, cancelling stops what git
- * started as well (the command `git bisect run` tests with), not git alone.
+ * started as well (the command `git bisect run` tests with), not git alone. `codes`: exit codes other
+ * than 0 that aren't failures (merge-tree's 1 for "it would conflict"); the result then carries the `code`.
  */
-export function run(cwd, args, { signal, input, env, tree = false } = {}) {
+export function run(cwd, args, { signal, input, env, tree = false, codes = [] } = {}) {
   const all = ['-c', 'core.quotepath=false', '-c', 'color.ui=false', ...args];
-  return spawnGit(cwd, all, { signal, input, env: env ? { ...ENV, ...env } : ENV, tree });
+  return spawnGit(cwd, all, { signal, input, env: env ? { ...ENV, ...env } : ENV, tree, codes });
 }
 
 // spawn rather than execFile, which doesn't pass `detached` on. Started detached, git also leads a
 // process group of its own, which what it runs is in too, so with `tree` cancelling can stop the lot.
-function spawnGit(cwd, args, { signal, input, env, tree }) {
+function spawnGit(cwd, args, { signal, input, env, tree, codes }) {
   return new Promise((resolve, reject) => {
     const child = spawn('git', args, { cwd, env, windowsHide: true, detached: DETACH });
     const out = [];
@@ -75,7 +76,7 @@ function spawnGit(cwd, args, { signal, input, env, tree }) {
       const stdout = out.join('');
       const stderr = err.join('');
       if (stopped) return reject(new GitError('Cancelled', { cancelled: true }));
-      if (code === 0) return resolve({ stdout, stderr });
+      if (code === 0 || codes.includes(code)) return resolve({ stdout, stderr, code });
       reject(failure(stdout, stderr, `git exited with ${code}`, code));
     });
     // Nothing waits on stdin: git gets the input, or an end of it at once.

@@ -2,12 +2,13 @@
 // `ctx` is the app's handle: data, exec, confirm, note, prefill, and so on (see App.jsx).
 import { existsSync, realpathSync, statSync } from 'node:fs';
 import { readFile, rm, writeFile } from 'node:fs/promises';
-import { basename, join, resolve } from 'node:path';
+import { basename, join, relative, resolve } from 'node:path';
 import { READ_ONLY, blameInput, blamePrompt, clip, commitPrompt, lookPrompt, parseCommitMessage, parsePrDraft, parseResolution, parseSplit, prPrompt, resolveInput, resolvePrompt, splitInput, splitPrompt } from './claude.js';
 import { absorbFiles, absorbSummary, absorbText, blameMap, blameTargets, groupPatch, lineRanges, planAbsorb } from './absorb.js';
 import { cleanupChoice, cleanupCount, cleanupOptions, cleanupText, planCleanup, readCleanup } from './cleanup.js';
 import { configFile } from './config.js';
 import { doctorFindings, doctorText, ignoreLines, readDoctor } from './doctor.js';
+import { MIN_GIT, atLeast, forecast, forecastLine, forecastText, gitVersion, unsupported } from './forecast.js';
 import { droppedPaths, insideRepo } from './drop.js';
 import { ignoreChoices, withIgnoreLine } from './ignore.js';
 import { matchLineEndings, parseConflicts, takeSide, unifiedDiff } from './conflict.js';
@@ -31,6 +32,7 @@ import {
 import { blobIds, checkCommits, foundCount, foundSummary, parseBatchCheck, parsePushLog, pushCheckText, pushLogArgs, pushRange } from './pushcheck.js';
 import { eachLimited, fetchRepo } from './repos.js';
 import { settingRows, settingSegments } from './settings.js';
+import { forcePushes, forwardInput, planSync, rebasingElsewhere, syncSummary, syncText, updateBranchArgs } from './sync.js';
 import { SIGNING_KEYS, checkGpgKey, explainSigning, needsPinentryCheck, signingConfig } from './signing.js';
 import { fit } from './text.js';
 import { DEFAULT_ACCENT, isColour, setAccent, theme } from './theme.js';
@@ -544,7 +546,8 @@ export async function merge(ctx, ref, { ask = false } = {}) {
   if (!needRepo(ctx)) return;
   if (!ref) return ctx.prefill('/merge ');
   if (ask) {
-    const ok = await ctx.confirm({ title: `Merge ${ref} into ${currentName(ctx)}?`, options: YES_NO('Yes, merge') });
+    const detail = forecastLine(await forecastFor(ctx, 'HEAD', ref), 'merge');
+    const ok = await ctx.confirm({ title: `Merge ${ref} into ${currentName(ctx)}?`, ...(detail ? { detail } : {}), options: YES_NO('Yes, merge') });
     if (!ok) return;
   }
   await ctx.exec(['merge', '--no-edit', ref], { label: 'Merging' });
@@ -556,9 +559,10 @@ export async function rebase(ctx, ref) {
   if (!ref) return ctx.prefill('/rebase ');
   const interactive = ref.match(/^(?:-i|--interactive)(?:\s+(.*))?$/);
   if (interactive) return interactive[1] ? openRebase(ctx, interactive[1].trim(), interactive[1].trim()) : ctx.prefill('/rebase -i ');
+  const expect = forecastLine(await forecastFor(ctx, 'HEAD', ref), 'rebase');
   const ok = await ctx.confirm({
     title: `Rebase ${currentName(ctx)} onto ${ref}?`,
-    detail: `Rewrites the commits on ${currentName(ctx)} that aren't on ${ref}. Avoid this on branches others use.`,
+    detail: `${expect ? `${expect} ` : ''}Rewrites the commits on ${currentName(ctx)} that aren't on ${ref}. Avoid this on branches others use.`,
     options: YES_NO('Yes, rebase'),
   });
   if (!ok) return;
@@ -572,6 +576,227 @@ export async function rebase(ctx, ref) {
 function afterRewrite(ctx, was = null) {
   if (was && ctx.data.status.branch.oid === was) return;
   ctx.note(`${currentName(ctx)} is rewritten. /range-diff shows what changed in each commit.`);
+}
+
+/** A ref's commit: from the refs already loaded when it's a branch, else from git. Null when there's no such commit. */
+async function commitOf(ctx, ref) {
+  if (ref === 'HEAD') return ctx.data.status.branch.oid;
+  const known = [...ctx.data.refs.local, ...ctx.data.refs.remote].find((b) => b.name === ref)?.oid;
+  if (known) return known;
+  return (await ctx.git(['rev-parse', '--verify', '-q', `${ref}^{commit}`]).catch(() => '')).trim() || null;
+}
+
+/** Whether merging (or rebasing) `a` and `b` would conflict (forecast.js), or null when there's no telling. */
+async function forecastFor(ctx, a, b) {
+  try {
+    const [x, y] = await Promise.all([commitOf(ctx, a), commitOf(ctx, b)]);
+    return x && y ? await forecast(ctx.data.root, x, y, { oids: [x, y] }) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** /forecast <ref> [base]: whether merging ref and base (the default branch if not given) would conflict, and in which files. */
+export async function forecastConflicts(ctx, text) {
+  if (!needRepo(ctx)) return;
+  const [ref, given] = splitArgs(text ?? '');
+  if (!ref) return ctx.prefill('/forecast ');
+  const base = given ?? defaultBranch(ctx.data.refs, ctx.data.remotes)?.ref;
+  if (!base) return ctx.note(`Couldn't tell which branch is the default one. Say what to forecast against: /forecast ${ref} <base>`, 'error');
+  const why = await unsupported(ctx.data.root);
+  if (why) return ctx.note(why, 'error');
+  return ctx.task(
+    `Conflict forecast: ${ref} and ${base}`,
+    async (signal) => {
+      const [x, y] = await Promise.all([commitOf(ctx, ref), commitOf(ctx, base)]);
+      if (!x || !y) throw new Error(`No branch, tag or commit called ${x ? base : ref}.`);
+      if (x === y) return { stdout: `${ref} and ${base} are the same commit, so there's nothing to merge.`, stderr: '' };
+      return { stdout: forecastText(await forecast(ctx.data.root, x, y, { signal, oids: [x, y] }), ref, base), stderr: '' };
+    },
+    { label: 'Forecasting conflicts', refresh: false },
+  );
+}
+
+/**
+ * /sync (S in Branches): fetches every remote, then brings each local branch with an upstream up to date
+ * where it can do so without rewriting anything: a branch that's only behind is fast-forwarded (the one
+ * checked out here with merge --ff-only, when there's nothing uncommitted; the others with update-ref,
+ * never one checked out in another worktree). Branches that are ahead or have diverged stay as they are;
+ * the report in the viewer says so, and for the current one, offers to rebase it onto its upstream.
+ * Both moves are in the branch's reflog as "sync", so z undoes the current one's.
+ */
+export async function sync(ctx) {
+  if (!needRepo(ctx)) return;
+  if (ctx.data.state) return ctx.note(`A ${OP[ctx.data.state]} is in progress. Finish it first (/continue or /abort), then sync.`, 'error');
+  if (!ctx.data.remotes.length) return ctx.note('This repository has no remote to sync with. /remote add <name> <url> adds one.', 'error');
+  const fetched = await ctx.exec(['fetch', '--all', '--prune'], { label: 'Fetching' });
+  if (!fetched.ok) return fetched;
+  const { refs, status, worktrees, commonDir, gitDir, root } = ctx.data;
+  const show = (p) => relative(root, p) || p;
+  const elsewhere = new Map(worktrees.filter((w) => !w.current && w.branch).map((w) => [w.branch, show(w.path)]));
+  for (const [b, path] of await rebasingElsewhere(commonDir, gitDir)) elsewhere.set(b, show(path));
+  const dirty = status.files.some((f) => f.kind !== 'untracked');
+  const plan = planSync({ refs, current: status.branch.head, elsewhere, dirty });
+  const moved = [];
+  const failed = [];
+  if (plan.forward.length) {
+    // One transaction, each branch moved only from where it was read: one that moved meanwhile stops it.
+    const r = await ctx.exec(['update-ref', '--stdin', '-m', 'sync: fast-forward'], {
+      input: forwardInput(plan.forward),
+      label: 'Fast-forwarding branches',
+      refresh: false,
+      quiet: true,
+      quietError: true,
+    });
+    if (r.ok) moved.push(...plan.forward.map((b) => b.name));
+    else failed.push(...plan.forward.map((b) => ({ ...b, why: firstLine(r.error.message) })));
+  }
+  if (plan.current) {
+    const b = plan.current;
+    const r = await ctx.exec(['merge', '--ff-only', b.upstream], { label: 'Fast-forwarding', refresh: false, quietError: true, env: { GIT_REFLOG_ACTION: 'sync' } });
+    if (r.ok) moved.push(b.name);
+    else failed.push({ ...b, why: firstLine(r.error.message) });
+  }
+  await ctx.reload();
+  const result = { moved, failed };
+  ctx.showText('Sync', syncText(plan, result));
+  ctx.note(syncSummary(plan, result), failed.length ? 'error' : 'ok');
+  const mine = plan.diverged.find((b) => b.current);
+  if (!mine) return;
+  const expect = forecastLine(await forecastFor(ctx, 'HEAD', mine.upstream), 'rebase');
+  const autostash = ctx.data.status.files.some((f) => f.kind !== 'untracked');
+  const ok = await ctx.confirm({
+    title: `${mine.name} and ${mine.upstream} have diverged. Rebase ${mine.name} onto ${mine.upstream}?`,
+    detail: `${expect ? `${expect} ` : ''}Replays its ${mine.ahead} commit${mine.ahead === 1 ? '' : 's'} on the ${mine.behind} new one${mine.behind === 1 ? '' : 's'} there${
+      autostash ? ', with your changes set aside (--autostash)' : ''
+    }; then P pushes it.`,
+    options: [
+      { label: 'Yes, rebase it', value: true },
+      { label: 'No, leave it', value: false },
+    ],
+  });
+  if (!ok) return;
+  ctx.closeOverlay();
+  await ctx.exec(['rebase', '--autostash', mine.upstream], { label: 'Rebasing' });
+  afterConflicts(ctx);
+}
+
+const count = async (ctx, range) => Number((await ctx.git(['rev-list', '--count', ...range, '--']).catch(() => '0')).trim()) || 0;
+const lines = (s) => s.split('\n').filter(Boolean);
+const names = (list) => (list.length > 4 ? `${list.slice(0, 4).join(', ')} and ${list.length - 4} more` : list.join(', '));
+
+/**
+ * /update-branch [base] [--stack] (B in Branches): rebases the current branch onto the latest default
+ * branch (fetched first; or onto `base`), setting uncommitted changes aside meanwhile. When other local
+ * branches are stacked on top of it, or with --stack, the whole stack is rebased with --update-refs
+ * (git 2.38): from its top branch, so every branch in it moves, then back to this one. A branch already
+ * pushed is offered a --force-with-lease push afterwards. Conflicts stop it as any rebase: /continue, /abort.
+ */
+export async function updateBranch(ctx, text) {
+  if (!needRepo(ctx)) return;
+  const { state } = ctx.data;
+  if (state) return ctx.note(`A ${OP[state]} is in progress. Finish it first (/continue or /abort).`, 'error');
+  const head = ctx.data.status.branch.head;
+  if (!head) return ctx.note('HEAD is detached. Check out the branch to bring up to date first.', 'error');
+  const args = updateBranchArgs(splitArgs(text ?? ''));
+  if (args.error) return ctx.note(args.error, 'error');
+  const def = defaultBranch(ctx.data.refs, ctx.data.remotes);
+  const base = args.base ?? def?.ref;
+  if (!base) return ctx.note("Couldn't tell which branch is the default one. Say what to rebase onto: /update-branch <base>", 'error');
+  if (!args.base && (head === def.name || head === def.ref)) {
+    return ctx.note(`${head} is the default branch itself. /sync (S in Branches) brings it up to date with ${def.ref}.`, 'error');
+  }
+  // The base's latest commits first, when it's a remote branch.
+  const rb = ctx.data.refs.remote.find((b) => b.name === base);
+  if (rb) {
+    const r = await ctx.exec(['fetch', rb.remote, base.slice(rb.remote.length + 1)], { label: `Fetching ${base}` });
+    if (!r.ok) return r;
+  }
+  if (!(await commitOf(ctx, base))) return ctx.note(`No branch, tag or commit called ${base}.`, 'error');
+  if (await isAncestor(ctx, base, 'HEAD')) return ctx.note(`${head} already has everything on ${base}.`, 'ok');
+
+  const { local, remote: remoteRefs } = ctx.data.refs;
+  const oid = ctx.data.status.branch.oid;
+  const elsewhere = new Set(ctx.data.worktrees.filter((w) => !w.current && w.branch).map((w) => w.branch));
+  const [above, version, configured] = await Promise.all([
+    // Branches with this one's commits and more: stacked on top of it.
+    ctx.git(['for-each-ref', '--contains', 'HEAD', '--format=%(refname:short)', 'refs/heads']).then(lines, () => []),
+    gitVersion(ctx.data.root),
+    ctx.git(['config', '--bool', 'rebase.updateRefs']).then((s) => s.trim() === 'true', () => false),
+  ]);
+  const onTop = above.filter((n) => n !== head && local.find((b) => b.name === n)?.oid !== oid);
+  // The stack's top: the one branch on top that none of the others contain. Branches that fork can't move in one rebase.
+  const tops = onTop.length ? lines(await ctx.git(['merge-base', '--independent', ...onTop]).catch(() => '')).map((h) => onTop.filter((n) => local.find((b) => b.name === n)?.oid === h)).flat() : [];
+  const canUpdateRefs = atLeast(version, MIN_GIT);
+  if (args.stack && !canUpdateRefs) return ctx.note(`Moving a stack of branches needs git ${MIN_GIT.join('.')} or later (rebase --update-refs).`, 'error');
+  const top = canUpdateRefs && tops.length === 1 && !elsewhere.has(tops[0]) ? tops[0] : null;
+  const stack = canUpdateRefs && (args.stack || Boolean(top));
+  const target = top ?? head;
+  const updateRefs = stack || configured;
+  // The branches whose tips are among the commits being replayed: --update-refs moves them (not ones checked out elsewhere).
+  const inside = (await ctx.git(['for-each-ref', '--merged', target, '--no-merged', base, '--format=%(refname:short)', 'refs/heads']).then(lines, () => []))
+    .filter((n) => n !== target);
+  const moving = updateRefs ? inside.filter((n) => !elsewhere.has(n)) : [];
+  const branchOf = (n) => local.find((b) => b.name === n);
+  // A branch is pushed when its upstream has commits the base doesn't: rebasing rewrites them.
+  const rewritten = [target, ...moving];
+  const pushed = (
+    await Promise.all(
+      rewritten.map(async (n) => {
+        const b = branchOf(n);
+        const live = b?.upstream && !b.gone && remoteRefs.some((r) => r.name === b.upstream);
+        return live && (await count(ctx, [b.upstream, `^${base}`])) > 0 ? { name: n, upstream: b.upstream } : null;
+      }),
+    )
+  ).filter(Boolean);
+  const [n, f] = await Promise.all([count(ctx, [target, `^${base}`]), forecastFor(ctx, target === head ? 'HEAD' : target, base)]);
+  const autostash = ctx.data.status.files.some((x) => x.kind !== 'untracked');
+
+  // The whole story goes in the viewer, so the question's one line can say what matters most.
+  const story = [
+    `Replays ${n} commit${n === 1 ? '' : 's'}${top ? ` of ${top}, the top of the stack,` : ` of ${head}`} on top of ${base}${autostash ? ', setting your uncommitted changes aside meanwhile and putting them back after (--autostash)' : ''}.`,
+    moving.length ? `Moves with it (--update-refs):\n${moving.map((m) => `  ${m}`).join('\n')}${top ? `\nThen switches back to ${head}.` : ''}` : '',
+    !updateRefs && inside.length ? `${names(inside)} ${inside.length === 1 ? 'sits' : 'sit'} under ${head} and stay${inside.length === 1 ? 's' : ''} where ${inside.length === 1 ? 'it is' : 'they are'}: /update-branch --stack moves ${inside.length === 1 ? 'it' : 'them'} too.` : '',
+    tops.length > 1 ? `${names(onTop)} are on top of ${head} but fork into separate stacks, so they stay where they are.` : '',
+    tops.length === 1 && !top ? (canUpdateRefs ? `${tops[0]} is on top of ${head} but checked out in another worktree, so it stays where it is.` : `${names(onTop)} on top of ${head} stay${onTop.length === 1 ? 's' : ''} where they are: moving them needs git ${MIN_GIT.join('.')} or later.`) : '',
+    pushed.length ? `Already pushed: ${pushed.map((p) => `${p.name} (${p.upstream})`).join(', ')}. Rebasing rewrites ${pushed.length === 1 ? 'it' : 'them'}, so you'll be asked about a force push (--force-with-lease) once it's done.` : '',
+    forecastLine(f, 'rebase'),
+  ].filter(Boolean);
+  ctx.showText(top ? `Update the stack under ${top}` : `Update ${head}`, story.join('\n\n'));
+  const ok = await ctx.confirm({
+    title: top ? `Rebase the stack under ${top} onto ${base}?` : `Rebase ${head} onto ${base}?`,
+    detail: [pushed.length ? `${names(pushed.map((p) => p.name))} ${pushed.length === 1 ? 'is' : 'are'} already pushed.` : '', forecastLine(f, 'rebase'), 'More above.'].filter(Boolean).join(' '),
+    options: YES_NO('Yes, rebase'),
+    danger: pushed.length > 0,
+  });
+  ctx.closeOverlay();
+  if (!ok) return;
+  // --update-refs leaves alone a branch checked out anywhere, this one included, so HEAD lets go of it
+  // first (on the same commit, so nothing else changes); the rebase then checks out the top.
+  if (top && !(await ctx.exec(['switch', '--detach'], { label: 'Letting go of the branch', refresh: false, quiet: true })).ok) return;
+  const r = await ctx.exec(['rebase', '--autostash', ...(stack ? ['--update-refs'] : []), base, ...(top ? [top] : [])], { label: 'Rebasing' });
+  if (ctx.data.state) {
+    afterConflicts(ctx);
+    if (top) ctx.note(`Once it's done you'll be on ${top}, the top of the stack: ↵ on ${head} in Branches switches back.`);
+    return r;
+  }
+  // Back on the branch you were on, also when the rebase couldn't start.
+  if (top) {
+    const back = await ctx.exec(['switch', head], { label: 'Switching back' });
+    if (!back.ok) return back;
+  }
+  if (!r.ok || !pushed.length) return r;
+  const push = await ctx.confirm({
+    title: `Force-push ${names(pushed.map((p) => p.name))}?`,
+    detail: `Replaces ${names(pushed.map((p) => p.upstream))} with the rebased commits. Uses --force-with-lease, so it stops if someone else pushed.`,
+    options: YES_NO('Yes, force-push'),
+    danger: true,
+  });
+  if (!push) return ctx.note(`Not pushed. /push --force sends ${head} when you're ready.`);
+  for (const p of forcePushes(pushed, ctx.data.remotes)) {
+    const done = await ctx.exec(p, { label: 'Pushing' });
+    if (!done.ok) return done;
+  }
 }
 
 const OP = { merging: 'merge', rebasing: 'rebase', 'cherry-picking': 'cherry-pick', reverting: 'revert', bisecting: 'bisect' };

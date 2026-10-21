@@ -47,7 +47,7 @@ const HELP_SECTIONS = [...HELP, commandsSection(COMMANDS)];
 const HINTS = {
   graph: '↵ diff · c checkout · b branch · m merge · i rebase from here · C cherry-pick · V select several · v revert · X reset · B bisect · e/R Claude explains/reviews',
   changes: 'space stage · ↵ hunks/lines · a all · u unstage all · d discard · i ignore · s stash file · v select files · c commit · A amend · M message in your editor · F fix up · H history · B blame · W Claude writes it · S splits it · R review · on a submodule: I init/update · o open',
-  branches: '↵ checkout · n new · m merge · e rebase · d delete · D diff vs default · o open PR · C clean up · U upstream · M remotes · on a tag: u push · R release',
+  branches: '↵ checkout · n new · m merge · e rebase · d delete · D diff vs default · o open PR · S sync · B update branch · C clean up · U upstream · M remotes · on a tag: u push · R release',
   stash: '↵ diff · s stash · S with a message · a apply · o pop · x drop · F files, to restore one',
   prs: '↵ diff · c checkout · a approve · m merge · s checks · A reviewers · D draft/ready · E title · B description · C comment · o open in browser · n new PR · W Claude drafts one · e/R explain/review',
   repos: '↵ open · F fetch them all · s scan folder · x forget',
