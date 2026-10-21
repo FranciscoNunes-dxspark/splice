@@ -64,14 +64,16 @@ export function placeThreads(lines, threads, pos = diffPositions(lines)) {
 /**
  * Where a new comment on a diff line goes: { path, line, side, text } (`text` the line without its
  * + - or space), or null for a line no comment can go on (headers, hunk headers, "\ No newline").
- * Added lines and the unchanged ones around them are on the new side, removed lines on the old. An
- * unchanged line also has `old`, its number before (GitLab wants both).
+ * Added lines are on the new side, removed lines on the old, and the unchanged ones around them on
+ * `prefer`'s (the new side unless asked: side by side, the one the cursor is on). An unchanged line
+ * also has its number on the other side, `old` or `new` (GitLab wants both).
  */
-export function lineTarget(pos, line) {
+export function lineTarget(pos, line, prefer = 'new') {
   if (!pos?.path) return null;
-  const side = pos.new != null ? 'new' : 'old';
+  const side = pos[prefer] != null ? prefer : prefer === 'new' ? 'old' : 'new';
   const out = { path: pos.path, line: pos[side], side, text: (line ?? '').slice(1) };
-  if (side === 'new' && pos.old != null) out.old = pos.old;
+  const other = side === 'new' ? 'old' : 'new';
+  if (pos[other] != null) out[other] = pos[other];
   return out;
 }
 

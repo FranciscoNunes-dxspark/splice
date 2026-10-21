@@ -530,13 +530,15 @@ export function gitlabThreads(discussions, head = null) {
 
 /**
  * The discussions body for a new thread on one line of a merge request's diff: `refs` is the merge
- * request's diff_refs, `at` { path, line, side, old }. A line both sides have (one around the changes)
- * needs both its numbers, which `old` gives.
+ * request's diff_refs, `at` { path, line, side, old | new }. A line both sides have (one around the changes)
+ * needs both its numbers, which `old` or `new` gives.
  */
 export function gitlabNewThreadBody(refs, at, text) {
   const position = { position_type: 'text', base_sha: refs?.base_sha, start_sha: refs?.start_sha, head_sha: refs?.head_sha, old_path: at.path, new_path: at.path };
-  if (at.side === 'old') position.old_line = at.line;
-  else {
+  if (at.side === 'old') {
+    position.old_line = at.line;
+    if (at.new != null) position.new_line = at.new;
+  } else {
     position.new_line = at.line;
     if (at.old != null) position.old_line = at.old;
   }

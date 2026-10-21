@@ -3,13 +3,14 @@
 import { DEFAULT_ACCENT, theme } from './theme.js';
 import { fit } from './text.js';
 import { notifySeconds } from './notify.js';
+import { SPLIT_WIDTH } from './split.js';
 
 const isOn = (value) => value !== false;
 const count = (n, one, many = `${one}s`) => (n ? `${n} ${n === 1 ? one : many}` : 'none');
 
 /**
  * The rows, from the config: { id, label, value, note, action }, where `action` is what ↵ does:
- * 'toggle' (an on/off setting named `id`), 'accent', 'roots', 'clear' (the list named `id`) or 'none'.
+ * 'toggle' (an on/off setting named `id`, on unless set false, or off unless set true where `off`), 'accent', 'roots', 'clear' (the list named `id`) or 'none'.
  * `mouse`: whether this terminal can report the mouse at all.
  */
 export function settingRows(config, { file = '', mouse = true } = {}) {
@@ -47,6 +48,14 @@ export function settingRows(config, { file = '', mouse = true } = {}) {
       value: isOn(config.notify) ? 'on' : 'off',
       note: isOn(config.notify) ? `a bell and a notification after ${notifySeconds(config)} s, and for your PRs` : 'say nothing when a long command ends',
       action: 'toggle',
+    },
+    {
+      id: 'sideBySide',
+      label: 'Side-by-side diffs',
+      value: config.sideBySide === true ? 'on' : 'off',
+      note: config.sideBySide === true ? 'one column again (w in a diff)' : `old and new in two columns, ${SPLIT_WIDTH}+ wide (w in a diff)`,
+      action: 'toggle',
+      off: true,
     },
     { id: 'roots', label: 'Folders to scan', value: count(roots.length, 'folder'), note: 'see them, add or remove', action: 'roots' },
     { id: 'recent', label: 'Recent repositories', value: count(recent.length, 'repository', 'repositories'), note: recent.length ? 'forget them' : '', action: recent.length ? 'clear' : 'none' },

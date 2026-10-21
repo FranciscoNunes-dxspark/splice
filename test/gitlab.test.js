@@ -250,6 +250,7 @@ test('a new GitLab thread: the position with the diff refs, both line numbers on
   assert.deepEqual(gitlabNewThreadBody(refs, { path: 'a.js', line: 5, side: 'new' }, 'Hm'), { body: 'Hm', position: { ...common, new_line: 5 } });
   assert.deepEqual(gitlabNewThreadBody(refs, { path: 'a.js', line: 5, side: 'old' }, 'Hm'), { body: 'Hm', position: { ...common, old_line: 5 } });
   assert.deepEqual(gitlabNewThreadBody(refs, { path: 'a.js', line: 6, side: 'new', old: 4 }, 'Hm'), { body: 'Hm', position: { ...common, new_line: 6, old_line: 4 } });
+  assert.deepEqual(gitlabNewThreadBody(refs, { path: 'a.js', line: 4, side: 'old', new: 6 }, 'Hm'), { body: 'Hm', position: { ...common, old_line: 4, new_line: 6 } });
 });
 
 // The host against a fake glab: a script on the PATH that logs each call (its arguments, and the JSON body

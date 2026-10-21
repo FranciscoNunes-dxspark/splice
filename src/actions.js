@@ -2555,6 +2555,15 @@ export function settings(ctx, { replace = false, index } = {}) {
   );
 }
 
+/**
+ * w on a diff: side by side, or back in one column, for every diff from then on (the sideBySide
+ * setting). Only where it fits: `width` is the window's, `need` what side by side takes there.
+ */
+export function toggleSideBySide(ctx, { width, need }) {
+  if (width < need) return ctx.note(`Side by side needs a window at least ${need} columns wide; this one is ${width}.`, 'error');
+  ctx.setConfig((c) => ({ ...c, sideBySide: c.sideBySide !== true }));
+}
+
 /** Redraws the settings list (or its folders) after a change, if it's on screen. */
 export function redrawSettings(ctx) {
   const o = ctx.overlay();
@@ -2563,7 +2572,8 @@ export function redrawSettings(ctx) {
 
 async function changeSetting(ctx, row) {
   if (row.action === 'toggle') {
-    ctx.setConfig((c) => ({ ...c, [row.id]: c[row.id] === false }));
+    // Most are on until turned off; `off` ones are off until turned on.
+    ctx.setConfig((c) => ({ ...c, [row.id]: row.off ? c[row.id] !== true : c[row.id] === false }));
     return redrawSettings(ctx);
   }
   if (row.action === 'accent') return ctx.prefill(`/accent ${ctx.config.accent ?? DEFAULT_ACCENT}`);
