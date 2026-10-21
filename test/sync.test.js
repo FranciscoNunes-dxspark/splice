@@ -120,7 +120,8 @@ before(() => {
   run(dir, 'worktree', 'add', '-q', wt, 'busy');
 
   // Someone else pushes to main, behind, div and busy, and deletes gone.
-  run(base, 'clone', '-q', origin, other);
+  // Without CRLF in the checkout (Windows' git turns core.autocrlf on), which `git add .` could commit.
+  run(base, 'clone', '-q', '--config', 'core.autocrlf=false', origin, other);
   configure(other);
   for (const b of ['main', 'behind', 'div', 'busy']) {
     run(other, 'switch', '-q', b);

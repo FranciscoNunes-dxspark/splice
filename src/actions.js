@@ -822,6 +822,19 @@ export async function updateBranch(ctx, text) {
     if (top) ctx.note(`Once it's done you'll be on ${top}, the top of the stack: ↵ on ${head} in Branches switches back.`);
     return r;
   }
+  // The rebase is done, but putting the uncommitted changes back conflicted: git keeps them in the stash, and
+  // nothing can be switched to until the conflicts are resolved, so it stops here and says so.
+  if (r.ok && autostash && ctx.data.changes.conflicts.length) {
+    ctx.note(
+      [
+        `Rebased, but your uncommitted changes conflicted with it when put back. Git kept them in Stash (5): resolve the conflicts in Changes (2), then drop that stash.`,
+        top ? `You're on ${top}, the top of the stack: ↵ on ${head} in Branches switches back once they're resolved.` : '',
+        pushed.length ? `Nothing was force-pushed: /push --force sends ${head} when you're ready.` : '',
+      ].filter(Boolean).join('\n'),
+      'error',
+    );
+    return r;
+  }
   // Back on the branch you were on, also when the rebase couldn't start.
   if (top) {
     const back = await ctx.exec(['switch', head], { label: 'Switching back' });

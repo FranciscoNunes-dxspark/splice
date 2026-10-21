@@ -45,7 +45,8 @@ function world(name) {
   run(dir, 'remote', 'add', 'origin', origin);
   run(dir, 'push', '-q', '-u', 'origin', 'main');
   run(dir, 'remote', 'set-head', 'origin', 'main');
-  run(root, 'clone', '-q', origin, other);
+  // Without CRLF in the checkout (Windows' git turns core.autocrlf on), which `git add .` could commit.
+  run(root, 'clone', '-q', '--config', 'core.autocrlf=false', origin, other);
   configure(other);
   const theirs = (file, text) => {
     commitIn(other, file, text, `Theirs: ${file}`);
@@ -160,6 +161,34 @@ test('a stack of branches is rebased from its top with --update-refs, uncommitte
     assert.equal(git('rev-parse', 's3~1'), git('rev-parse', 's2'));
     await until(() => git('status', '--porcelain') === 'M a.txt', 'the uncommitted change back', 15000);
     assert.equal(readFileSync(join(dir, 'a.txt'), 'utf8'), 'one\nwork in progress\n');
+  } finally {
+    app.unmount();
+  }
+});
+
+test('uncommitted changes that conflict when put back stop it there: kept in the stash, and no switching back', async () => {
+  const { dir, git, theirs } = world('autostash');
+  git('switch', '-q', '-c', 's1');
+  commitIn(dir, 's1.txt', '1\n', 'Stack one');
+  git('switch', '-q', '-c', 's2');
+  commitIn(dir, 's2.txt', '2\n', 'Stack two');
+  git('switch', '-q', 's1');
+  writeFileSync(join(dir, 'a.txt'), 'mine\n');
+  theirs('a.txt', 'theirs\n');
+  const app = start(dir);
+  const frame = () => app.lastFrame() ?? '';
+  try {
+    await until(() => frame().includes('Stack two'), 'the graph');
+    await command(app, 'update-branch');
+    await until(() => frame().includes('Rebase the stack under s2 onto origin/main?'), 'the question', 15000);
+    app.stdin.write('1');
+    await until(() => frame().includes('your uncommitted changes conflicted with it when put back'), 'the stop', 30000);
+    assert.equal(git('rev-parse', '--abbrev-ref', 'HEAD'), 's2', 'still on the top of the stack');
+    assert.equal(git('rev-parse', 's1~1'), git('rev-parse', 'origin/main'), 'the stack rebased');
+    assert.equal(git('rev-parse', 's2~1'), git('rev-parse', 's1'));
+    assert.match(git('stash', 'list'), /autostash/, 'the changes kept in the stash');
+    assert.equal(git('status', '--porcelain'), 'UU a.txt');
+    assert.doesNotMatch(frame(), /git switch s1/);
   } finally {
     app.unmount();
   }
