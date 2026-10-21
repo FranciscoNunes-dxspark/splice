@@ -13,13 +13,15 @@ import { App } from '../src/ui/App.jsx';
 test('the settings list: values, plurals, and what ↵ does', () => {
   const rows = settingRows({ recent: [], roots: [], history: [] }, { file: '/home/me/.splice/config.json' });
   const by = Object.fromEntries(rows.map((r) => [r.id, r]));
-  assert.deepEqual(rows.map((r) => r.id), ['accent', 'mouse', 'checkForUpdates', 'autoUpdate', 'stashUntracked', 'notify', 'sideBySide', 'roots', 'recent', 'history', 'file']);
+  assert.deepEqual(rows.map((r) => r.id), ['accent', 'mouse', 'checkForUpdates', 'autoUpdate', 'stashUntracked', 'notify', 'sideBySide', 'checkBeforePush', 'roots', 'recent', 'history', 'file']);
   assert.equal(by.accent.value, `${DEFAULT_ACCENT} (default)`);
   assert.equal(by.mouse.value, 'on');
   assert.equal(by.checkForUpdates.value, 'on');
   assert.equal(by.autoUpdate.value, 'on');
   assert.equal(by.stashUntracked.value, 'on');
   assert.equal(by.notify.value, 'on');
+  assert.equal(by.checkBeforePush.value, 'on');
+  assert.equal(settingRows({ checkBeforePush: false }).find((r) => r.id === 'checkBeforePush').value, 'off');
   assert.match(by.notify.note, /after 10 s/);
   assert.match(settingRows({ notifyAfter: 30 }).find((r) => r.id === 'notify').note, /after 30 s/);
   assert.equal(settingRows({ notify: false }).find((r) => r.id === 'notify').value, 'off');
@@ -122,6 +124,10 @@ test('settings change in place, are saved as they change, and the accent repaint
     await until(() => /Side-by-side diffs\s+on/.test(frame()) && saved().sideBySide === true, 'side by side on, saved');
     app.stdin.write('\r');
     await until(() => /Side-by-side diffs\s+off/.test(frame()) && saved().sideBySide === false, 'side by side off again, saved');
+    // Checking the commits before a push: on by default, ↵ turns it off.
+    await down('Check before pushing');
+    app.stdin.write('\r');
+    await until(() => /Check before pushing\s+off/.test(frame()) && saved().checkBeforePush === false, 'the check before pushing off, saved');
 
     // The folders: x stops scanning one, and the count in the list follows.
     await down('Folders to scan');

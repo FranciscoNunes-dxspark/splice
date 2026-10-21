@@ -9,7 +9,7 @@ export const HELP = [
       ['1-7 / tab', 'Graph, Changes, Branches, Worktrees, Stash, PRs, Repos (shift+tab goes back)'],
       ['/ or :', 'Command prompt (slash commands, with completion)'],
       ['!', 'Run any git command, e.g.  !log --stat -5'],
-      ['f  p  P', 'Fetch all · Pull · Push (sets the upstream the first time)'],
+      ['f  p  P', 'Fetch all · Pull · Push (sets the upstream the first time; asks first if the commits have a file over 50 MB or what looks like a secret)'],
       ['r', 'Refresh'],
       ['z', 'Undo the last commit, amend, merge, rebase, reset, switch or discard (asks first)'],
       ['esc', 'Cancel the running command, or clear the activity lines'],
@@ -80,6 +80,7 @@ export const HELP = [
       ['c  A', 'Commit · Amend the last commit (/commit <message>, \\n for a new line)'],
       ['M', 'Write the message in your own editor: a file in .git, started from what follows /commit (or /amend: the commit\'s message) in the prompt and listing what\'s staged; then /commit --file <it> commits it'],
       ['F', 'Fix up an earlier commit with the staged changes (pick it; then fold it in, or keep it for later)'],
+      ['Z', 'Absorb the staged changes: each hunk becomes a fixup! commit for the branch\'s commit that last changed its lines; shows where each goes (and what stays staged), asks, then offers to fold them in (/absorb)'],
       ['W', 'Claude writes the commit message for the staged changes: a subject into the prompt to edit, or with a body, into the message file (as M) to edit or just commit'],
       ['S', 'Claude splits all your changes into logical commits: each one shown as a diff, then commit it, skip it (its changes stay uncommitted) or stop (/split)'],
       ['R', 'Claude reviews the staged changes (or the unstaged ones, if nothing is staged)'],
@@ -215,6 +216,14 @@ export const HELP = [
       ['↵', 'Full diff of the commit'],
       ['c', 'Check it out'],
       ['X', 'Reset the current branch to it (soft, mixed or hard)'],
+    ],
+  },
+  {
+    title: 'Doctor',
+    about: '/doctor: a health check of the repository, in the viewer, each finding with what to do about it',
+    rows: [
+      'It looks for: a git older than Splice needs · a detached HEAD · signing turned on without a key that can sign · a password in a remote\'s URL · https remotes with no credential helper · branches pushed but not tracking their remote branch · stashes already in HEAD, or older than 30 days · files stored with CRLF that .gitattributes says to keep LF · core.autocrlf on outside Windows · untracked files over 10 MB · files over 10 MB in the last 50 commits · loose objects past gc.auto.',
+      'After the report, it offers what Splice can do itself (asks first): set those upstreams, drop the stashes already in HEAD, renormalise line endings, add the big untracked files to .gitignore, git gc.',
     ],
   },
   {
