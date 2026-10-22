@@ -13,7 +13,7 @@ import { App } from '../src/ui/App.jsx';
 test('the settings list: values, plurals, and what ↵ does', () => {
   const rows = settingRows({ recent: [], roots: [], history: [] }, { file: '/home/me/.splice/config.json' });
   const by = Object.fromEntries(rows.map((r) => [r.id, r]));
-  assert.deepEqual(rows.map((r) => r.id), ['accent', 'theme', 'mouse', 'checkForUpdates', 'autoUpdate', 'stashUntracked', 'notify', 'sideBySide', 'checkBeforePush', 'roots', 'recent', 'history', 'file']);
+  assert.deepEqual(rows.map((r) => r.id), ['accent', 'theme', 'mouse', 'checkForUpdates', 'autoUpdate', 'stashUntracked', 'notify', 'sideBySide', 'checkBeforePush', 'cleanupKeep', 'roots', 'recent', 'history', 'file']);
   assert.equal(by.accent.value, `${DEFAULT_ACCENT} (default)`);
   // The theme: auto unless set, saying which it is here; ↵ goes round dark, light, auto.
   assert.equal(by.theme.value, 'auto (dark here)');
@@ -36,6 +36,8 @@ test('the settings list: values, plurals, and what ↵ does', () => {
   assert.equal(by.sideBySide.off, true);
   assert.equal(settingRows({ sideBySide: true }).find((r) => r.id === 'sideBySide').value, 'on');
   assert.equal(by.roots.value, 'none');
+  assert.equal(by.cleanupKeep.value, 'none');
+  assert.equal(settingRows({ cleanupKeep: ['develop', 'release/*'] }).find((r) => r.id === 'cleanupKeep').value, 'develop, release/*');
   // Nothing to clear: ↵ does nothing.
   assert.equal(by.recent.action, 'none');
   assert.equal(by.file.value, '/home/me/.splice/config.json');
@@ -148,6 +150,20 @@ test('settings change in place, are saved as they change, and the accent repaint
     await down('Check before pushing');
     app.stdin.write('\r');
     await until(() => /Check before pushing\s+off/.test(frame()) && saved().checkBeforePush === false, 'the check before pushing off, saved');
+
+    // The branches /cleanup keeps on the remote: n puts /cleanup-keep in the prompt, x takes one off.
+    await down('Keep on the remote');
+    app.stdin.write('\r');
+    await until(() => frame().includes('Branches /cleanup keeps on the remote') && frame().includes('None: /cleanup deletes'), 'the empty list');
+    app.stdin.write('n');
+    await until(() => frame().includes('/cleanup-keep '), '/cleanup-keep in the prompt');
+    await type(app.stdin, 'release/*');
+    app.stdin.write('\r');
+    await until(() => /❯ release\/\*/.test(frame()) && saved().cleanupKeep?.[0] === 'release/*', 'the pattern listed, saved');
+    app.stdin.write('x');
+    await until(() => frame().includes('None: /cleanup deletes') && saved().cleanupKeep.length === 0, 'the pattern removed');
+    app.stdin.write('\x1b');
+    await until(() => /Keep on the remote\s+none/.test(frame()), 'back in the settings, up to date');
 
     // The folders: x stops scanning one, and the count in the list follows.
     await down('Folders to scan');

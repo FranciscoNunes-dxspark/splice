@@ -17,6 +17,15 @@ export const reviewBranchId = (name) => {
 const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
 /**
+ * The pattern of the "Keep on the remote" setting that `branch` (its name there) matches, else null. A
+ * pattern is a name, where * stands for anything: release/* keeps release/1.0 and release/1.0/fix.
+ */
+export function keepMatch(branch, patterns = []) {
+  const quote = (s) => s.replace(/[.+?^${}()|[\]\\]/g, '\\$&');
+  return patterns.find((p) => new RegExp(`^${p.split('*').map(quote).join('.*')}$`).test(branch)) ?? null;
+}
+
+/**
  * Reads what `planCleanup` needs, fresh rather than from the last load, so a branch that just moved
  * isn't judged by its old tip. `mergedRefs` are the default branch's names (local, and on the remote)
  * that exist; `hasRemotes` says whether there is anywhere commits could have been pushed to.
@@ -99,7 +108,8 @@ export async function readCleanup(root, { defaultBranch = null, mergedRefs = [],
  * A branch's `worktree` is the path of the worktree that has it checked out, which has to go first.
  * In `kept`, `worktree` marks a worktree (its `name` is the path); `at` is where a kept branch is checked out.
  * `remote` has the branches on `remoteName` whose PR was merged with the commit the branch is still at,
- * so nothing was pushed since, and that no open PR comes from or goes into.
+ * so nothing was pushed since, and that no open PR comes from or goes into. `keep` (the "Keep on the remote"
+ * setting's patterns) keeps those it matches, listed in `kept` by their remote name.
  */
 export function planCleanup({
   branches,
@@ -114,6 +124,7 @@ export function planCleanup({
   remoteBranches = [],
   prs = [],
   openPrs = [],
+  keep = [],
 }) {
   const goWorktrees = [];
   const goBranches = [];
@@ -161,7 +172,10 @@ export function planCleanup({
     const branch = b.name.slice(remoteName.length + 1);
     if (branch === defaultBranch || busy.has(branch)) continue;
     const pr = prs.find((p) => !p.fork && p.source === branch && p.head === b.oid);
-    if (pr) goRemote.push({ name: b.name, remote: remoteName, branch, why: `${pr.label} was merged into ${pr.target}` });
+    if (!pr) continue;
+    const pattern = keepMatch(branch, keep);
+    if (pattern) kept.push({ name: b.name, why: `${pr.label} was merged, but kept on the remote (${pattern}, in /settings)` });
+    else goRemote.push({ name: b.name, remote: remoteName, branch, why: `${pr.label} was merged into ${pr.target}` });
   }
   return { worktrees: goWorktrees, branches: goBranches, remote: goRemote, kept };
 }

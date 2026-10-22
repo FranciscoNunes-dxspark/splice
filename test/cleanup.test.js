@@ -8,7 +8,7 @@ import { join, resolve } from 'node:path';
 import React from 'react';
 import { render } from 'ink-testing-library';
 import { removeTemp } from './temp.js';
-import { cleanupChoice, cleanupCount, cleanupOptions, cleanupText, planCleanup } from '../src/cleanup.js';
+import { cleanupChoice, cleanupCount, cleanupOptions, cleanupText, keepMatch, planCleanup } from '../src/cleanup.js';
 import { App } from '../src/ui/App.jsx';
 
 const branch = (name, extra = {}) => ({ name, oid: `${name}-tip`, upstream: null, gone: false, ahead: 0, behind: 0, current: false, ...extra });
@@ -216,6 +216,31 @@ test('the server look: branches whose PR was merged go here, and on the remote u
   );
 });
 
+test('Keep on the remote: branches matching a name or pattern stay there, and say why', () => {
+  assert.equal(keepMatch('develop', ['develop']), 'develop');
+  assert.equal(keepMatch('release/1.0/fix', ['hotfix', 'release/*']), 'release/*');
+  assert.equal(keepMatch('pre-release/1', ['release/*']), null);
+  assert.equal(keepMatch('v1x0', ['v1.0']), null);
+  assert.equal(keepMatch('anything', []), null);
+
+  const pr = (id, source) => ({ id, label: `#${id}`, source, target: 'main', head: `${source}-tip` });
+  const remote = (name) => ({ name: `origin/${name}`, remote: 'origin', oid: `${name}-tip` });
+  const plan = planCleanup(
+    facts({
+      remoteName: 'origin',
+      remoteBranches: [remote('done'), remote('develop'), remote('release/2')],
+      prs: [pr(6, 'done'), pr(7, 'develop'), pr(8, 'release/2')],
+      keep: ['develop', 'release/*'],
+    }),
+  );
+  assert.deepEqual(plan.remote.map((b) => b.branch), ['done']);
+  assert.deepEqual(plan.kept.slice(-2), [
+    { name: 'origin/develop', why: '#7 was merged, but kept on the remote (develop, in /settings)' },
+    { name: 'origin/release/2', why: '#8 was merged, but kept on the remote (release/*, in /settings)' },
+  ]);
+  assert.match(cleanupText(plan, '/r'), /origin\/release\/2 {2}#8 was merged, but kept on the remote/);
+});
+
 // End to end: a repository with a bare "origin", branches and worktrees of every kind, cleaned up through the UI.
 
 const KEYS = { enter: '\r', esc: '\x1b' };
@@ -380,8 +405,8 @@ test('/cleanup asks the PR host: squash-merged branches go here, and merged ones
   commit('refs/tags/pr-head', 'behind 2', [commit('refs/heads/behind', 'behind', [first])]);
   commit('refs/heads/reused', 'reused 2', [commit('refs/heads/reused', 'reused', [first])]);
   // On origin. done: its PR's last commit. moved: a commit since. base: an open PR's target. stale:
-  // deleted on the server already, but not fetched since.
-  for (const b of ['done', 'base', 'stale']) commit(`refs/remotes/origin/${b}`, b, [first]);
+  // deleted on the server already, but not fetched since. release/1: merged, but kept by the setting.
+  for (const b of ['done', 'base', 'stale', 'release/1']) commit(`refs/remotes/origin/${b}`, b, [first]);
   commit('refs/remotes/origin/moved', 'moved 2', [commit('refs/remotes/origin/moved', 'moved', [first])]);
   execFileSync('git', ['fast-import', '--quiet'], { cwd: dir, input: `${stream.join('\n')}\n` });
   appendFileSync(
@@ -391,11 +416,11 @@ test('/cleanup asks the PR host: squash-merged branches go here, and merged ones
       '[branch "squashed"]\n\tremote = origin\n\tmerge = refs/heads/squashed\n',
   );
   git('reset', '-q', '--hard');
-  git('push', '-q', 'origin', ...['done', 'base', 'moved'].map((b) => `refs/remotes/origin/${b}:refs/heads/${b}`));
-  const [squashed, behind, reused, done, base_, stale, moved] = git('rev-parse', 'squashed', 'pr-head', 'reused~1', 'origin/done', 'origin/base', 'origin/stale', 'origin/moved~1').split('\n');
+  git('push', '-q', 'origin', ...['done', 'base', 'moved', 'release/1'].map((b) => `refs/remotes/origin/${b}:refs/heads/${b}`));
+  const [squashed, behind, reused, done, base_, stale, moved, release] = git('rev-parse', 'squashed', 'pr-head', 'reused~1', 'origin/done', 'origin/base', 'origin/stale', 'origin/moved~1', 'origin/release/1').split('\n');
 
   const pr = (id, source, head, target = 'main') => ({ id, label: `#${id}`, title: source, source, target, head });
-  const merged = [pr(5, 'squashed', squashed), pr(6, 'behind', behind), pr(7, 'reused', reused), pr(8, 'done', done), pr(9, 'base', base_), pr(10, 'stale', stale), pr(11, 'moved', moved)];
+  const merged = [pr(5, 'squashed', squashed), pr(6, 'behind', behind), pr(7, 'reused', reused), pr(8, 'done', done), pr(9, 'base', base_), pr(10, 'stale', stale), pr(11, 'moved', moved), pr(13, 'release/1', release)];
   const makeHost = () => ({
     kind: 'github',
     name: 'GitHub',
@@ -409,7 +434,7 @@ test('/cleanup asks the PR host: squash-merged branches go here, and merged ones
   const refs = (prefix) => git('for-each-ref', '--format=%(refname:short)', prefix).split('\n').sort();
 
   process.env.SPLICE_HOME = join(base, 'home');
-  lastApp = render(React.createElement(App, { initialPath: dir, config: { recent: [], roots: [], history: [] }, makeHost }));
+  lastApp = render(React.createElement(App, { initialPath: dir, config: { recent: [], roots: [], history: [], cleanupKeep: ['release/*'] }, makeHost }));
   const app = lastApp;
   const frame = () => app.lastFrame() ?? '';
   try {
@@ -426,13 +451,14 @@ test('/cleanup asks the PR host: squash-merged branches go here, and merged ones
     assert.match(list, /done\s+#8 was merged into main/);
     assert.match(list, /stale\s+#10 was merged into main/);
     assert.match(list, /reused\s+has commits that are only here/);
+    assert.match(list, /origin\/release\/1\s+#13 was merged, but kept on the remote \(release\/\*/);
     assert.match(list, /3\. Only the 2 branches on origin/);
     app.stdin.write('1');
     await until(() => frame().includes('Cleaned up 2 branches and 2 branches on origin'), 'the report');
     assert.match(frame(), /Deleted on origin: done, stale/);
     assert.deepEqual(refs('refs/heads'), ['main', 'reused']);
-    assert.deepEqual(onServer(), ['base', 'moved']);
-    assert.deepEqual(refs('refs/remotes'), ['origin/base', 'origin/main', 'origin/moved']);
+    assert.deepEqual(onServer(), ['base', 'moved', 'release/1']);
+    assert.deepEqual(refs('refs/remotes'), ['origin/base', 'origin/main', 'origin/moved', 'origin/release/1']);
   } finally {
     app.unmount();
   }

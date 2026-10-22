@@ -150,7 +150,7 @@ export const HELP = [
       ['o', 'Open its pull request in the browser (#12 GitHub, !12 Azure DevOps and GitLab; coloured by review)'],
       'The right-hand pane: how far it is ahead of and behind the default branch, its commits the default branch doesn\'t have, then its history.',
       '⚠ by a branch: merging it with the default branch would conflict, in the files the right-hand pane lists (/forecast <ref> [base] for any two).',
-      ['C', 'Clean up: delete branches with nothing unpushed or unmerged, and clean worktrees, and the branches of merged pull requests on the remote (/cleanup)'],
+      ['C', 'Clean up: delete branches with nothing unpushed or unmerged, and clean worktrees, and the branches of merged pull requests on the remote (/cleanup)\n/cleanup-keep <pattern> (or Keep on the remote in /settings) keeps branches on the remote: develop, release/*'],
       ['U', 'On a local branch: set what it tracks (/upstream [branch] <remote/branch>, --unset to stop)'],
       ['M', 'The remotes (/remote): n add · R rename · x remove · u change its URL · f fetch · p push the current branch to it (/push <remote>)'],
       { heading: 'Tags', about: 'at the bottom of the list' },

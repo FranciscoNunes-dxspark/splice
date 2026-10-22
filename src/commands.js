@@ -12,6 +12,7 @@ export const COMMANDS = [
   { name: 'branch', args: '<name> [start]', desc: 'Create a branch and switch to it', run: (ctx, s) => a.createBranch(ctx, s) },
   { name: 'delete', args: '<branch|tag>', desc: 'Delete a branch (local or remote) or a tag', complete: 'refs', run: (ctx, s) => a.deleteRef(ctx, s) },
   { name: 'cleanup', desc: 'Delete branches and remove worktrees with nothing of yours on them, and merged PRs\' branches on the remote (asks first)', run: (ctx) => a.cleanUp(ctx) },
+  { name: 'cleanup-keep', args: '[pattern]', desc: 'Keep a branch (or a pattern of them, * for anything) on the remote when /cleanup runs; alone, the list', run: (ctx, s) => a.cleanupKeep(ctx, s) },
   { name: 'doctor', desc: 'A health check of the repository: what looks wrong, what to do about it, and doing what Splice can (asks first)', run: (ctx) => a.doctor(ctx) },
   { name: 'merge', args: '<ref>', desc: 'Merge a ref into the current branch', complete: 'refs', run: (ctx, s) => a.merge(ctx, s) },
   { name: 'cherry-pick', args: '<ref | a..b>', desc: 'Copy a commit onto the current branch, or the commits in a..b, oldest first (asks first)', complete: 'refs', run: (ctx, s) => a.cherryPickRefs(ctx, s) },

@@ -1291,7 +1291,8 @@ export async function cleanUp(ctx) {
         : null;
       const [{ name, remote }, server] = await Promise.all([findDefaultBranch(ctx), look]);
       const mergedRefs = name ? [name, remote && `${remote}/${name}`].filter((r) => refs.local.some((b) => b.name === r) || refs.remote.some((b) => b.name === r)) : [];
-      plan = planCleanup(await readCleanup(root, { defaultBranch: name, mergedRefs, hasRemotes: remotes.length > 0, server }));
+      const facts = await readCleanup(root, { defaultBranch: name, mergedRefs, hasRemotes: remotes.length > 0, server });
+      plan = planCleanup({ ...facts, keep: ctx.config.cleanupKeep ?? [] });
       return { stdout: '', stderr: '' };
     },
     { label: 'Looking for things to clean up', refresh: false, quiet: true },
@@ -3583,6 +3584,7 @@ async function changeSetting(ctx, row) {
     return redrawSettings(ctx);
   }
   if (row.action === 'roots') return scanFolders(ctx);
+  if (row.action === 'cleanupKeep') return keptOnRemote(ctx);
   if (row.action === 'clear') {
     const ok = await ctx.confirm({
       title: row.id === 'recent' ? `Forget the ${row.value}?` : `Clear the prompt history (${row.value})?`,
@@ -3613,6 +3615,41 @@ function scanFolders(ctx, { replace = false, index } = {}) {
         },
       },
       actions: { s: () => ctx.prefill('/scan ') },
+    },
+    { replace },
+  );
+}
+
+/**
+ * `/cleanup-keep [pattern]`: adds a branch name or pattern (* for anything) to the "Keep on the remote" setting,
+ * the branches /cleanup never deletes on the remote. With nothing after it, the list.
+ */
+export function cleanupKeep(ctx, text) {
+  const pattern = (text ?? '').trim();
+  if (!pattern) return keptOnRemote(ctx);
+  if (/\s/.test(pattern)) return ctx.note('Branch names have no spaces: give one name or pattern, like release/*', 'error');
+  ctx.setConfig((c) => ({ ...c, cleanupKeep: [...(c.cleanupKeep ?? []).filter((p) => p !== pattern), pattern] }));
+  ctx.note(`/cleanup keeps ${pattern} on the remote from now on.`);
+  redrawSettings(ctx);
+}
+
+/** The "Keep on the remote" patterns, from /settings or /cleanup-keep: x removes one, n adds one. */
+function keptOnRemote(ctx, { replace = false, index } = {}) {
+  ctx.showPicker(
+    {
+      title: 'Branches /cleanup keeps on the remote',
+      hint: 'x remove · n add a name or pattern (* for anything)',
+      empty: 'None: /cleanup deletes any branch on the remote whose pull request was merged. n adds one (or /cleanup-keep <pattern>).',
+      index,
+      items: () => (ctx.config.cleanupKeep ?? []).map((pattern) => ({ pattern, segments: [{ text: pattern, bold: true }] })),
+      redraw: (at) => keptOnRemote(ctx, { replace: true, index: at }),
+      keys: {
+        x: (it) => {
+          ctx.setConfig((c) => ({ ...c, cleanupKeep: (c.cleanupKeep ?? []).filter((p) => p !== it.pattern) }));
+          redrawSettings(ctx);
+        },
+      },
+      actions: { n: () => ctx.prefill('/cleanup-keep ') },
     },
     { replace },
   );
