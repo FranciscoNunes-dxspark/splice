@@ -179,13 +179,107 @@ test('A asks for reviewers, D makes it a draft, E retitles it and B edits its de
 
     app.stdin.write('B');
     const file = join(dir, '.git', 'splice-pr-7.md');
-    // The prompt scrolls to its end, so a long temp path (Windows) hides the start of the command.
-    await until(() => existsSync(file) && frame().includes('Edit it in your editor') && /splice-pr-7\.md *│/.test(frame()), 'the body file in the prompt');
+    // The file from the repository's root, so a long temp path (Windows) doesn't scroll the command away.
+    await until(() => existsSync(file) && frame().includes('Edit it in your editor') && frame().includes('> /body --file .git/splice-pr-7.md '), 'the body file in the prompt');
     assert.equal(readFileSync(file, 'utf8'), 'Old body');
     writeFileSync(file, 'New body\r\n\r\nWith a second paragraph\r\n');
     app.stdin.write('\r');
     await until(() => calls.length === 4, 'the new description');
     assert.deepEqual(calls[3], ['edit', 7, { body: 'New body\n\nWith a second paragraph' }]);
+    await until(() => !existsSync(file), 'the file removed once sent');
+  } finally {
+    app.unmount();
+  }
+});
+
+test('X asks for changes: GitHub wants the text, then Splice asks before sending it', async () => {
+  const calls = [];
+  const app = start(
+    // A remote name of its own, so the PR list isn't the one the tests above left cached.
+    stubHost(calls, {
+      remoteName: 'review-gh',
+      list: async () => [{ ...PR, mine: false }],
+      requestChangesNeedsText: true,
+      requestChanges: async (pr, text) => calls.push(['requestChanges', pr.id, text]),
+    }),
+  );
+  const frame = () => app.lastFrame() ?? '';
+  try {
+    await until(() => frame().includes('First commit'), 'the graph');
+    app.stdin.write('6');
+    await until(() => /❯.*Bump b/.test(frame()), 'the PR');
+    app.stdin.write('X');
+    await until(() => frame().includes('> /request-changes'), 'the prompt');
+    app.stdin.write('\r');
+    await until(() => frame().includes('GitHub needs to be told what to change') && frame().includes('> /request-changes'), 'the text asked for');
+    await type(app.stdin, 'Tests, please');
+    app.stdin.write('\r');
+    await until(() => frame().includes('Request changes to #7 "Bump b"?') && frame().includes('saying "Tests, please"'), 'the confirmation');
+    assert.equal(calls.length, 0, 'nothing sent before the answer');
+    app.stdin.write('1');
+    await until(() => calls.length === 1, 'the review');
+    assert.deepEqual(calls[0], ['requestChanges', 7, 'Tests, please']);
+  } finally {
+    app.unmount();
+  }
+});
+
+test('/request-changes on Azure DevOps votes, with no text needed', async () => {
+  const calls = [];
+  const app = start(stubHost(calls, { kind: 'azure', name: 'Azure DevOps', remoteName: 'review-az', list: async () => [{ ...PR, mine: false, label: '!7' }], requestChanges: async (pr, text) => calls.push(['requestChanges', pr.id, text]) }));
+  const frame = () => app.lastFrame() ?? '';
+  try {
+    await until(() => frame().includes('First commit'), 'the graph');
+    app.stdin.write('6');
+    await until(() => /❯.*Bump b/.test(frame()), 'the PR');
+    app.stdin.write('/');
+    await type(app.stdin, 'request-changes');
+    app.stdin.write('\r');
+    await until(() => frame().includes('Request changes to !7 "Bump b"?') && frame().includes('On Azure DevOps, as you.'), 'the confirmation');
+    app.stdin.write('1');
+    await until(() => calls.length === 1, 'the vote');
+    assert.deepEqual(calls[0], ['requestChanges', 7, '']);
+  } finally {
+    app.unmount();
+  }
+});
+
+test('a GitLab merge request: listed as !12, merged through glab, no merge without the text for changes', async () => {
+  const calls = [];
+  const app = start(
+    stubHost(calls, {
+      kind: 'gitlab',
+      name: 'GitLab',
+      signIn: 'glab auth login',
+      remoteName: 'review-gl',
+      list: async () => [{ ...PR, id: 12, label: '!12', mine: false }],
+      requestChangesNeedsText: true,
+      requestChanges: async (pr, text) => calls.push(['requestChanges', pr.id, text]),
+    }),
+  );
+  const frame = () => app.lastFrame() ?? '';
+  try {
+    await until(() => frame().includes('First commit'), 'the graph');
+    app.stdin.write('6');
+    await until(() => /❯.*!12.*Bump b/.test(frame()) && frame().includes('GitLab'), 'the merge request');
+    app.stdin.write('/');
+    await type(app.stdin, 'request-changes');
+    app.stdin.write('\r');
+    await until(() => frame().includes('GitLab needs to be told what to change'), 'the text asked for');
+    await type(app.stdin, 'Rename it');
+    app.stdin.write('\r');
+    await until(() => frame().includes('Request changes to !12 "Bump b"?') && frame().includes('On GitLab, as you, saying "Rename it"'), 'the confirmation');
+    app.stdin.write('1');
+    await until(() => calls.length === 1 && frame().includes('glab mr request changes !12'), 'the request');
+    assert.deepEqual(calls[0], ['requestChanges', 12, 'Rename it']);
+
+    app.stdin.write('/');
+    await type(app.stdin, 'merge-pr squash --delete-branch');
+    app.stdin.write('\r');
+    await until(() => frame().includes('Merge !12 into main (squash)?'), 'the merge question');
+    app.stdin.write('1');
+    await until(() => calls.length === 2 && frame().includes('glab mr merge 12 --squash --remove-source-branch'), 'the merge');
+    assert.deepEqual(calls[1], ['merge', 12, { method: 'squash', auto: false, deleteBranch: true }]);
   } finally {
     app.unmount();
   }

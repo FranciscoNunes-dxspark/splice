@@ -1,12 +1,14 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import { Box, useInput } from 'ink';
 import { dirname, basename } from 'node:path/posix';
 import * as a from '../actions.js';
+import { promptMessage } from '../message.js';
 import { hunkPicks, isChange, parseDiff } from '../patch.js';
 import { changeDiff } from '../repo.js';
 import { wordChanges } from '../search.js';
+import { SPLIT_WIDTH, rowLines, splitView } from '../split.js';
 import { codeColor, theme } from '../theme.js';
-import { clean } from '../text.js';
+import { clean, fitSegments } from '../text.js';
 import { useAsync, useListNav, useMouse } from './hooks.js';
 import { Lines, Panel, Row } from './parts.jsx';
 import { diffSegments } from './diffstyle.js';
@@ -71,6 +73,14 @@ function diffRows(diff, raw) {
   return rows;
 }
 
+// A side-by-side row of the diff, `width` wide: each half its line number and line.
+function pairSegments(row, dRows, words, digits, width) {
+  const leftW = Math.floor((width - 1) / 2);
+  const half = (j, no, w) =>
+    j == null ? [{ text: ' '.repeat(w) }] : fitSegments([{ text: `${no ?? ''}`.padStart(digits) + ' ', color: theme.dim }, ...diffSegments(dRows[j].text, words.get(j))], w);
+  return [...half(row.left, row.old, leftW), { text: '│', color: theme.border }, ...half(row.right, row.new, width - 1 - leftW)];
+}
+
 export function ChangesView({ data, ctx, width, height, active }) {
   const { conflicts, unstaged, staged } = data.changes;
   const rows = useMemo(() => {
@@ -91,7 +101,10 @@ export function ChangesView({ data, ctx, width, height, active }) {
   }, [data.changes, data.submodules]);
 
   const split = width >= 90;
-  const listW = split ? Math.max(36, Math.floor(width * 0.4)) : width;
+  // Diffs side by side (w, the sideBySide setting) narrow the list, down to 36 columns, to make room.
+  const LIST_MIN = 36;
+  const sideBySide = ctx.config?.sideBySide === true && split && width - LIST_MIN >= SPLIT_WIDTH;
+  const listW = !split ? width : sideBySide ? Math.max(LIST_MIN, Math.min(Math.floor(width * 0.4), width - SPLIT_WIDTH)) : Math.max(LIST_MIN, Math.floor(width * 0.4));
   const innerH = height - 2;
   const nav = useListNav(rows.length, innerH, { selectable: (i) => Boolean(rows[i]?.file || rows[i]?.sub), resetKey: data.root });
   const f = rows[nav.index]?.file;
@@ -120,27 +133,44 @@ export function ChangesView({ data, ctx, width, height, active }) {
   const parsed = useMemo(() => parseDiff(raw), [raw]);
   const dRows = useMemo(() => diffRows(parsed, raw), [parsed, raw]);
   const words = useMemo(() => wordChanges(dRows.map((r) => clean(r.text))), [dRows]);
-  const dnav = useListNav(dRows.length, innerH, { selectable: (i) => Boolean(dRows[i]?.change), resetKey: fileKey });
+  // The diff's rows on screen: one line each, or side by side the two sides of a pair, which the cursor
+  // and a selection (v) take together. `units(i)` are the diff lines in row i.
+  const sbs = sideBySide && target === 'diff';
+  const layout = useMemo(() => (sbs ? splitView(dRows.map((r) => r.text)) : null), [dRows, sbs]);
+  const shown = layout ? layout.view : dRows;
+  const units = (i) => (layout ? (layout.view[i] ? rowLines(layout.view[i]) : []) : [i]);
+  const changeIn = (i) => units(i).find((j) => dRows[j]?.change);
+  const dnav = useListNav(shown.length, innerH, { selectable: (i) => changeIn(i) != null, resetKey: fileKey });
+  // Switching between one column and two keeps the cursor on its line (and drops a selection).
+  const curLine = useRef(0);
+  const [shownSbs, setShownSbs] = useState(sbs);
+  if (shownSbs !== sbs) {
+    setShownSbs(sbs);
+    setAnchor(null);
+    dnav.setIndex(layout ? (layout.rowOf[curLine.current] ?? 0) : curLine.current);
+  } else curLine.current = changeIn(dnav.index) ?? units(dnav.index)[0] ?? 0;
   // Never apply picks made on a diff that's stale (still loading after a change).
   const fresh = diff.key === diffKey && !diff.loading && !diff.error;
 
-  const cur = dRows[dnav.index];
+  const cur = dRows[changeIn(dnav.index) ?? units(dnav.index)[0]];
   const range = anchor == null ? null : [Math.min(anchor, dnav.index), Math.max(anchor, dnav.index)];
   const picks = () => {
     if (!cur?.change) return null;
     if (!range) return hunkPicks(parsed, cur.hunk);
     const map = new Map();
     for (let i = range[0]; i <= range[1]; i++) {
-      const r = dRows[i];
-      if (!r?.change) continue;
-      if (!map.has(r.hunk)) map.set(r.hunk, new Set());
-      map.get(r.hunk).add(r.line);
+      for (const j of units(i)) {
+        const r = dRows[j];
+        if (!r?.change) continue;
+        if (!map.has(r.hunk)) map.set(r.hunk, new Set());
+        map.get(r.hunk).add(r.line);
+      }
     }
     return map;
   };
   const jumpHunk = (dir) => {
     if (!cur) return;
-    const target = dRows.findIndex((r) => r.change && r.hunk === cur.hunk + dir);
+    const target = shown.findIndex((_, i) => units(i).some((j) => dRows[j].change && dRows[j].hunk === cur.hunk + dir));
     if (target >= 0) dnav.setIndex(target);
   };
 
@@ -158,6 +188,7 @@ export function ChangesView({ data, ctx, width, height, active }) {
     if (input === 'J') return target === 'conflict' ? cf.page(1) : dnav.handle('', { pageDown: true });
     if (input === 'K') return target === 'conflict' ? cf.page(-1) : dnav.handle('', { pageUp: true });
     if (input === 'F') return a.fixup(ctx);
+    if (input === 'Z') return a.absorb(ctx);
     if (sub) {
       if (input === 'I') return a.updateSubmodules(ctx, sub.path);
       if (input === 'o' || key.return) return a.openSubmodule(ctx, sub);
@@ -171,6 +202,7 @@ export function ChangesView({ data, ctx, width, height, active }) {
     if (input === 'H') return a.fileHistory(ctx, f.orig ?? f.path);
     if (input === 'B') return a.blame(ctx, f.path);
     if (input === 's') return a.stashFile(ctx, f);
+    if (input === 'i') return a.ignoreFile(ctx, f);
     if (input === 'O' && f.area === 'conflict') return a.resolveWith(ctx, f, 'ours');
     if (input === 'T' && f.area === 'conflict') return a.resolveWith(ctx, f, 'theirs');
     if (input === 'C' && f.area === 'conflict') return a.claudeResolve(ctx, f);
@@ -211,10 +243,13 @@ export function ChangesView({ data, ctx, width, height, active }) {
 
   const keys = (input, key) => {
     if (!ctx.viewHasKeys()) return;
+    if (input === 'w' && target === 'diff') return a.toggleSideBySide(ctx, { width, need: LIST_MIN + SPLIT_WIDTH });
     if (input === 'a') return a.stageAll(ctx);
     if (input === 'u') return a.unstageAll(ctx);
     if (input === 'c') return a.commit(ctx, '');
     if (input === 'A') return ctx.prefill('/amend ');
+    // Started from what's typed after /commit or /amend in the prompt, if anything.
+    if (input === 'M') return a.editMessage(ctx, promptMessage(ctx.promptText));
     if (input === 'W') return a.describeCommit(ctx);
     if (input === 'S') return a.claudeSplit(ctx);
     if (input === 'R') return a.claudeLook(ctx, 'review', { kind: 'changes' });
@@ -254,11 +289,14 @@ export function ChangesView({ data, ctx, width, height, active }) {
         : range
         ? `space ${verb} lines${f.area === 'unstaged' ? ' · d discard · s stash' : ''} · esc`
         : `space ${verb} hunk · v lines · n/N · esc`;
+  const splitHint = target === 'diff' && split && width - LIST_MIN >= SPLIT_WIDTH ? (sideBySide ? ' · w one column' : ' · w side by side') : '';
   const listHint = fileSpan
     ? `${selectedFiles().length} selected · s stash`
     : f?.area === 'conflict'
       ? 'space resolved · O ours · T theirs · C Claude'
-      : 'space stage/unstage';
+      : f?.kind === 'untracked'
+        ? 'space stage · i ignore'
+        : 'space stage/unstage';
 
   return (
     <Box width={width} height={height}>
@@ -303,20 +341,21 @@ export function ChangesView({ data, ctx, width, height, active }) {
       ) : showDiff && target === 'conflict' ? (
         <ConflictPane cf={cf} f={f} hint={diffHint} width={diffW} height={height} focused={active && pane === 'conflict'} />
       ) : showDiff ? (
-        <Panel title={f ? f.path : 'Diff'} hint={diffHint} width={diffW} height={height} focused={active && pane === 'diff'}>
+        <Panel title={f ? f.path : 'Diff'} hint={diffHint + splitHint} width={diffW} height={height} focused={active && pane === 'diff'}>
           {!f ? <Row pointer={false} width={diffW - 2} segments={[{ text: 'Working tree clean.', color: theme.dim }]} /> : null}
           {f
-            ? dRows.slice(dnav.offset, dnav.offset + innerH).map((r, i) => {
+            ? shown.slice(dnav.offset, dnav.offset + innerH).map((r, i) => {
                 const idx = dnav.offset + i;
                 const picking = pane === 'diff';
-                const inPick = picking && (range ? idx >= range[0] && idx <= range[1] : cur && r.hunk === cur.hunk);
+                const inPick = picking && (range ? idx >= range[0] && idx <= range[1] : cur && units(idx).some((j) => dRows[j].hunk === cur.hunk));
+                const segs = layout && r.full == null ? pairSegments(r, dRows, words, layout.digits, diffW - 3) : diffSegments(dRows[units(idx)[0]].text, words.get(units(idx)[0]));
                 return (
                   <Row
                     key={idx}
                     width={diffW - 2}
                     pointer={false}
-                    selected={picking && (range ? inPick && r.change : idx === dnav.index)}
-                    segments={[{ text: inPick ? '▌' : ' ', color: theme.accent }, ...diffSegments(r.text, words.get(idx))]}
+                    selected={picking && (range ? inPick && changeIn(idx) != null : idx === dnav.index)}
+                    segments={[{ text: inPick ? '▌' : ' ', color: theme.accent }, ...segs]}
                   />
                 );
               })

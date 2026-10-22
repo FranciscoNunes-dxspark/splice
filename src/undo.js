@@ -140,6 +140,7 @@ export function describeUndo(plan, { pushed = null, now = Date.now() / 1000 } = 
     reset: `Undo the reset of ${who} (${e.message})?`,
     'cherry-pick': `Undo the cherry-pick of "${e.subject}"?`,
     revert: `Undo the revert "${e.subject}"?`,
+    sync: `Undo the sync of ${who} with its upstream?`,
     undo: 'Redo what was just undone?',
     redo: 'Undo that again?',
   };
@@ -149,7 +150,9 @@ export function describeUndo(plan, { pushed = null, now = Date.now() / 1000 } = 
       : e.kind === 'amend'
         ? `${who} goes back to ${to}, as it was before; what the amend changed goes back to staged.`
         : `${who} goes back to ${to}. Your uncommitted changes stay (git stops rather than overwrite them).`;
-  if (pushed) detail = `It's already on ${pushed}: this only undoes it here, so pushing again would need /push --force. ${detail}`;
+  // A sync only fast-forwarded the branch to what its upstream already had: undoing it leaves the branch behind, nothing to push.
+  if (e.kind === 'sync') detail = `${who} goes back to ${to}, behind its upstream again (/sync or p brings it forward). Your uncommitted changes stay.`;
+  else if (pushed) detail = `It's already on ${pushed}: this only undoes it here, so pushing again would need /push --force. ${detail}`;
   return {
     title: titles[e.kind] ?? `Undo "${e.action}${e.message ? `: ${e.message}` : ''}"?`,
     detail,
@@ -265,4 +268,19 @@ export async function untrackedInTheWay(root, d) {
   if (!d.untracked) return [];
   const names = (await git(root, ['ls-tree', '-r', '-z', '--name-only', d.untracked])).split('\0').filter(Boolean);
   return names.filter((n) => existsSync(join(root, n)));
+}
+
+/**
+ * Where a branch's reflog (parseReflog, newest first) last had its commits rewritten: a rebase or a
+ * pull --rebase finishing, an amend, a reset (an undo's or redo's too). Returns { index, entry, onto }
+ * (`onto`: the commit a rebase put the branch on, from the entry's message), or null. The branch as it
+ * was before is the entry after it, <branch>@{index + 1}.
+ */
+export function lastRewrite(entries) {
+  const index = entries.findIndex(
+    (e) => ((e.kind === 'rebase' || e.kind === 'pull') && e.phase === 'finish') || ['amend', 'reset', 'undo', 'redo'].includes(e.kind),
+  );
+  if (index < 0) return null;
+  const entry = entries[index];
+  return { index, entry, onto: entry.message.match(/ onto ([0-9a-f]{40})$/)?.[1] ?? null };
 }

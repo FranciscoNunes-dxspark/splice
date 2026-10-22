@@ -7,18 +7,34 @@ import React from 'react';
 import { render } from 'ink-testing-library';
 import { removeTemp } from './temp.js';
 import { settingRows } from '../src/settings.js';
-import { DEFAULT_ACCENT, setAccent, theme } from '../src/theme.js';
+import { DEFAULT_ACCENT, LIGHT_ACCENT, setAccent, theme } from '../src/theme.js';
 import { App } from '../src/ui/App.jsx';
 
 test('the settings list: values, plurals, and what ↵ does', () => {
   const rows = settingRows({ recent: [], roots: [], history: [] }, { file: '/home/me/.splice/config.json' });
   const by = Object.fromEntries(rows.map((r) => [r.id, r]));
-  assert.deepEqual(rows.map((r) => r.id), ['accent', 'mouse', 'checkForUpdates', 'autoUpdate', 'stashUntracked', 'roots', 'recent', 'history', 'file']);
+  assert.deepEqual(rows.map((r) => r.id), ['accent', 'theme', 'mouse', 'checkForUpdates', 'autoUpdate', 'stashUntracked', 'notify', 'sideBySide', 'checkBeforePush', 'roots', 'recent', 'history', 'file']);
   assert.equal(by.accent.value, `${DEFAULT_ACCENT} (default)`);
+  // The theme: auto unless set, saying which it is here; ↵ goes round dark, light, auto.
+  assert.equal(by.theme.value, 'auto (dark here)');
+  assert.equal(by.theme.note, 'dark next');
+  assert.equal(settingRows({ theme: 'dark' }).find((r) => r.id === 'theme').note, 'light next');
+  assert.equal(settingRows({ theme: 'light' }).find((r) => r.id === 'theme').note, 'auto next: from the terminal, else dark');
+  assert.equal(settingRows({ theme: 'light' }).find((r) => r.id === 'theme').value, 'light');
   assert.equal(by.mouse.value, 'on');
   assert.equal(by.checkForUpdates.value, 'on');
   assert.equal(by.autoUpdate.value, 'on');
   assert.equal(by.stashUntracked.value, 'on');
+  assert.equal(by.notify.value, 'on');
+  assert.equal(by.checkBeforePush.value, 'on');
+  assert.equal(settingRows({ checkBeforePush: false }).find((r) => r.id === 'checkBeforePush').value, 'off');
+  assert.match(by.notify.note, /after 10 s/);
+  assert.match(settingRows({ notifyAfter: 30 }).find((r) => r.id === 'notify').note, /after 30 s/);
+  assert.equal(settingRows({ notify: false }).find((r) => r.id === 'notify').value, 'off');
+  // Side-by-side diffs: off until turned on.
+  assert.equal(by.sideBySide.value, 'off');
+  assert.equal(by.sideBySide.off, true);
+  assert.equal(settingRows({ sideBySide: true }).find((r) => r.id === 'sideBySide').value, 'on');
   assert.equal(by.roots.value, 'none');
   // Nothing to clear: ↵ does nothing.
   assert.equal(by.recent.action, 'none');
@@ -41,6 +57,8 @@ let base;
 let lastApp = null;
 
 before(() => {
+  // auto is dark here whatever terminal runs the tests.
+  delete process.env.COLORFGBG;
   base = mkdtempSync(join(tmpdir(), 'splice-settings-'));
   process.env.SPLICE_HOME = join(base, 'home');
   mkdirSync(join(base, 'empty'));
@@ -90,6 +108,18 @@ test('settings change in place, are saved as they change, and the accent repaint
       app.stdin.write('j');
       await until(() => new RegExp(`❯ ${label}`).test(frame()), `the cursor on ${label}`);
     };
+    // The theme: dark, then light, which repaints at once, then auto again.
+    await down('Theme');
+    app.stdin.write('\r');
+    await until(() => /Theme\s+dark/.test(frame()) && saved().theme === 'dark', 'dark, saved');
+    app.stdin.write('\r');
+    await until(() => /Theme\s+light/.test(frame()) && saved().theme === 'light', 'light, saved');
+    assert.equal(theme.mode, 'light');
+    assert.equal(theme.accent, LIGHT_ACCENT, "the default accent's light shade");
+    assert.match(frame(), /Accent colour\s+■ #00875f \(default\)/);
+    app.stdin.write('\r');
+    await until(() => /Theme\s+auto/.test(frame()) && saved().theme === 'auto', 'auto, saved');
+    assert.equal(theme.mode, 'dark', "dark where the terminal doesn't say");
     // Accent, checking, then installing: ↵ turns it off, and it's saved at once.
     await down('Mouse');
     await down('Check for new versions');
@@ -102,6 +132,22 @@ test('settings change in place, are saved as they change, and the accent repaint
     await down('Stash untracked files');
     app.stdin.write('\r');
     await until(() => /Stash untracked files\s+off/.test(frame()) && saved().stashUntracked === false, 'untracked stashing off, saved');
+
+    // Notifying when a long command ends: on by default, ↵ turns it off.
+    await down('Notify when done');
+    app.stdin.write('\r');
+    await until(() => /Notify when done\s+off/.test(frame()) && saved().notify === false, 'notifications off, saved');
+
+    // Side-by-side diffs: off by default, ↵ turns it on, and off again.
+    await down('Side-by-side diffs');
+    app.stdin.write('\r');
+    await until(() => /Side-by-side diffs\s+on/.test(frame()) && saved().sideBySide === true, 'side by side on, saved');
+    app.stdin.write('\r');
+    await until(() => /Side-by-side diffs\s+off/.test(frame()) && saved().sideBySide === false, 'side by side off again, saved');
+    // Checking the commits before a push: on by default, ↵ turns it off.
+    await down('Check before pushing');
+    app.stdin.write('\r');
+    await until(() => /Check before pushing\s+off/.test(frame()) && saved().checkBeforePush === false, 'the check before pushing off, saved');
 
     // The folders: x stops scanning one, and the count in the list follows.
     await down('Folders to scan');

@@ -8,7 +8,8 @@ import { useListNav, useMouse } from './hooks.js';
 import { Panel, Row } from './parts.jsx';
 
 const KEYS = { p: 'pick', r: 'reword', e: 'edit', s: 'squash', f: 'fixup', d: 'drop' };
-const COLOR = { pick: theme.dim, reword: theme.local, edit: theme.remote, squash: theme.warn, fixup: theme.warn, drop: theme.del };
+// Getters, so the colours are the theme's as it is now (light or dark).
+const COLOR = { get pick() { return theme.dim; }, get reword() { return theme.local; }, get edit() { return theme.remote; }, get squash() { return theme.warn; }, get fixup() { return theme.warn; }, get drop() { return theme.del; } };
 
 /**
  * The interactive rebase plan, newest commit on top like the graph. Rows are kept oldest first

@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Box, Text, useApp, useInput, useStdin } from 'ink';
 import { existsSync } from 'node:fs';
 import { basename, resolve } from 'node:path';
@@ -8,12 +8,16 @@ import { samePath, saveConfig, withRecent } from '../config.js';
 import { git, run } from '../git.js';
 import { HELP } from '../help.js';
 import { commandsSection, sectionFor } from '../help-layout.js';
-import { changeDiff, commitPatch, findRepo, loadRepo, snapshot, stashFileDiff, stashPatch } from '../repo.js';
+import { canonical, changeDiff, commitPatch, findRepo, loadRepo, snapshot, stashFileDiff, stashPatch } from '../repo.js';
 import { discover, eachLimited, summarize } from '../repos.js';
 import { BULLET, theme } from '../theme.js';
 import { fitSegments, stringWidth } from '../text.js';
 import { VERSION } from '../version.js';
-import { useTerminalSize } from './hooks.js';
+import { useKeyTranslation, useTerminalSize } from './hooks.js';
+import { keymapSection, parseKeymap, translateKey } from '../keymap.js';
+import { expandLines, userCommands } from '../usercommands.js';
+import { paletteItems } from '../palette.js';
+import { Palette } from './Palette.jsx';
 import { Confirm, Panel, PromptBox, Row, Spinner, Suggestions, confirmHeight } from './parts.jsx';
 import { BranchesView } from './BranchesView.jsx';
 import { ChangesView } from './ChangesView.jsx';
@@ -29,6 +33,7 @@ import { Picker } from './Picker.jsx';
 import { RebaseEditor } from './RebaseEditor.jsx';
 import { WELCOME_HEIGHT, Welcome } from './Pet.jsx';
 import { FACES, moodFor } from '../pet.js';
+import { worthNotifying } from '../notify.js';
 
 const VIEWS = [
   { id: 'graph', label: 'Graph' },
@@ -40,16 +45,22 @@ const VIEWS = [
   { id: 'repos', label: 'Repos' },
 ];
 
-// What ? shows: help.js's sections, then the slash commands.
-const HELP_SECTIONS = [...HELP, commandsSection(COMMANDS)];
+const VIEW_LABELS = Object.fromEntries(VIEWS.map((v) => [v.id, v.label]));
+
+// What ? shows: help.js's sections, the keys you mapped, then the slash commands, yours with them.
+const helpSections = (user, keymap) => [...HELP, ...[keymapSection(keymap, VIEW_LABELS)].filter(Boolean), commandsSection([...COMMANDS, ...user])];
+
+// ctrl+p, as the terminal sends it: the command palette.
+const CTRL_P = '\x10';
+const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
 const HINTS = {
-  graph: '↵ diff · c checkout · b branch · m merge · i rebase from here · C cherry-pick · v revert · X reset · B bisect · e/R Claude explains/reviews',
-  changes: 'space stage · ↵ hunks/lines · a all · u unstage all · d discard · s stash file · v select files · c commit · A amend · F fix up · H history · B blame · W Claude writes it · S splits it · R review · on a submodule: I init/update · o open',
-  branches: '↵ checkout · n new · m merge · e rebase · d delete · D diff vs default · o open PR · C clean up · U upstream · M remotes · on a tag: u push · R release',
+  graph: '↵ diff · c checkout · b branch · m merge · i rebase from here · C cherry-pick · V select several · v revert · X reset · B bisect · e/R Claude explains/reviews',
+  changes: 'space stage · ↵ hunks/lines · a all · u unstage all · d discard · i ignore · s stash file · v select files · c commit · A amend · M message in your editor · F fix up · H history · B blame · W Claude writes it · S splits it · R review · on a submodule: I init/update · o open',
+  branches: '↵ checkout · n new · m merge · e rebase · d delete · D diff vs default · o open PR · S sync · B update branch · C clean up · U upstream · M remotes · on a tag: u push · R release',
   stash: '↵ diff · s stash · S with a message · a apply · o pop · x drop · F files, to restore one',
-  prs: '↵ diff · c checkout · a approve · m merge · s checks · A reviewers · D draft/ready · E title · B description · C comment · o open in browser · n new PR · W Claude drafts one · e/R explain/review',
-  repos: '↵ open · s scan folder · x forget',
+  prs: '↵ diff · c checkout · w review in a worktree · a approve · m merge · s checks · A reviewers · D draft/ready · E title · B description · C comment · o open in browser · n new PR · W Claude drafts one · e/R explain/review',
+  repos: '↵ open · F fetch them all · s scan folder · x forget',
   worktrees: '↵ open · n new · x remove or prune · C clean up',
 };
 
@@ -75,10 +86,13 @@ function Header({ data, width, loading, mood }) {
   } else if (loading) {
     segs.push({ text: '  loading…', color: theme.dim });
   }
-  // The path gives way first, keeping its end (the repo folder) and losing its start.
+  // The path gives way first, keeping its end (the repo folder) and losing its start: the branch, the changes
+  // and a merge or rebase in progress matter more, however long the path (as in a Windows temp folder).
   const full = data ? data.root : '';
-  const pathW = Math.min(stringWidth(full), Math.max(0, width - 60));
-  const path = pathW < full.length ? `…${full.slice(-(pathW - 1))}` : full;
+  const room = width - 1 - segs.reduce((n, s) => n + stringWidth(s.text), 0);
+  const pathW = room >= 12 ? Math.min(stringWidth(full), room) : 0;
+  if (!pathW) return <Row pointer={false} width={width} segments={fitSegments(segs, width)} />;
+  const path = pathW < stringWidth(full) ? `…${full.slice(-(pathW - 1))}` : full;
   return <Row pointer={false} width={width} segments={[...fitSegments(segs, width - pathW - 1), { text: ' ' }, { text: path, color: theme.dim }]} />;
 }
 
@@ -130,10 +144,12 @@ function activityRows(entries) {
 
 const DOUBLE_CLICK_MS = 400;
 
-// `makeHost` stands in for hosting.js's hostFor in tests, so they never call gh or az. `mouse` is
+// `makeHost(data, config)` stands in for hosting.js's hostFor in tests, so they never call gh, az or glab. `mouse` is
 // mouse.js's terminalMouse() from cli.jsx (missing where the terminal can't report it); tests pass their own.
-// `copy` puts text on the clipboard (cli.jsx's; tests pass a stub).
-export function App({ initialPath, reopenLast = false, config: initialConfig, checkUpdate, installUpdate, askClaude, setTitle, makeHost = hostFor, mouse, copy }) {
+// `copy` puts text on the clipboard (cli.jsx's; tests pass a stub). `notify(title, body)` says something
+// finished (cli.jsx rings the terminal's bell and raises a desktop notification); without it, as in most
+// tests, nothing is said.
+export function App({ initialPath, reopenLast = false, config: initialConfig, checkUpdate, installUpdate, askClaude, setTitle, makeHost = hostFor, mouse, copy, notify }) {
   const { exit } = useApp();
   const { columns, rows } = useTerminalSize();
   const [config, setConfigState] = useState(initialConfig);
@@ -148,6 +164,10 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
   const [entries, setEntries] = useState([]);
   const [busy, setBusy] = useState(null);
   const [repos, setRepos] = useState([]);
+  const reposRef = useRef(repos);
+  reposRef.current = repos;
+  // F in Repos: how many of the listed repositories have been fetched so far, while it runs.
+  const [fetchProgress, setFetchProgress] = useState(null);
   const [filter, setFilter] = useState(null);
   const [welcome, setWelcome] = useState(true);
   const [update, setUpdate] = useState(null);
@@ -158,8 +178,26 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
     return () => clearTimeout(t);
   }, [entries]);
   const [prVersion, setPrVersion] = useState(0);
+  // Counts ctx.showInGraph calls, so the graph looks for the commit asked for (ctx.pendingJump).
+  const [jump, setJump] = useState(0);
   // A word in the bottom line for a moment ("Copied 3 lines"), where it moves nothing on screen.
   const [flash, setFlash] = useState(null);
+  // Errors said and questions answered no, counted so a line of your own command knows it failed.
+  const errorCount = useRef(0);
+  const declines = useRef(0);
+  // Your own commands and keys (the config's "commands" and "keys"), and what was wrong with them.
+  const custom = useMemo(() => {
+    const mine = userCommands(config.commands, COMMANDS.map((c) => c.name));
+    const commands = mine.commands.map((c) => ({ ...c, run: (_, rest) => ctx.runUserCommand(c, rest) }));
+    const keymap = parseKeymap(config.keys, VIEWS.map((v) => v.id));
+    return { commands, keymap, sections: helpSections(commands, keymap), problems: [...mine.problems.map((p) => `commands: ${p}`), ...keymap.problems.map((p) => `keys: ${p}`)] };
+  }, [config.commands, config.keys]);
+  const customRef = useRef(custom);
+  customRef.current = custom;
+  const viewRef = useRef(view);
+  viewRef.current = view;
+  // A key picked in the palette, sent to the view once it's back on screen (the effect below).
+  const pendingKey = useRef(null);
   useEffect(() => {
     if (!flash) return;
     const t = setTimeout(() => setFlash(null), 3000);
@@ -223,11 +261,15 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
   };
 
   const addEntry = (e) => {
+    if (e.status === 'error') errorCount.current++;
     const id = nextId.current++;
     setEntries((list) => [...list.slice(-19), { id, lines: [], at: Date.now(), ...e }]);
     return id;
   };
-  const updateEntry = (id, patch) => setEntries((list) => list.map((e) => (e.id === id ? { ...e, at: Date.now(), ...patch } : e)));
+  const updateEntry = (id, patch) => {
+    if (patch.status === 'error') errorCount.current++;
+    setEntries((list) => list.map((e) => (e.id === id ? { ...e, at: Date.now(), ...patch } : e)));
+  };
   const removeEntry = (id) => setEntries((list) => list.filter((e) => e.id !== id));
 
   const note = (text, status = 'info') => {
@@ -272,11 +314,15 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
     setBusy(b);
     const id = quiet ? null : addEntry({ title, status: 'running' });
     setWelcome(false);
+    // A long run that ends says so, for when you've looked away (Settings' "Notify when done"). Claude's
+    // answers run quietly, with no line of their own, so theirs just says it's done.
+    const tell = (line) => notify && worthNotifying(Date.now() - b.started, configRef.current) && notify(`Splice: ${title}`, `${line}${repo ? ` (${repo.name})` : ''}`);
     try {
       const { stdout, stderr } = await start(controller.signal);
       const out = [stdout.trimEnd(), stderr.trimEnd()].filter(Boolean).join('\n');
       lastOutput.current = { title, text: out || '(no output)' };
       if (id) updateEntry(id, { status: 'ok', lines: out ? out.split('\n') : ['Done'] });
+      tell(quiet || !out ? 'Done' : firstLine(out));
       return { ok: true, out };
     } catch (error) {
       lastOutput.current = { title, text: error.message };
@@ -285,6 +331,7 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
       else if (quietError) id && removeEntry(id);
       else if (id) updateEntry(id, { status: 'error', lines });
       else addEntry({ title, status: 'error', lines });
+      if (!error.cancelled && !quietError) tell(`Failed: ${firstLine(error.message)}`);
       return { ok: false, error };
     } finally {
       busyRef.current = null;
@@ -293,14 +340,15 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
     }
   };
 
-  const exec = (args, { anywhere = false, input, env, ...opts } = {}) => {
+  // `tree`: esc stops what git runs as well (git bisect run's command), not git alone.
+  const exec = (args, { anywhere = false, input, env, tree, ...opts } = {}) => {
     const repo = repoRef.current;
     if (!repo && !anywhere) {
       note('Open a repository first.', 'error');
       return Promise.resolve({ ok: false, error: new Error('no repository') });
     }
     const title = `git ${args.map(showArg).join(' ')}`;
-    return task(title, (signal) => run(repo?.root ?? process.cwd(), args, { signal, input, env }), { label: 'Running git', ...opts });
+    return task(title, (signal) => run(repo?.root ?? process.cwd(), args, { signal, input, env, tree }), { label: 'Running git', ...opts });
   };
 
   const confirm = (req) =>
@@ -313,6 +361,7 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
     const req = confirmRef.current;
     confirmRef.current = null;
     answerKey.current = keySeq.current;
+    if (value === false || value == null) declines.current++;
     setConfirmReq(null);
     req?.done(value);
   };
@@ -337,7 +386,11 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
     const list = paths.map((p) => ({ path: p, name: basename(p) }))
       .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }) || a.path.localeCompare(b.path));
     // The summaries from last time stay up while new ones come in: git status takes up to a second in a big repo.
-    setRepos((cur) => list.map((r) => ({ ...r, summary: cur.find((x) => samePath(x.path, r.path))?.summary })));
+    // So does what the last F said about each one's fetch.
+    setRepos((cur) => list.map((r) => {
+      const was = cur.find((x) => samePath(x.path, r.path));
+      return { ...r, summary: was?.summary, fetch: was?.fetch };
+    }));
     if (!summaries) return;
     eachLimited(list, 4, (r) => summarize(r.path), (r, summary) =>
       setRepos((cur) => cur.map((x) => (x.path === r.path ? { ...x, summary } : x))),
@@ -375,21 +428,33 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
   };
 
   const ctxRef = useRef(null);
-  if (!ctxRef.current) ctxRef.current = { get data() { return dataRef.current; }, get config() { return configRef.current; }, mouseHandlers: [] };
+  // `promptText`: what's typed in the prompt, which stays there while you're back in the view (M in Changes starts a message file from it).
+  if (!ctxRef.current) ctxRef.current = { get data() { return dataRef.current; }, get config() { return configRef.current; }, get promptText() { return promptRef.current.value; }, get repos() { return reposRef.current; }, mouseHandlers: [] };
   const ctx = ctxRef.current;
   Object.assign(ctx, {
     exec,
     task,
     // A read that doesn't show in the activity lines or block other commands. `opts.signal` cancels it.
     git: (args, opts) => git(repoRef.current.root, args, opts),
-    // The PR host (GitHub or Azure DevOps) of the open repository, kept while the remotes don't change.
+    // The PR host (GitHub, Azure DevOps or GitLab) of the open repository, kept while the remotes (and the
+    // config's `hosts`, which names self-managed GitLab servers) don't change.
     host: () => {
       const d = dataRef.current;
-      const key = d ? `${d.root}|${JSON.stringify(d.remoteUrls)}` : null;
-      if (ctx.hostCache?.key !== key) ctx.hostCache = { key, host: d ? makeHost(d) : null };
+      const hosts = configRef.current?.hosts;
+      const key = d ? `${d.root}|${JSON.stringify(d.remoteUrls)}|${JSON.stringify(hosts ?? null)}` : null;
+      if (ctx.hostCache?.key !== key) ctx.hostCache = { key, host: d ? makeHost(d, configRef.current) : null };
       return ctx.hostCache.host;
     },
     prsChanged: () => setPrVersion((v) => v + 1),
+    // Whether a command is running (the spinner): what the PR list's poll checks before asking anything.
+    isBusy: () => Boolean(busyRef.current),
+    // What the PR list's poll found on your own pull requests (prList.js): checks finished, a new review.
+    prNews: (news) => {
+      for (const n of news) {
+        note(`${n.title}: ${n.body}`);
+        if (notify && configRef.current.notify !== false) notify(`Splice: ${n.title}`, n.body);
+      }
+    },
     // claude.js's `ask`, from cli.jsx. Tests pass a stub, or nothing (and the Claude keys say it's unavailable).
     askClaude,
     // Whether this terminal can report the mouse at all (/settings says so).
@@ -451,6 +516,11 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
       reload({ graphLimit: d.graphLimit + 400 }).finally(() => (loadingMore.current = false));
     },
     // The graph's filter: text matches the loaded commits; { mode: 'S' | 'G', query, rows } holds a history search's results.
+    // Puts the graph's cursor on a commit (the first bad one a bisect found), now or when the graph is next on screen.
+    showInGraph: (hash) => {
+      ctx.pendingJump = { hash, root: repoRef.current?.root };
+      setJump((n) => n + 1);
+    },
     find: (f) => {
       setFilter(typeof f === 'string' ? (f.trim() ? { mode: 'text', query: f.trim() } : null) : f);
       setView('graph');
@@ -465,6 +535,21 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
       refreshRepos();
       // Added from the folders list in /settings: show it there.
       a.redrawSettings(ctx);
+    },
+    // A Repos row's fetch (F): { state: 'fetching' | 'done' | 'failed', error }, and its summary after it.
+    // `path` null clears every row's.
+    setRepoFetch: (path, fetch, summary) =>
+      setRepos((cur) =>
+        cur.map((x) => (path === null ? { ...x, fetch: undefined } : samePath(x.path, path) ? { ...x, fetch, ...(summary ? { summary } : {}) } : x)),
+      ),
+    setFetchProgress,
+    // A dropped folder that isn't a repository: the Repos view, with the ones inside it (as `splice <folder>`).
+    showReposIn: (dir) => {
+      const full = canonical(resolve(dir));
+      extraRoots.current = [...extraRoots.current.filter((r) => !samePath(r, full)), full];
+      note(`${basename(full)} isn't a git repository. Repos lists the ones inside it.`);
+      if (view === 'repos') refreshRepos();
+      else setView('repos');
     },
     forgetRepo: (path) => {
       setConfig((c) => ({ ...c, recent: c.recent.filter((r) => !samePath(r, path)) }));
@@ -489,6 +574,7 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
       const closing = overlayRef.current;
       ctx.rebaseEditor = null;
       ctx.reviewThread = null;
+      ctx.reviewLine = null;
       // As a function, so a picker going back to another picker (blame to history) isn't given this one to return to.
       setOverlay((cur) => cur?.back ?? null);
       // An action waiting for the viewer to close (showText(..., { onClosed })) carries on.
@@ -496,7 +582,12 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
     },
     overlayHasKeys: () => focusRef.current === 'view' && !confirmRef.current && answerKey.current !== keySeq.current,
     // On the section for the view on screen.
-    showHelp: () => setOverlay({ kind: 'help', start: sectionFor(HELP_SECTIONS, view) }),
+    showHelp: () => setOverlay({ kind: 'help', start: sectionFor(customRef.current.sections, view) }),
+    // Your own command `cmd` (usercommands.js) with what was typed after it, and any line as typed at
+    // the prompt; both resolve false when it failed.
+    runUserCommand: (cmd, rest) => runUserCommand(cmd, rest),
+    runLine: (text) => runLine(text),
+    openPalette: () => openPalette(),
     showLast: () => (lastOutput.current ? setOverlay({ ...lastOutput.current }) : note('No command has run yet.')),
     // `paths` limits it to some files (a file's history: its path then, and the one before a rename).
     showPatch: (c, paths = []) =>
@@ -528,6 +619,53 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
     showStashFile: (s, file) => showAsync(`${file.path} in ${s.ref}`, () => stashFileDiff(dataRef.current.root, s.ref, file), { diff: true }),
   });
 
+  // One line as typed at the prompt: git after ! (or starting with git), else a slash command.
+  // Resolves false when it failed: it threw, said an error, or a question it asked was answered no
+  // (so your own commands stop there).
+  const runLine = async (text) => {
+    const [errors, declined] = [errorCount.current, declines.current];
+    try {
+      let r;
+      if (text.startsWith('!')) r = await a.raw(ctx, text.slice(1));
+      else if (/^git(\s|$)/.test(text)) r = await a.raw(ctx, text);
+      else {
+        const [, name, rest] = text.replace(/^\//, '').match(/^(\S+)\s*([\s\S]*)$/);
+        const cmd = findCommand(name, customRef.current.commands);
+        if (!cmd) {
+          note(`Unknown command: /${name}. Type / to see them all.`, 'error');
+          return false;
+        }
+        r = await cmd.run(ctx, rest.trim());
+      }
+      return r !== false && r?.ok !== false && errorCount.current === errors && declines.current === declined;
+    } catch (e) {
+      note(firstLine(e.message), 'error');
+      return false;
+    }
+  };
+
+  // One of your own commands: its lines in order, with what was typed after it filled in, stopping at
+  // the first that fails. Commands of yours may run each other, but not round in a circle.
+  const userDepth = useRef(0);
+  const runUserCommand = async (cmd, rest) => {
+    if (userDepth.current >= 5) {
+      note(`/${cmd.name}: your commands run each other round in a circle, so it stopped.`, 'error');
+      return false;
+    }
+    const lines = expandLines(cmd, rest);
+    userDepth.current++;
+    try {
+      for (const [i, line] of lines.entries()) {
+        if (await runLine(line)) continue;
+        if (i < lines.length - 1) note(`/${cmd.name} stopped at ${line}: the ${plural(lines.length - i - 1, 'line')} after it didn't run.`, 'error');
+        return false;
+      }
+      return true;
+    } finally {
+      userDepth.current--;
+    }
+  };
+
   const submit = async (raw) => {
     const text = raw.trim();
     setPrompt('');
@@ -535,21 +673,59 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
     if (!text) return;
     const history = [text, ...(configRef.current.history ?? []).filter((h) => h !== text)].slice(0, 100);
     setConfig((c) => ({ ...c, history }));
-    try {
-      if (text.startsWith('!')) return await a.raw(ctx, text.slice(1));
-      if (/^git(\s|$)/.test(text)) return await a.raw(ctx, text);
-      const [, name, rest] = text.replace(/^\//, '').match(/^(\S+)\s*([\s\S]*)$/);
-      const cmd = findCommand(name);
-      if (!cmd) return note(`Unknown command: /${name}. Type / to see them all.`, 'error');
-      await cmd.run(ctx, rest.trim());
-    } catch (e) {
-      note(firstLine(e.message), 'error');
-    }
+    await runLine(text);
   };
+
+  // ctrl+p: the palette, over the view, starting from what's typed in the prompt when it's open there.
+  const openPalette = () => {
+    const typed = focusRef.current === 'prompt' ? promptRef.current.value.trim() : '';
+    if (focusRef.current === 'prompt') setFocus('view');
+    setOverlay({ kind: 'palette', query: typed.startsWith('!') ? '' : typed.replace(/^\//, '') });
+  };
+  // What's picked in it: a key goes to the view, a command runs, or waits in the prompt for what it
+  // takes. After every handler has had the ↵ that picked it, so it isn't also the prompt's.
+  const runPicked = (it) =>
+    queueMicrotask(() => {
+      ctx.closeOverlay();
+      if (it.key) pendingKey.current = it.key.seq;
+      else if (it.ask) prefill(`${it.command} `);
+      else runLine(it.command);
+    });
+
+  // Your keys, where they come in: while a view has the keys (never while typing, in a confirm or
+  // over an overlay), a key you mapped becomes the key it stands for, for the view and App alike, or
+  // runs its command line. Then ctrl+p opens the palette, from a view or the prompt.
+  const sendKey = useKeyTranslation((input) => {
+    let out = input;
+    if (focusRef.current === 'view' && !overlayRef.current && !confirmRef.current) {
+      const b = translateKey(customRef.current.keymap, viewRef.current, input);
+      if (b?.command) {
+        queueMicrotask(() => runLine(b.command));
+        return null;
+      }
+      if (b?.key) out = b.key.seq;
+    }
+    if (out === CTRL_P && !overlayRef.current && !confirmRef.current && (focusRef.current === 'view' || focusRef.current === 'prompt')) {
+      openPalette();
+      return null;
+    }
+    return out;
+  });
+  useEffect(() => {
+    if (pendingKey.current == null || overlayRef.current) return;
+    const k = pendingKey.current;
+    pendingKey.current = null;
+    sendKey(k);
+  });
 
   // First load: the given folder if it's a repo. Otherwise, when Splice was started without a path, the
   // repository open last time (the most recent one still there); failing that, the repo picker scanning that folder.
   useEffect(() => {
+    if (custom.problems.length) {
+      const text = ['Some of your commands or keys in the config were left out:', ...custom.problems].join('\n');
+      note(text, 'error');
+      lastOutput.current = { title: 'Your commands and keys', text };
+    }
     (async () => {
       const here = await openRepo(initialPath, { silent: true });
       let reopened = null;
@@ -563,10 +739,11 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
       }
       setLoading(false);
       if (reopened) {
-        note(`Opened ${basename(reopened)}, the repository you had open last (${initialPath} isn't one). Repos lists the others.`);
+        note(`Opened ${basename(reopened)}, the repository you had open last (${basename(resolve(initialPath))} isn't one). Repos lists the others.`);
       } else if (!here) {
         setView('repos');
-        note(`${initialPath} isn't inside a git repository. Pick one below, or /open <path>.`);
+        // By its name: the Repos view's "Scanning" line has the whole path.
+        note(`${basename(resolve(initialPath))} isn't inside a git repository. Pick one below, or /open <path>.`);
       }
       // Opening a repo only needs the paths (for /open completion); the Repos view fills in the rest when shown.
       refreshRepos(here ? [] : [initialPath], { summaries: !here && !reopened });
@@ -648,13 +825,13 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
     return () => clearInterval(t);
   }, []);
 
-  const suggestions = focus === 'prompt' && !confirmReq ? suggestionsFor(prompt.value, { data, repos, files: files ?? [] }) : [];
+  const suggestions = focus === 'prompt' && !confirmReq ? suggestionsFor(prompt.value, { data, repos, files: files ?? [], user: custom.commands }) : [];
   const sel = Math.min(sugIndex, Math.max(0, suggestions.length - 1));
 
   // Line editing in the prompt.
   const promptKeys = (input, key) => {
     const { value, cursor } = promptRef.current;
-    const items = suggestionsFor(value, { data: dataRef.current, repos, files: files ?? [] });
+    const items = suggestionsFor(value, { data: dataRef.current, repos, files: files ?? [], user: customRef.current.commands });
     const pick = items[Math.min(sugIndex, items.length - 1)];
     const edit = (v, c) => {
       setPrompt(v, c);
@@ -704,6 +881,8 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
       }
       return;
     }
+    // A folder or file dropped on the terminal (which types its path): a repository to open, or a file's history.
+    if (input.length > 1 && a.openDropped(ctx, input)) return;
     if (input === '/' || input === ':') return prefill('/');
     if (input === '!') return prefill('!');
     if (input === '?') return ctx.showHelp();
@@ -833,17 +1012,26 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
     tabs: tabLabels(data),
   };
 
+  // The palette's list: this view's keys, yours, then the commands.
+  const paletteList = useMemo(
+    () => paletteItems({ commands: COMMANDS, user: custom.commands, sections: HELP.filter((s) => s.title === 'Anywhere' || s.views?.includes(view)), keymap: custom.keymap, view, skip: ['ctrl+p'] }),
+    [custom, view],
+  );
+
   let main;
-  if (overlay?.kind === 'rebase') {
+  if (overlay?.kind === 'palette') {
+    // Closed once every handler has had the esc, or App's would also take it (and clear the log).
+    main = <Palette items={paletteList} query={overlay.query} ctx={ctx} width={W} height={mainH} active={focus === 'view' && !confirmReq} onPick={runPicked} onClose={() => queueMicrotask(ctx.closeOverlay)} />;
+  } else if (overlay?.kind === 'rebase') {
     main = <RebaseEditor plan={overlay.plan} ctx={ctx} width={W} height={mainH} active={focus === 'view' && !confirmReq} />;
   } else if (overlay?.kind === 'help') {
-    main = <HelpView sections={HELP_SECTIONS} start={overlay.start} ctx={ctx} width={W} height={mainH} active={focus === 'view' && !confirmReq} onClose={ctx.closeOverlay} />;
+    main = <HelpView sections={custom.sections} start={overlay.start} ctx={ctx} width={W} height={mainH} active={focus === 'view' && !confirmReq} onClose={ctx.closeOverlay} />;
   } else if (overlay?.kind === 'picker') {
     main = <Picker key={overlay.id} picker={overlay} ctx={ctx} width={W} height={mainH} active={focus === 'view' && !confirmReq} />;
   } else if (overlay) {
     main = <TextViewer {...overlay} ctx={ctx} width={W} height={mainH} active={focus === 'view' && !confirmReq} onClose={ctx.closeOverlay} />;
   } else if (view === 'repos') {
-    main = <ReposView repos={repos} roots={[...config.roots, ...extraRoots.current]} current={data?.root} ctx={ctx} width={W} height={mainH} active={viewActive} />;
+    main = <ReposView repos={repos} roots={[...config.roots, ...extraRoots.current]} current={data?.root} progress={fetchProgress} ctx={ctx} width={W} height={mainH} active={viewActive} />;
   } else if (!data) {
     main = (
       <Panel title={VIEWS.find((v) => v.id === view).label} width={W} height={mainH}>
@@ -852,7 +1040,7 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
     );
   } else {
     const View = { graph: GraphView, changes: ChangesView, branches: BranchesView, stash: StashView, prs: PrView, worktrees: WorktreesView }[view];
-    main = <View data={data} ctx={ctx} width={W} height={mainH} active={viewActive} filter={filter} prVersion={prVersion} />;
+    main = <View data={data} ctx={ctx} width={W} height={mainH} active={viewActive} filter={filter} prVersion={prVersion} jump={jump} />;
   }
 
   const left = flash
@@ -863,6 +1051,8 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
         ? '↵ start the rebase · esc cancel'
         : overlay?.kind === 'help'
           ? 'j/k section · space scroll · / search · esc close'
+          : overlay?.kind === 'palette'
+          ? 'type to filter · ↑↓ pick · ↵ run it (a key in the view; a command that takes more goes into the prompt) · esc close'
           : overlay?.kind === 'picker'
           ? 'j/k move · esc close'
           : overlay

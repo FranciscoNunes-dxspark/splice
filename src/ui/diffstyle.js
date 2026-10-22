@@ -20,3 +20,25 @@ export function diffSegments(line, ranges) {
   if (!ranges) return [seg];
   return markRanges([seg], ranges, { bg: line[0] === '+' ? theme.addWord : theme.delWord, bold: true });
 }
+
+// A commit's line in git range-diff's output: "2:  d64780f ! 2:  c5383a9 Subject".
+export const RANGE_COMMIT = /^\s*(?:\d+|-+):\s+(?:[0-9a-f]+|-+) ([=!<>]) (?:\d+|-+):\s+(?:[0-9a-f]+|-+) /;
+const RANGE_TONE = { '=': 'dim', '!': 'warn', '<': 'del', '>': 'add' };
+
+/**
+ * A line of git range-diff's output: each commit's line coloured by what happened to it (= the same,
+ * ! changed, < only before, > only after), and under a changed one, the diff of its diffs by its own
+ * first column (indented four spaces): + what the new version has, - what the old one had.
+ */
+export function rangeDiffSegments(line) {
+  const text = clean(line);
+  const commit = RANGE_COMMIT.exec(line);
+  if (commit) return [{ text, color: theme[RANGE_TONE[commit[1]]], bold: commit[1] !== '=' }];
+  if (!line.startsWith('    ')) return [{ text }];
+  const inner = line.slice(4);
+  if (inner.startsWith('@@')) return [{ text, color: theme.hunk }];
+  if (inner.startsWith('+')) return [{ text, color: theme.add }];
+  if (inner.startsWith('-')) return [{ text, color: theme.del }];
+  // "## Commit message ##", "## a.txt ##": which part of the commit the lines below are about.
+  return [inner.trimStart().startsWith('## ') ? { text, color: theme.dim, bold: true } : { text }];
+}

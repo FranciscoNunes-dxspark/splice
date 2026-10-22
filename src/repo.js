@@ -36,7 +36,8 @@ export async function findRepo(path) {
   return { root: resolve(root), gitDir: resolve(gitDir), commonDir: canonical(resolve(path, commonDir || gitDir)), name: basename(resolve(root)) };
 }
 
-function canonical(p) {
+/** `p` as the file system names it: symbolic links followed and, on Windows, short names like RUNNER~1 made long. */
+export function canonical(p) {
   try {
     return realpathSync.native(p);
   } catch {

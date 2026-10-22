@@ -6,6 +6,7 @@ import { defaultBranch, isDefaultBranch, relTime } from '../parse.js';
 import { compareRefs, refLog } from '../repo.js';
 import { theme } from '../theme.js';
 import { fit } from '../text.js';
+import { useForecasts } from './forecasts.js';
 import { useAsync, useListNav, useMouse } from './hooks.js';
 import { usePrList } from './prList.js';
 import { Lines, Panel, Row } from './parts.jsx';
@@ -22,8 +23,25 @@ const commitLine = (c) => [
   { text: `  ${c.subject}` },
 ];
 
+// Whether merging with the default branch would conflict, and where: under the ahead/behind line, for a
+// branch that both has commits of its own and lacks some of the default branch's (otherwise nothing can).
+function forecastLines(f, why, def) {
+  if (why) return [[{ text: why, color: theme.dim }]];
+  if (!f) return [[{ text: 'Checking for conflicts…', color: theme.dim }]];
+  if (!f.conflicts) return [[{ text: `Merges with ${def.name} without conflicts`, color: theme.dim }]];
+  const shown = f.files.slice(0, 8);
+  return [
+    [
+      { text: '⚠ ', color: theme.warn, bold: true },
+      { text: `Would conflict in ${f.files.length} file${f.files.length === 1 ? '' : 's'}`, color: theme.warn, bold: true },
+    ],
+    ...shown.map((p) => [{ text: `  ${p}`, color: theme.warn }]),
+    ...(f.files.length > shown.length ? [[{ text: `  … and ${f.files.length - shown.length} more`, color: theme.dim }]] : []),
+  ];
+}
+
 // The right-hand pane: the branch's PR, how it compares with the default branch and what it adds, then its history.
-function paneLines(info, fresh, def, pr, vsDefault) {
+function paneLines(info, fresh, def, pr, vsDefault, fc) {
   const lines = [];
   if (pr) {
     const checks = checksText(pr.checks);
@@ -48,6 +66,7 @@ function paneLines(info, fresh, def, pr, vsDefault) {
           ]
         : [{ text: 'Up to date with ', color: theme.dim }, { text: def.ref, color: theme.local }],
     );
+    if (ahead && behind) lines.push(...forecastLines(fc.f, fc.why, def));
     lines.push(...commits.map(commitLine));
     if (ahead > commits.length) lines.push([{ text: `… and ${ahead - commits.length} more`, color: theme.dim }]);
     if (commits.length && info.history.length) lines.push('', [{ text: 'Before that', color: theme.dim, bold: true }]);
@@ -99,16 +118,29 @@ export function BranchesView({ data, ctx, width, height, active, prVersion }) {
     vsDefault ? compareRefs(data.root, sel.ref.name, def.ref) : refLog(data.root, sel.ref.name).then((history) => ({ history })),
   );
 
+  // Conflict marks: the selected branch first, then the local ones on screen (one git each, in the background).
+  const forecastList = useMemo(() => {
+    if (!def || !baseOid) return [];
+    const out = vsDefault ? [sel.ref] : [];
+    for (const r of rows.slice(nav.offset, nav.offset + innerH)) {
+      if (r.type === 'local' && r.ref !== sel?.ref && r.ref.oid !== baseOid && !isDefaultBranch(def, r.ref, 'local')) out.push(r.ref);
+    }
+    return out;
+  }, [rows, nav.offset, innerH, sel?.ref, vsDefault, def, baseOid]);
+  const fc = useForecasts(data.root, baseOid ? { oid: baseOid } : null, forecastList);
+
   const nameW = Math.min(32, Math.max(8, ...rows.filter((r) => r.ref).map((r) => r.ref.name.length)));
   // The subject gives way first, then the PR column (before the name), and the upstream column before the PR one.
-  const prW = prOf.size && innerW >= 2 + nameW + 9 + 12 + 5 + 6 ? 12 : 0;
-  const upW = innerW >= 90 + prW ? Math.min(24, Math.max(0, ...local.map((b) => (b.upstream ?? '').length))) : 0;
+  const prW = prOf.size && innerW >= 2 + nameW + 2 + 9 + 12 + 5 + 6 ? 12 : 0;
+  const upW = innerW >= 92 + prW ? Math.min(24, Math.max(0, ...local.map((b) => (b.upstream ?? '').length))) : 0;
 
   const keys = (input, key) => {
     if (!ctx.viewHasKeys()) return;
     if (nav.handle(input, key)) return;
     if (input === 'C') return a.cleanUp(ctx);
     if (input === 'M') return a.remote(ctx, '');
+    if (input === 'S') return a.sync(ctx);
+    if (input === 'B') return a.updateBranch(ctx, '');
     if (!sel?.ref) return;
     const { name } = sel.ref;
     if (sel.type === 'tag' && input === 'u') return a.pushTag(ctx, name);
@@ -126,7 +158,7 @@ export function BranchesView({ data, ctx, width, height, active, prVersion }) {
     else if (input === 'D') a.compare(ctx, name);
     else if (input === 'o') {
       if (selPr) ctx.openUrl(selPr.url);
-      else if (!prs.host) ctx.note("This repository's remote isn't on GitHub or Azure DevOps.", 'error');
+      else if (!prs.host) ctx.note("This repository's remote isn't on GitHub, Azure DevOps or GitLab.", 'error');
       else if (!prs.value) ctx.note(`Pull requests from ${prs.host.name} haven't loaded. Check the PRs view (6).`, 'error');
       else ctx.note(`${name} has no open pull request.`, 'error');
     }
@@ -155,6 +187,8 @@ export function BranchesView({ data, ctx, width, height, active, prVersion }) {
           const segs = [
             { text: ref.current ? '● ' : '  ', color: theme.accent, bold: true },
             { text: fit(ref.name, nameW), color, bold: ref.current, strong: true },
+            // ⚠: merging it with the default branch would conflict.
+            { text: type !== 'tag' && fc.get(ref.oid)?.conflicts ? ' ⚠' : '  ', color: theme.warn, bold: true },
             { text: ` ${fit(type === 'local' ? track(ref) : '', 8)}`, color: ref.gone ? theme.del : theme.warn },
           ];
           if (prW) {
@@ -172,7 +206,7 @@ export function BranchesView({ data, ctx, width, height, active, prVersion }) {
       </Panel>
       {split ? (
         <Panel title={sel?.ref ? sel.ref.name : 'History'} hint={hint} width={logW} height={height}>
-          <Lines width={logW - 2} height={innerH} lines={paneLines(info.value, info.key === infoKey, def, selPr, vsDefault)} />
+          <Lines width={logW - 2} height={innerH} lines={paneLines(info.value, info.key === infoKey, def, selPr, vsDefault, { f: vsDefault ? fc.get(sel.ref.oid) : null, why: fc.why })} />
         </Panel>
       ) : null}
     </Box>

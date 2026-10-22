@@ -4,35 +4,46 @@ import { splitArgs } from './parse.js';
 // Slash commands. `args` in square brackets are optional, so picking the command runs it straight away.
 // `complete` names the list offered while typing the first argument.
 export const COMMANDS = [
-  { name: 'commit', args: '<message>', desc: 'Commit the staged changes', run: (ctx, s) => a.commit(ctx, s) },
-  { name: 'amend', args: '[message]', desc: 'Amend the last commit (keeps its message if none given)', run: (ctx, s) => a.commit(ctx, s, { amend: true }) },
+  { name: 'commit', args: '<message> | --file [path]', desc: 'Commit the staged changes (\\n for a new line); --file: the message from a file, alone: written to one for your editor', run: (ctx, s) => a.commit(ctx, s) },
+  { name: 'amend', args: '[message | --file [path]]', desc: 'Amend the last commit (keeps its message if none given); --file alone: its message in a file for your editor', run: (ctx, s) => a.commit(ctx, s, { amend: true }) },
   { name: 'fixup', args: '[ref]', desc: 'Make the staged changes a fix for an earlier commit (picked from a list), then fold it in', complete: 'refs', run: (ctx, s) => a.fixup(ctx, s) },
+  { name: 'absorb', desc: "Each staged hunk becomes a fixup! for the branch's commit that last changed its lines (shows where, asks), then folds them in", run: (ctx) => a.absorb(ctx) },
   { name: 'checkout', args: '<branch|tag|hash>', desc: 'Switch to a branch, tag or commit', complete: 'refs', run: (ctx, s) => a.checkout(ctx, s) },
   { name: 'branch', args: '<name> [start]', desc: 'Create a branch and switch to it', run: (ctx, s) => a.createBranch(ctx, s) },
   { name: 'delete', args: '<branch|tag>', desc: 'Delete a branch (local or remote) or a tag', complete: 'refs', run: (ctx, s) => a.deleteRef(ctx, s) },
   { name: 'cleanup', desc: 'Delete branches and remove worktrees with nothing of yours on them, and merged PRs\' branches on the remote (asks first)', run: (ctx) => a.cleanUp(ctx) },
+  { name: 'doctor', desc: 'A health check of the repository: what looks wrong, what to do about it, and doing what Splice can (asks first)', run: (ctx) => a.doctor(ctx) },
   { name: 'merge', args: '<ref>', desc: 'Merge a ref into the current branch', complete: 'refs', run: (ctx, s) => a.merge(ctx, s) },
+  { name: 'cherry-pick', args: '<ref | a..b>', desc: 'Copy a commit onto the current branch, or the commits in a..b, oldest first (asks first)', complete: 'refs', run: (ctx, s) => a.cherryPickRefs(ctx, s) },
+  { name: 'range-diff', args: '[branch | <a> <b>]', desc: "What the branch's last rebase, amend or reset changed in each commit (the current branch if none given); or compare two versions", complete: 'refs', run: (ctx, s) => a.rangeDiff(ctx, s) },
   { name: 'rebase', args: '[-i] <ref>', desc: 'Rebase the current branch onto a ref (-i: edit the commits after it)', complete: 'refs', run: (ctx, s) => a.rebase(ctx, s) },
+  { name: 'forecast', args: '<ref> [base]', desc: 'Whether merging a branch with the default branch (or base) would conflict, and in which files (git merge-tree)', complete: 'refs', run: (ctx, s) => a.forecastConflicts(ctx, s) },
   { name: 'compare', args: '<ref> [base]', desc: 'Full diff of what a branch adds to the default branch (or to base)', complete: 'refs', run: (ctx, s) => a.compare(ctx, s) },
   { name: 'fetch', args: '[remote]', desc: 'Fetch all remotes and prune deleted branches', run: (ctx, s) => a.fetch(ctx, splitArgs(s)) },
+  { name: 'sync', desc: 'Fetch, then fast-forward every local branch that is only behind its upstream; says which have diverged or lost theirs', run: (ctx) => a.sync(ctx) },
+  { name: 'update-branch', args: '[base] [--stack]', desc: 'Rebase the current branch onto the latest default branch (or base); --stack moves the branches stacked with it too', complete: 'refs', run: (ctx, s) => a.updateBranch(ctx, s) },
   { name: 'pull', args: '[--rebase]', desc: 'Pull the current branch', run: (ctx, s) => a.pull(ctx, splitArgs(s)) },
-  { name: 'push', args: '[--force] [remote]', desc: 'Push the current branch (sets the upstream the first time); to another remote if named', run: (ctx, s) => a.push(ctx, splitArgs(s)) },
+  { name: 'push', args: '[--force] [remote]', desc: 'Push the current branch (sets the upstream the first time; asks first if its commits have big files or secrets); to another remote if named', run: (ctx, s) => a.push(ctx, splitArgs(s)) },
   { name: 'remote', args: '[add|rename|remove|set-url] [...]', desc: 'The remotes: list them, or add <name> <url>, rename <old> <new>, remove <name>, set-url <name> <url>', run: (ctx, s) => a.remote(ctx, s) },
   { name: 'upstream', args: '[branch] <remote/branch>', desc: 'Set the branch a local branch tracks (--unset to stop)', complete: 'refs', run: (ctx, s) => a.upstream(ctx, s) },
   { name: 'stash', args: '[-u | --no-untracked] [message]', desc: 'Stash all changes (untracked files too, unless set off in /settings), with an optional message', run: (ctx, s) => a.stash(ctx, s) },
   { name: 'submodule-update', args: '[path]', desc: 'Initialise and check out the recorded commit of every submodule, or one', run: (ctx, s) => a.updateSubmodules(ctx, s) },
+  { name: 'ignore', args: '<pattern>', desc: "Add a pattern to the repository's .gitignore (i on an untracked file in Changes offers some)", run: (ctx, s) => a.ignore(ctx, s) },
   { name: 'discard', desc: 'Discard all uncommitted changes (asks first)', run: (ctx) => a.discardAll(ctx) },
   { name: 'undo', desc: 'Undo the last commit, amend, merge, rebase, reset, switch or discard (asks first)', run: (ctx) => a.undo(ctx) },
   { name: 'reflog', desc: 'Where HEAD has been: see, reset to or check out any earlier position', run: (ctx) => a.showReflog(ctx) },
   { name: 'pop', args: '[stash@{n}]', desc: 'Apply a stash and drop it', run: (ctx, s) => a.stashApply(ctx, s, { pop: true }) },
   { name: 'tag', args: '<name> [ref]', desc: 'Create a tag', run: (ctx, s) => a.tag(ctx, s) },
   { name: 'tag-push', args: '<tag> [remote]', desc: 'Push a tag (to origin unless a remote is named)', complete: 'refs', run: (ctx, s) => a.pushTag(ctx, s) },
-  { name: 'release', args: '<tag> [--draft] [title]', desc: 'Create a GitHub release for a tag, with notes GitHub writes', complete: 'refs', run: (ctx, s) => a.createRelease(ctx, s) },
+  { name: 'release', args: '<tag> [--draft] [--notes-file <path>] [title]', desc: 'Create a GitHub or GitLab release for a tag, with notes written for you (or from a file)', complete: 'refs', run: (ctx, s) => a.createRelease(ctx, s) },
   { name: 'worktree', args: '<path> [ref]', desc: 'Add a worktree at a path (relative to the repository), checking out a ref', run: (ctx, s) => a.addWorktree(ctx, s) },
   { name: 'reset', args: '<ref>', desc: 'Move the current branch to a ref (soft, mixed or hard)', complete: 'refs', run: (ctx, s) => a.reset(ctx, s) },
   { name: 'pr', args: '<title> [--into <branch>] [--draft]', desc: 'Open a pull request from the current branch', run: (ctx, s) => a.createPr(ctx, s) },
   { name: 'comment', args: '<text>', desc: 'Comment on the pull request picked in PRs', run: (ctx, s) => a.prComment(ctx, s) },
   { name: 'reply', args: '<text>', desc: "Reply to a review comment in a pull request's diff (r on it)", run: (ctx, s) => a.replyToThread(ctx, s) },
+  { name: 'review-comment', args: '<text>', desc: "Comment on the line under the cursor in a pull request's diff (c on it)", run: (ctx, s) => a.commentOnLine(ctx, s) },
+  { name: 'resolve', desc: "Mark the review comment picked in a pull request's diff resolved (x on it)", run: (ctx) => a.resolveThread(ctx, true) },
+  { name: 'unresolve', desc: "Open the review comment picked in a pull request's diff again (x on it)", run: (ctx) => a.resolveThread(ctx, false) },
   { name: 'merge-pr', args: '[squash|merge|rebase] [--delete-branch] [--auto]', desc: 'Merge the pull request picked in PRs (asks how; --auto once checks pass)', run: (ctx, s) => a.prMerge(ctx, ctx.selectedPr, s) },
   { name: 'ci', desc: 'CI checks of the pull request picked in PRs: logs, re-run the failed ones', run: (ctx) => a.prChecks(ctx, ctx.selectedPr) },
   { name: 'reviewer', args: '<name> [name ...]', desc: 'Ask people to review the pull request picked in PRs', run: (ctx, s) => a.prReviewers(ctx, s) },
@@ -41,8 +52,13 @@ export const COMMANDS = [
   { name: 'title', args: '<text>', desc: 'Rename the pull request picked in PRs', run: (ctx, s) => a.prTitle(ctx, s) },
   { name: 'body', args: '[--file <path> | text]', desc: "Edit the picked pull request's description: alone, in a file for your editor", run: (ctx, s) => a.prBody(ctx, s) },
   { name: 'approve', desc: 'Approve the pull request picked in PRs', run: (ctx) => a.prApprove(ctx, ctx.selectedPr) },
+  { name: 'request-changes', args: '[text]', desc: 'Ask for changes to the pull request picked in PRs (asks first; GitHub and GitLab need the text)', run: (ctx, s) => a.prRequestChanges(ctx, ctx.selectedPr, s) },
   { name: 'describe', desc: 'Claude writes the commit message for the staged changes', run: (ctx) => a.describeCommit(ctx) },
   { name: 'split', desc: 'Claude splits your uncommitted changes into logical commits, each reviewed before it is made', run: (ctx) => a.claudeSplit(ctx) },
+  { name: 'ship', args: '[--into <branch>]', desc: 'Push the branch, open its pull request (Claude drafts it) and turn on auto-merge, in one go; once merged, switch to the default branch, pull and delete it', run: (ctx, s) => a.ship(ctx, s) },
+  { name: 'review-pr', args: '<number>', desc: 'Check a pull request out in a worktree of its own (../<repo>-pr-<n>) and open it, or bring that one up to date (w in PRs)', run: (ctx, s) => a.reviewPr(ctx, s) },
+  { name: 'backport', args: '<pr-number> <branch>', desc: 'Cherry-pick a merged pull request onto a release branch, as backport/<n>-to-<branch>, push it and open its pull request (asks first)', run: (ctx, s) => a.backport(ctx, s) },
+  { name: 'changelog', args: '[since-tag] [--into-release <tag>]', desc: 'Claude writes release notes from the commits and merged PRs since a tag (the latest by default); --into-release: the notes of that release', complete: 'refs', run: (ctx, s) => a.changelog(ctx, s) },
   { name: 'draft-pr', args: '[--into <branch>]', desc: 'Claude drafts a pull request (title and description) for the current branch', run: (ctx, s) => a.draftPr(ctx, s) },
   { name: 'explain', args: '[ref]', desc: 'Claude explains a commit (HEAD if none given)', complete: 'refs', run: (ctx, s) => a.claudeRef(ctx, 'explain', s) },
   { name: 'review', args: '[ref]', desc: 'Claude reviews a commit, or your changes if none given', complete: 'refs', run: (ctx, s) => a.claudeRef(ctx, 'review', s) },
@@ -54,11 +70,11 @@ export const COMMANDS = [
   },
   {
     name: 'bisect',
-    args: '<good|bad|skip|reset> [ref]',
-    desc: 'Find the commit that brought in a problem: mark commits good or bad (HEAD if no ref), reset to stop',
+    args: '<good|bad|skip|reset|run> [ref | command…]',
+    desc: 'Find the commit that brought in a problem: mark commits good or bad (HEAD if no ref), run a command that tests each (exit 0 good, 125 skip, else bad), reset to stop',
     run: (ctx, s) => {
-      const [how, ref] = splitArgs(s);
-      return a.bisect(ctx, how, ref);
+      const [how, ...rest] = splitArgs(s);
+      return how === 'run' ? a.bisectRun(ctx, rest) : a.bisect(ctx, how, rest[0]);
     },
   },
   { name: 'continue', desc: 'Continue the merge, rebase, cherry-pick or revert', run: (ctx) => a.continueOp(ctx) },
@@ -100,12 +116,13 @@ export const COMMANDS = [
   { name: 'quit', desc: 'Exit Splice', run: (ctx) => ctx.quit() },
 ];
 
-/** Exact name, or an unambiguous prefix of one. */
-export function findCommand(name) {
+/** Exact name, or an unambiguous prefix of one; `user` are your own commands (usercommands.js), after the built-in ones. */
+export function findCommand(name, user = []) {
   const n = name.toLowerCase();
-  const exact = COMMANDS.find((c) => c.name === n);
+  const all = [...COMMANDS, ...user];
+  const exact = all.find((c) => c.name === n);
   if (exact) return exact;
-  const matches = COMMANDS.filter((c) => c.name.startsWith(n));
+  const matches = all.filter((c) => c.name.startsWith(n));
   return matches.length === 1 ? matches[0] : null;
 }
 
@@ -133,21 +150,22 @@ function ranked(names, query) {
 
 /**
  * What to offer under the prompt for `value`: commands while the name is being typed,
- * then refs, repos or files for commands that complete their argument.
+ * then refs, repos or files for commands that complete their argument. `user` adds your own commands.
  * `insert` replaces the prompt text; `run` means picking it can run straight away.
  */
-export function suggestionsFor(value, { data, repos = [], files = [] }) {
+export function suggestionsFor(value, { data, repos = [], files = [], user = [] }) {
   if (!value.startsWith('/')) return [];
   const space = value.indexOf(' ');
+  const all = [...COMMANDS, ...user];
   if (space < 0) {
-    const names = ranked(COMMANDS.map((c) => c.name), value.slice(1));
+    const names = ranked(all.map((c) => c.name), value.slice(1));
     return names.slice(0, 7).map((name) => {
-      const c = COMMANDS.find((x) => x.name === name);
+      const c = all.find((x) => x.name === name);
       const optional = !c.args || c.args.startsWith('[');
       return { label: `/${c.name}`, hint: c.args ?? '', desc: c.desc, insert: `/${c.name}${optional ? '' : ' '}`, run: optional };
     });
   }
-  const cmd = findCommand(value.slice(1, space));
+  const cmd = findCommand(value.slice(1, space), user);
   const rest = value.slice(space + 1);
   if (!cmd?.complete || rest.includes(' ')) return [];
   // Flags the command takes before its text: offered until something else is typed.

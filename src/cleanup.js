@@ -8,6 +8,12 @@ import { prSource } from './hosting.js';
 import { REF_FORMAT, parseRefs, parseWorktrees } from './parse.js';
 
 const lines = (s) => s.split('\n').filter(Boolean);
+
+/** The pull request number of a branch /review-pr made (pr-<n>), else null. */
+export const reviewBranchId = (name) => {
+  const m = /^pr-(\d+)$/.exec(name ?? '');
+  return m ? Number(m[1]) : null;
+};
 const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
 /**
@@ -52,14 +58,16 @@ export async function readCleanup(root, { defaultBranch = null, mergedRefs = [],
     : new Set();
   const { local: branches, remote } = parseRefs(refs);
   // A branch whose pull request was merged (squashed, say) has nothing only here when its tip is the
-  // PR's last commit, or one before it. Only the branches that would stay otherwise need asking.
+  // PR's last commit, or one before it. Only the branches that would stay otherwise need asking. A fork's
+  // branch names aren't this repository's, but /review-pr's pr-<n> branches go by the number, forks' too.
   const prMerged = new Map();
   if (server) {
     const stays = (b) => !merged.has(b.name) && (!localOnly || localOnly.has(b.oid));
     await Promise.all(
       branches.filter(stays).map(async (b) => {
         const source = prSource(b, server.remoteName);
-        const prs = server.merged.filter((p) => p.source === source && p.head);
+        const review = reviewBranchId(b.name);
+        const prs = server.merged.filter((p) => p.head && ((!p.fork && p.source === source) || (review != null && Number(p.id) === review)));
         let pr = prs.find((p) => p.head === b.oid);
         for (const p of prs) {
           if (pr) break;
@@ -152,7 +160,7 @@ export function planCleanup({
   for (const b of remoteBranches) {
     const branch = b.name.slice(remoteName.length + 1);
     if (branch === defaultBranch || busy.has(branch)) continue;
-    const pr = prs.find((p) => p.source === branch && p.head === b.oid);
+    const pr = prs.find((p) => !p.fork && p.source === branch && p.head === b.oid);
     if (pr) goRemote.push({ name: b.name, remote: remoteName, branch, why: `${pr.label} was merged into ${pr.target}` });
   }
   return { worktrees: goWorktrees, branches: goBranches, remote: goRemote, kept };

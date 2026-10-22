@@ -41,7 +41,8 @@ export function refPills(refs) {
 }
 
 const META_W = 26;
-const SIG_TONE = { good: theme.add, wait: theme.warn, bad: theme.del, none: theme.dim };
+// Getters, so the colours are the theme's as it is now (light or dark).
+const SIG_TONE = { get good() { return theme.add; }, get wait() { return theme.warn; }, get bad() { return theme.del; }, get none() { return theme.dim; } };
 
 function detailLines(c, d, width) {
   const lines = [
@@ -88,7 +89,7 @@ export function filterTitle(filter, count) {
   return { title: `Commits matching "${query}" (${count})`, empty: 'No loaded commit matches.' };
 }
 
-export function GraphView({ data, ctx, width, height, active, filter }) {
+export function GraphView({ data, ctx, width, height, active, filter, jump }) {
   const rows = useMemo(() => {
     // A history search (/find -S or -G) brought its own commits.
     if (filter?.rows) return filter.rows;
@@ -134,6 +135,23 @@ export function GraphView({ data, ctx, width, height, active, filter }) {
     if (at >= 0) nav.setIndex(at);
   }, [data.state, head]);
 
+  // A commit something asked to show (ctx.showInGraph): the cursor goes to it once it's among the rows.
+  useEffect(() => {
+    const want = ctx.pendingJump;
+    if (!want) return;
+    const at = want.root === data.root ? rows.findIndex((r) => r.commit?.hash === want.hash) : -1;
+    if (at >= 0) nav.setIndex(at);
+    // Another repository's commit is never coming.
+    if (at >= 0 || want.root !== data.root) ctx.pendingJump = null;
+  }, [jump, rows]);
+
+  // V: the commit the selection started on, by hash, so it stays put when a reload adds rows above it.
+  const [fromHash, setFromHash] = useState(null);
+  const fromIndex = fromHash ? rows.findIndex((r) => r.commit?.hash === fromHash) : -1;
+  const span = fromIndex < 0 ? null : [Math.min(fromIndex, nav.index), Math.max(fromIndex, nav.index)];
+  // Newest first, as drawn.
+  const picked = span ? rows.slice(span[0], span[1] + 1).filter((r) => r.commit).map((r) => r.commit) : [];
+
   const graphW = filter ? 0 : Math.min(Math.floor(innerW * 0.35), Math.max(1, ...data.graph.map((r) => r.graph.length)));
   const metaOn = innerW >= 70;
   const budget = innerW - 2 - (metaOn ? META_W : 0);
@@ -144,6 +162,12 @@ export function GraphView({ data, ctx, width, height, active, filter }) {
       if (!filter && !data.graphComplete && nav.index > rows.length - innerH - 5) ctx.loadMore();
       return;
     }
+    if (key.escape && span) return setFromHash(null);
+    if (input === 'C' && span) {
+      setFromHash(null);
+      // Oldest first, the order they're picked in.
+      return a.cherryPickMany(ctx, [...picked].reverse());
+    }
     if (key.escape && filter) return ctx.find('');
     if (input === 'J') return setDetailOffset((o) => o + 3);
     if (input === 'K') return setDetailOffset((o) => Math.max(0, o - 3));
@@ -153,6 +177,7 @@ export function GraphView({ data, ctx, width, height, active, filter }) {
       return;
     }
     if (!c) return;
+    if (input === 'V') return setFromHash(span ? null : c.hash);
     const short = c.hash.slice(0, 7);
     const ref = c.refs.find((r) => r.type === 'local')?.name ?? c.refs.find((r) => r.type === 'remote')?.name ?? c.hash;
     if (key.return) ctx.showPatch(c);
@@ -184,7 +209,13 @@ export function GraphView({ data, ctx, width, height, active, filter }) {
   const visible = rows.slice(nav.offset, nav.offset + innerH);
   const commits = rows.filter((r) => r.commit).length;
   const filtered = filter ? filterTitle(filter, commits) : { title: 'Commits', empty: 'No commits yet.' };
-  const hint = filter ? 'esc clears' : data.graphComplete ? `${commits}` : `${commits}+`;
+  const hint = span
+    ? `${picked.length} selected · C cherry-pick · esc`
+    : filter
+      ? 'esc clears'
+      : data.graphComplete
+        ? `${commits}`
+        : `${commits}+`;
 
   return (
     <Box width={width} height={height}>
@@ -212,7 +243,8 @@ export function GraphView({ data, ctx, width, height, active, filter }) {
             );
           }
           if (!row.commit) {
-            return <Row key={`g${nav.offset + i}`} width={innerW} segments={graphSegments(row.graph, graphW)} />;
+            const inSpan = span && nav.offset + i > span[0] && nav.offset + i < span[1];
+            return <Row key={`g${nav.offset + i}`} width={innerW} marked={inSpan} focused={active} segments={graphSegments(row.graph, graphW)} />;
           }
           const k = row.commit;
           const left = [
@@ -229,7 +261,14 @@ export function GraphView({ data, ctx, width, height, active, filter }) {
               ]
             : [];
           return (
-            <Row key={k.hash} width={innerW} selected={selected} focused={active} segments={[...fitSegments(left, budget), ...meta]} />
+            <Row
+              key={k.hash}
+              width={innerW}
+              selected={selected}
+              marked={span && nav.offset + i >= span[0] && nav.offset + i <= span[1]}
+              focused={active}
+              segments={[...fitSegments(left, budget), ...meta]}
+            />
           );
         })}
       </Panel>

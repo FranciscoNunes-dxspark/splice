@@ -111,6 +111,7 @@ test('F picks an older commit, commits the fixup and folds it in, keeping other 
     assert.equal(g('status', '--porcelain'), 'M Gamma.txt');
     assert.equal(readFileSync(join(dir, 'Gamma.txt'), 'utf8'), 'Gamma\nwork in progress\n');
     await until(() => !frame().includes('REBASING'), 'no rebase left in progress', 30000);
+    await until(() => frame().includes('main is rewritten. /range-diff shows'), 'the hint about /range-diff');
   } finally {
     app.unmount();
   }
@@ -207,6 +208,76 @@ test('/find -S and -G search the whole history, past the loaded commits', async 
     await command(app, 'find Commit 44');
     // (Commits 440 to 449: Commit 44 itself is older than the loaded 400.)
     await until(() => frame().includes('Commits matching "Commit 44" (10)'), 'the text filter');
+  } finally {
+    app.unmount();
+  }
+});
+
+test('Z absorbs each staged hunk into the branch commit that last changed its lines, keeps the rest staged, and folds them in', async () => {
+  const lines = (edit = {}) => `${Array.from({ length: 20 }, (_, i) => edit[i + 1] ?? `line ${i + 1}`).join('\n')}\n`;
+  const { dir, g } = makeRepo('absorb-repo', []);
+  writeFileSync(join(dir, 'a.txt'), lines());
+  writeFileSync(join(dir, 'b.txt'), lines());
+  g('add', '.');
+  g('commit', '-q', '-m', 'Base');
+  g('switch', '-q', '-c', 'feature');
+  writeFileSync(join(dir, 'a.txt'), lines({ 2: 'alpha 2' }));
+  g('commit', '-q', '-am', 'Alpha');
+  writeFileSync(join(dir, 'a.txt'), lines({ 2: 'alpha 2', 15: 'beta 15' }));
+  g('commit', '-q', '-am', 'Beta');
+  // Staged: a fix to Alpha's line, one to Beta's, and one to a line from Base, which isn't the branch's.
+  writeFileSync(join(dir, 'a.txt'), lines({ 2: 'alpha 2, fixed', 15: 'beta 15, fixed' }));
+  writeFileSync(join(dir, 'b.txt'), lines({ 10: 'base 10, changed' }));
+  g('add', '.');
+  const app = start(dir);
+  const frame = () => app.lastFrame() ?? '';
+  try {
+    await until(() => frame().includes('Beta'), 'the graph');
+    app.stdin.write('2');
+    await until(() => frame().includes('Staged (2)'), 'the Changes view');
+    app.stdin.write('Z');
+    await until(() => frame().includes('Make 2 fixup! commits of 2 hunks?'), 'the plan and the question');
+    assert.match(frame(), /Absorb: 2 hunks into 2 commits/);
+    assert.match(frame(), /[0-9a-f]{7} Beta/);
+    assert.match(frame(), /a\.txt:15/);
+    assert.match(frame(), /[0-9a-f]{7} Alpha/);
+    assert.match(frame(), /Staying staged \(1\)/);
+    assert.match(frame(), /b\.txt:10\s+its lines come from [0-9a-f]{7} "Base", which isn't one of the branch's own commits/);
+    app.stdin.write('1');
+    await until(() => frame().includes('Fold them into their 2 commits now?'), 'the offer to fold them in');
+    assert.equal(g('log', '--format=%s'), 'fixup! Alpha\nfixup! Beta\nBeta\nAlpha\nBase');
+    assert.equal(g('show', '--name-only', '--format=', 'HEAD'), 'a.txt');
+    // What stayed is still staged, on its own.
+    assert.equal(g('diff', '--cached', '--name-only'), 'b.txt');
+    assert.equal(g('diff', '--name-only'), '');
+    app.stdin.write('1');
+    await until(() => g('log', '--format=%s') === 'Beta\nAlpha\nBase', 'the fixups to be folded in', 30000);
+    assert.equal(g('show', 'HEAD~1:a.txt'), lines({ 2: 'alpha 2, fixed' }).trimEnd());
+    assert.equal(g('show', 'HEAD:a.txt'), lines({ 2: 'alpha 2, fixed', 15: 'beta 15, fixed' }).trimEnd());
+    assert.equal(g('diff', 'HEAD', '--name-only'), 'b.txt');
+    await until(() => !frame().includes('REBASING'), 'no rebase left in progress', 30000);
+  } finally {
+    app.unmount();
+  }
+});
+
+test('/absorb with nothing that belongs to one of the branch commits says so and commits nothing', async () => {
+  const { dir, g } = makeRepo('absorb-none-repo', ['Base']);
+  g('switch', '-q', '-c', 'feature');
+  writeFileSync(join(dir, 'Other.txt'), 'other\n');
+  g('add', '.');
+  g('commit', '-q', '-m', 'Other');
+  writeFileSync(join(dir, 'Base.txt'), 'Base, changed\n');
+  g('add', '.');
+  const app = start(dir);
+  const frame = () => app.lastFrame() ?? '';
+  try {
+    await until(() => frame().includes('Other'), 'the graph');
+    await command(app, 'absorb');
+    await until(() => frame().includes('Nothing to absorb'), 'the answer');
+    assert.match(frame(), /Base\.txt:1\s+its lines come from [0-9a-f]{7} "Base"/);
+    assert.equal(g('log', '--format=%s'), 'Other\nBase');
+    assert.equal(g('diff', '--cached', '--name-only'), 'Base.txt');
   } finally {
     app.unmount();
   }

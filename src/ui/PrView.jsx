@@ -9,16 +9,17 @@ import { useAsync, useListNav, useMouse } from './hooks.js';
 import { usePrList } from './prList.js';
 import { Lines, Panel, Row } from './parts.jsx';
 
-export const TONE = { good: theme.add, bad: theme.del, wait: theme.warn, none: theme.dim };
+// Getters, so the colours are the theme's as it is now (light or dark).
+export const TONE = { get good() { return theme.add; }, get bad() { return theme.del; }, get wait() { return theme.warn; }, get none() { return theme.dim; } };
 const VOTE = {
-  approved: ['✓', theme.add],
-  suggestions: ['✓', theme.add],
-  rejected: ['✗', theme.del],
-  waiting: ['…', theme.warn],
-  commented: ['•', theme.hunk],
-  none: ['○', theme.dim],
+  get approved() { return ['✓', theme.add]; },
+  get suggestions() { return ['✓', theme.add]; },
+  get rejected() { return ['✗', theme.del]; },
+  get waiting() { return ['…', theme.warn]; },
+  get commented() { return ['•', theme.hunk]; },
+  get none() { return ['○', theme.dim]; },
 };
-const CHECK = { pass: ['✓', theme.add], fail: ['✗', theme.del], pending: ['…', theme.warn] };
+const CHECK = { get pass() { return ['✓', theme.add]; }, get fail() { return ['✗', theme.del]; }, get pending() { return ['…', theme.warn]; } };
 
 export function checksText(c) {
   if (!c) return { text: '' };
@@ -92,7 +93,9 @@ export function PrView({ data, ctx, width, height, active, prVersion }) {
     if (key.return) ctx.showPrDiff(pr);
     else if (input === 'y') ctx.copy(pr.url, `the link to ${pr.label}`);
     else if (input === 'c') a.prCheckout(ctx, pr);
+    else if (input === 'w') a.reviewPr(ctx, '', pr);
     else if (input === 'a') a.prApprove(ctx, pr);
+    else if (input === 'X') ctx.prefill('/request-changes ');
     else if (input === 'm') a.prMerge(ctx, pr);
     else if (input === 's') a.prChecks(ctx, pr);
     else if (input === 'A') ctx.prefill('/reviewer ');
@@ -112,7 +115,7 @@ export function PrView({ data, ctx, width, height, active, prVersion }) {
   });
 
   let message = null;
-  if (!host) message = "This repository's remote isn't on GitHub or Azure DevOps.";
+  if (!host) message = "This repository's remote isn't on GitHub, Azure DevOps or GitLab.";
   else if (prs.error && !prs.value) message = `Couldn't load pull requests from ${host.name}: ${prs.error.message.split('\n')[0]}  (signed in? Run ${host.signIn} in a terminal.)`;
   else if (!prs.value) message = `Loading pull requests from ${host.name}…`;
   else if (!list.length) message = 'No open pull requests. Press n to open one from the current branch.';

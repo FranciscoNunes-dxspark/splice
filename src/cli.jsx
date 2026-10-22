@@ -3,12 +3,13 @@ import { render } from 'ink';
 import { resolve } from 'node:path';
 import { COMPILED, VERSION } from './version.js';
 import { loadConfig } from './config.js';
-import { setAccent } from './theme.js';
+import { applyTheme } from './theme.js';
 import { App } from './ui/App.jsx';
 import { checkForUpdate, installUpdate, removeOldExecutables } from './update.js';
 import { ask } from './claude.js';
 import { copyToClipboard } from './clipboard.js';
 import { terminalMouse } from './mouse.js';
+import { notification } from './notify.js';
 
 const args = process.argv.slice(2);
 
@@ -34,7 +35,7 @@ if (!process.stdin.isTTY || !process.stdout.isTTY) {
 }
 
 const config = loadConfig();
-setAccent(config.accent);
+applyTheme(config);
 
 // Draw on the alternate screen, like a full-screen app, and give the terminal back untouched on exit.
 // The window title is saved on the terminal's title stack and popped on exit. Terminals without one
@@ -66,6 +67,8 @@ const app = render(
     setTitle={setTitle}
     mouse={mouse}
     copy={copy}
+    // The bell and a desktop notification, written straight to the terminal (they draw nothing).
+    notify={(title, body) => process.stdout.write(notification(title, body))}
   />,
   // Through the mouse's stdout, which watches the frames to select text from.
   { exitOnCtrlC: false, stdout: mouse?.stdout ?? process.stdout },

@@ -1,14 +1,23 @@
 // The /settings list: every setting, its value and what ↵ does with it. Pure, so the list is tested
 // without the UI; actions.js shows it in a picker and makes the changes.
-import { DEFAULT_ACCENT, theme } from './theme.js';
+import { DEFAULT_ACCENT, LIGHT_ACCENT, THEMES, theme } from './theme.js';
 import { fit } from './text.js';
+import { notifySeconds } from './notify.js';
+import { SPLIT_WIDTH } from './split.js';
 
 const isOn = (value) => value !== false;
+const defaultAccent = () => (theme.mode === 'light' ? LIGHT_ACCENT : DEFAULT_ACCENT);
+
+/** The Theme setting: dark, light, or auto (the default: COLORFGBG says, else dark). */
+export const themeSetting = (config) => (THEMES.includes(config.theme) ? config.theme : 'auto');
+
+/** What ↵ on the Theme row changes it to: dark, light, auto, round again. */
+export const nextTheme = (config) => THEMES[(THEMES.indexOf(themeSetting(config)) + 1) % THEMES.length];
 const count = (n, one, many = `${one}s`) => (n ? `${n} ${n === 1 ? one : many}` : 'none');
 
 /**
  * The rows, from the config: { id, label, value, note, action }, where `action` is what ↵ does:
- * 'toggle' (an on/off setting named `id`), 'accent', 'roots', 'clear' (the list named `id`) or 'none'.
+ * 'toggle' (an on/off setting named `id`, on unless set false, or off unless set true where `off`), 'accent', 'theme', 'roots', 'clear' (the list named `id`) or 'none'.
  * `mouse`: whether this terminal can report the mouse at all.
  */
 export function settingRows(config, { file = '', mouse = true } = {}) {
@@ -17,7 +26,14 @@ export function settingRows(config, { file = '', mouse = true } = {}) {
   const history = config.history ?? [];
   const checks = isOn(config.checkForUpdates);
   return [
-    { id: 'accent', label: 'Accent colour', value: config.accent ?? `${DEFAULT_ACCENT} (default)`, colour: config.accent ?? DEFAULT_ACCENT, note: 'type a new one', action: 'accent' },
+    { id: 'accent', label: 'Accent colour', value: config.accent ?? `${defaultAccent()} (default)`, colour: config.accent ?? defaultAccent(), note: 'type a new one', action: 'accent' },
+    {
+      id: 'theme',
+      label: 'Theme',
+      value: themeSetting(config) === 'auto' ? `auto (${theme.mode} here)` : themeSetting(config),
+      note: `${nextTheme(config)} next${themeSetting(config) === 'light' ? ': from the terminal, else dark' : ''}`,
+      action: 'theme',
+    },
     {
       id: 'mouse',
       label: 'Mouse',
@@ -38,6 +54,28 @@ export function settingRows(config, { file = '', mouse = true } = {}) {
       label: 'Stash untracked files',
       value: isOn(config.stashUntracked) ? 'on' : 'off',
       note: isOn(config.stashUntracked) ? 's and /stash take new files too (/stash --no-untracked)' : 'only changes to tracked files (/stash -u)',
+      action: 'toggle',
+    },
+    {
+      id: 'notify',
+      label: 'Notify when done',
+      value: isOn(config.notify) ? 'on' : 'off',
+      note: isOn(config.notify) ? `a bell and a notification after ${notifySeconds(config)} s, and for your PRs` : 'say nothing when a long command ends',
+      action: 'toggle',
+    },
+    {
+      id: 'sideBySide',
+      label: 'Side-by-side diffs',
+      value: config.sideBySide === true ? 'on' : 'off',
+      note: config.sideBySide === true ? 'one column again (w in a diff)' : `old and new in two columns, ${SPLIT_WIDTH}+ wide (w in a diff)`,
+      action: 'toggle',
+      off: true,
+    },
+    {
+      id: 'checkBeforePush',
+      label: 'Check before pushing',
+      value: isOn(config.checkBeforePush) ? 'on' : 'off',
+      note: isOn(config.checkBeforePush) ? 'asks first when the commits have files over 50 MB or what look like secrets' : 'push without looking at the commits first',
       action: 'toggle',
     },
     { id: 'roots', label: 'Folders to scan', value: count(roots.length, 'folder'), note: 'see them, add or remove', action: 'roots' },
