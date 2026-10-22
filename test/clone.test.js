@@ -94,7 +94,8 @@ test('c in Repos fills in /clone; a folder given is used, and an existing one is
     // Git refuses a folder that's already there with something in it, and Splice stays where it was.
     await type(app, `/clone ${server} app`);
     app.stdin.write('\r');
-    await until(() => /fatal: destination path .*app' already/.test(frame()), "git's refusal");
+    // Only the line's start: the activity line cuts the rest, sooner the longer the temp folder's path.
+    await until(() => frame().includes('fatal: destination path'), "git's refusal");
     assert.ok(existsSync(join(base, 'app', 'a.txt')));
     assert.match(frame().split('\n')[0], /my tools\s*$/);
   } finally {
