@@ -2,7 +2,7 @@
 // `ctx` is the app's handle: data, exec, confirm, note, prefill, and so on (see App.jsx).
 import { existsSync, realpathSync, statSync } from 'node:fs';
 import { readFile, rm, writeFile } from 'node:fs/promises';
-import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { READ_ONLY, blameInput, blamePrompt, changelogPrompt, clip, commitPrompt, lookPrompt, parseCommitMessage, parsePrDraft, parseResolution, parseSplit, prPrompt, resolveInput, resolvePrompt, splitInput, splitPrompt } from './claude.js';
 import { absorbFiles, absorbSummary, absorbText, blameMap, blameTargets, groupPatch, lineRanges, planAbsorb } from './absorb.js';
 import { cleanupChoice, cleanupCount, cleanupOptions, cleanupText, planCleanup, readCleanup } from './cleanup.js';
@@ -37,7 +37,7 @@ import {
   withShipped,
   withoutShipped,
 } from './prflow.js';
-import { defaultBranch, filterArgs, parseBlame, filterLabel, filterLogArgs, findArgs, firstBadCommit, parseLog, parseNameStatus, parseStatus, relTime, remoteArgs, searchArgs, splitArgs, stashArgs, upstreamArgs } from './parse.js';
+import { cloneFolder, defaultBranch, filterArgs, parseBlame, filterLabel, filterLogArgs, findArgs, firstBadCommit, parseLog, parseNameStatus, parseStatus, relTime, remoteArgs, searchArgs, splitArgs, stashArgs, upstreamArgs } from './parse.js';
 import { buildPatch, coversAll, parseDiff, picksBySignature, splitUnits } from './patch.js';
 import {
   COMMIT_LIST_FORMAT,
@@ -144,6 +144,25 @@ export function fetchRepos(ctx) {
     },
     { label: 'Fetching repositories' },
   ).finally(() => ctx.setFetchProgress(null));
+}
+
+/**
+ * /clone <url> [folder], c in Repos: clones next to the open repository (into the folder Splice started in,
+ * when none is open), in a folder named after the repository unless one is given, then opens the clone.
+ */
+export async function clone(ctx, text) {
+  const [url, folder, ...extra] = splitArgs(text ?? '');
+  if (!url) return ctx.prefill('/clone ');
+  if (extra.length) return ctx.note('Use: /clone <url> [folder]', 'error');
+  const name = folder ?? cloneFolder(url);
+  if (!name) return ctx.note(`There's no folder name in ${url}: /clone <url> <folder>`, 'error');
+  const dest = resolve(ctx.data ? dirname(ctx.data.root) : process.cwd(), name);
+  const existed = existsSync(dest);
+  const r = await ctx.exec(['clone', '--', url, dest], { label: 'Cloning', anywhere: true, refresh: false });
+  // Stopped with esc, git cleans up after itself, except on Windows, where it's killed outright.
+  if (r.error?.cancelled && !existed) await rm(dest, { recursive: true, force: true, maxRetries: 5 }).catch(() => {});
+  if (r.ok) await ctx.openRepo(dest);
+  return r;
 }
 
 export function pull(ctx, args = []) {

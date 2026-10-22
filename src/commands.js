@@ -107,6 +107,7 @@ export const COMMANDS = [
     run: (ctx, s) => a.filter(ctx, s),
   },
   { name: 'open', args: '<path>', desc: 'Open a repository', complete: 'repos', run: (ctx, s) => (s ? ctx.openRepo(s) : ctx.prefill('/open ')) },
+  { name: 'clone', args: '<url> [folder]', desc: 'Clone a repository next to the open one (or into the folder Splice started in), then open it', run: (ctx, s) => a.clone(ctx, s) },
   { name: 'scan', args: '<folder>', desc: 'Add a folder to scan for repositories', run: (ctx, s) => ctx.addRoot(s) },
   { name: 'last', desc: 'Show the full output of the last command', run: (ctx) => ctx.showLast() },
   { name: 'settings', desc: 'Every setting, changed in place: accent colour, updates, folders, recent, history', run: (ctx) => a.settings(ctx) },

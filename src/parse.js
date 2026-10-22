@@ -468,6 +468,15 @@ export function remoteArgs(text) {
 }
 
 /**
+ * The folder `git clone <url>` makes, as git names it: the URL's last part without `.git` (or `.bundle`), for
+ * https, ssh (`git@host:owner/repo.git`) and local paths alike. Null when there's nothing to name it after.
+ */
+export function cloneFolder(url) {
+  const path = url.trim().replace(/[\\/]+$/, '').replace(/[\\/]\.git$/, '').replace(/\.(git|bundle)$/, '');
+  return path.split(/[\\/:]/).at(-1) || null;
+}
+
+/**
  * "/upstream [branch] <remote/branch>" and "/upstream --unset [branch]" as `git branch` arguments; the branch
  * is `current` unless named. `error` when there's no telling which branch, or what to track.
  */

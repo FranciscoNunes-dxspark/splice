@@ -243,6 +243,7 @@ export const HELP = [
       ['F', 'Fetch every listed repository, 4 at a time (esc stops it); each row then shows ↑ ahead and ↓ behind its upstream, and its changes\na repository that couldn\'t be fetched says why on its row'],
       ['x', 'Forget (remove from recent)'],
       ['s', 'Add a folder to scan for repositories'],
+      ['c', 'Clone a repository and open it (/clone <url> [folder]; next to the open one, or in the folder Splice started in)'],
     ],
   },
   {
