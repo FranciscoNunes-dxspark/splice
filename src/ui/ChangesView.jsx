@@ -296,7 +296,7 @@ export function ChangesView({ data, ctx, width, height, active }) {
       ? 'space resolved · O ours · T theirs · C Claude'
       : f?.kind === 'untracked'
         ? 'space stage · i ignore'
-        : 'space stage/unstage';
+        : 'space stage/unstage · i ignore';
 
   return (
     <Box width={width} height={height}>
