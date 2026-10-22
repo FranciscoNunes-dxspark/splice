@@ -1053,25 +1053,52 @@ export function stashFiles(ctx, list) {
  * the index plus the picked lines. Applying or popping it later brings back just those lines.
  */
 /**
- * i on an untracked file in Changes: asks what to ignore (the file, its folder, every file with its
- * extension, or the file in its own folder's .gitignore) and adds that line. A tracked file can't be
- * ignored that way; it says how to stop tracking it.
+ * i on a file in Changes: asks what to ignore (the file, its folder, every file with its extension, or
+ * the file in its own folder's .gitignore) and adds that line. A tracked file also stops being tracked
+ * (git rm --cached, so it stays on disk), as do the other tracked files the new line matches.
  */
 export async function ignoreFile(ctx, f) {
   if (!needRepo(ctx)) return;
-  if (f.kind !== 'untracked') {
-    const path = /[\s"']/.test(f.path) ? JSON.stringify(f.path) : f.path;
-    return ctx.note(
-      `${f.path} is tracked, and .gitignore only keeps untracked files out.\nTo stop tracking it but keep the file: !rm --cached ${path}, then i on it here, and commit both.`,
-      'error',
-    );
-  }
+  if (f.area === 'conflict') return ctx.note(`Resolve ${f.path} first.`, 'error');
+  const tracked = f.kind !== 'untracked';
   const choice = await ctx.confirm({
-    title: `Ignore ${f.path}?`,
-    detail: 'Adds a line to the .gitignore, which shows here as a change to commit.',
+    title: tracked ? `Stop tracking ${f.path} and ignore it?` : `Ignore ${f.path}?`,
+    detail: tracked
+      ? "Takes it out of git but leaves it on disk (git rm --cached), with any other tracked files the line matches, and adds the line to the .gitignore. Commit both: when others pull that commit, git deletes those files from their copies."
+      : 'Adds a line to the .gitignore, which shows here as a change to commit.',
     options: [...ignoreChoices(f.path).map((c) => ({ label: c.label, value: c })), { label: 'Cancel', value: null }],
   });
-  if (choice) return addIgnore(ctx, choice.file, choice.pattern);
+  if (!choice) return;
+  if (!tracked) return addIgnore(ctx, choice.file, choice.pattern);
+
+  // The tracked files the ignore rules match, before and after the new line: the difference is what it adds.
+  const matched = async () => (await ctx.git(['ls-files', '-z', '--cached', '--ignored', '--exclude-standard'])).split('\0').filter(Boolean);
+  let before;
+  try {
+    before = new Set(await matched());
+  } catch (e) {
+    return ctx.note(`Couldn't list the tracked files: ${firstLine(e.message)}`, 'error');
+  }
+  const written = await writeIgnore(ctx, choice.file, choice.pattern, { already: true });
+  if (!written) return;
+  const now = await matched().catch(() => []);
+  const paths = [f.path, ...now.filter((p) => !before.has(p) && p !== f.path)];
+  const r = await ctx.exec(['rm', '--cached', '-q', '--pathspec-from-file=-', '--pathspec-file-nul'], {
+    label: 'Untracking',
+    input: `${paths.join('\0')}\0`,
+    env: { GIT_LITERAL_PATHSPECS: '1' },
+    refresh: false,
+  });
+  if (!r.ok) {
+    // git said why (staged changes it would lose, say); the .gitignore goes back as it was.
+    if (written.added) await (written.existed ? writeFile(written.path, written.text) : rm(written.path, { force: true })).catch(() => {});
+    return ctx.reload();
+  }
+  await ctx.reload();
+  const what = paths.length === 1 ? f.path : `${f.path} and ${paths.length - 1} other file${paths.length === 2 ? '' : 's'} the line matches`;
+  ctx.note(
+    `Stopped tracking ${what} (still on disk)${written.added ? `, and added ${choice.pattern} to ${choice.file}${written.existed ? '' : ', a new file'}` : `; ${choice.file} had ${choice.pattern} already`}.\nCommit both (they're in Changes), so the repository keeps ${paths.length === 1 ? 'it' : 'them'} out.`,
+  );
 }
 
 /** /ignore <pattern>: adds it to the repository's .gitignore as typed. */
@@ -1084,22 +1111,37 @@ export function ignore(ctx, text) {
 
 // Adds `pattern` to `file` (a .gitignore, relative to the root, made if missing) in its own line endings.
 async function addIgnore(ctx, file, pattern) {
+  const written = await writeIgnore(ctx, file, pattern);
+  if (!written) return;
+  await ctx.reload();
+  ctx.note(`Added ${pattern} to ${file}${written.existed ? '' : ', a new file'}.\nCommit ${file} as well (it's in Changes), so the repository keeps ignoring it.`);
+}
+
+/**
+ * Writes `pattern` into `file` and says what was there: { path, existed, text (as it was), added }, or
+ * nothing when it couldn't (noted). A line there already is an error unless `already` is allowed.
+ */
+async function writeIgnore(ctx, file, pattern, { already = false } = {}) {
   const path = join(ctx.data.root, ...file.split('/'));
   let text = '';
+  let existed = true;
   try {
     text = await readFile(path, 'utf8');
   } catch (e) {
     if (e.code !== 'ENOENT') return ctx.note(`Couldn't read ${file}: ${firstLine(e.message)}`, 'error');
+    existed = false;
   }
   const next = withIgnoreLine(text, pattern);
-  if (!next.added) return ctx.note(`${file} has ${pattern} already.`, 'error');
+  if (!next.added) {
+    if (already) return { path, existed, text, added: false };
+    return ctx.note(`${file} has ${pattern} already.`, 'error');
+  }
   try {
     await writeFile(path, next.text);
   } catch (e) {
     return ctx.note(`Couldn't write ${file}: ${firstLine(e.message)}`, 'error');
   }
-  await ctx.reload();
-  ctx.note(`Added ${pattern} to ${file}${text ? '' : ', a new file'}.\nCommit ${file} as well (it's in Changes), so the repository keeps ignoring it.`);
+  return { path, existed, text, added: true };
 }
 
 export async function stashLines(ctx, f, diffText, picks) {

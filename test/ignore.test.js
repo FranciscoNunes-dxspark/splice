@@ -89,7 +89,7 @@ test('a line goes at the end, in the file\'s own line endings, ending in one', (
   assert.deepEqual(withIgnoreLine('x\r\n/a\r\n', '/a'), { text: 'x\r\n/a\r\n', added: false });
 });
 
-test('i on an untracked file adds what was picked to .gitignore; tracked files are explained; /ignore takes a pattern', async () => {
+test('i on an untracked file adds what was picked to .gitignore; /ignore takes a pattern', async () => {
   const dir = join(base, 'repo');
   mkdirSync(dir);
   const g = (...args) => execFileSync('git', args, { cwd: dir, encoding: 'utf8', env: { ...process.env, GIT_OPTIONAL_LOCKS: '0' } }).trim();
@@ -127,11 +127,6 @@ test('i on an untracked file adds what was picked to .gitignore; tracked files a
     app.stdin.write('2');
     await until(() => frame().includes('Unstaged (5)'), 'the Changes view');
 
-    // A tracked file: .gitignore wouldn't do anything, so it says what would.
-    await pick(/❯ M a\.txt/, 'a.txt');
-    app.stdin.write('i');
-    await until(() => frame().includes('a.txt is tracked') && frame().includes('rm --cached a.txt'), 'the explanation');
-
     await pick(/❯ \? logs\/debug\.log/, 'logs/debug.log');
     app.stdin.write('i');
     await until(() => frame().includes('Ignore logs/debug.log?') && frame().includes('4. This file, in logs/.gitignore'), 'the question');
@@ -160,6 +155,66 @@ test('i on an untracked file adds what was picked to .gitignore; tracked files a
     assert.deepEqual(untracked(), ['cache/.gitignore']);
     await command(app, 'ignore secret.env');
     await until(() => frame().includes('.gitignore has secret.env already'), 'the line there already');
+  } finally {
+    app.unmount();
+  }
+});
+
+test('i on a tracked file stops tracking it, and the others the line matches, keeping them on disk; a refusal puts the .gitignore back', async () => {
+  const dir = join(base, 'tracked');
+  mkdirSync(dir);
+  const g = (...args) => execFileSync('git', args, { cwd: dir, encoding: 'utf8', env: { ...process.env, GIT_OPTIONAL_LOCKS: '0' } }).trim();
+  g('init', '-q', '-b', 'main');
+  g('config', 'core.autocrlf', 'false');
+  g('config', 'user.name', 'T');
+  g('config', 'user.email', 't@example.com');
+  g('config', 'commit.gpgsign', 'false');
+  mkdirSync(join(dir, 'docs'));
+  for (const [p, text] of [['a.txt', 'a\n'], ['docs/b.txt', 'b\n'], ['keep.md', 'k\n'], ['x.cfg', 'x\n']]) writeFileSync(join(dir, p), text);
+  g('add', '.');
+  g('commit', '-q', '-m', 'First commit');
+  writeFileSync(join(dir, 'a.txt'), 'a, changed\n');
+  // Staged, then changed again: neither HEAD nor the file has what's staged, so git rm --cached refuses.
+  writeFileSync(join(dir, 'x.cfg'), 'staged\n');
+  g('add', 'x.cfg');
+  writeFileSync(join(dir, 'x.cfg'), 'on disk\n');
+
+  lastApp = render(React.createElement(App, { initialPath: dir, config: { recent: [], roots: [], history: [] } }));
+  const app = lastApp;
+  const frame = () => app.lastFrame() ?? '';
+  const pick = async (re, what) => {
+    while (!re.test(frame())) {
+      const before = frame();
+      app.stdin.write('j');
+      await until(() => frame() !== before || re.test(frame()), `the cursor to move towards ${what}`);
+    }
+    await until(() => re.test(frame()), `the cursor on ${what}`);
+  };
+  const tracked = () => g('ls-files').split('\n').filter(Boolean);
+  const gitignore = () => { try { return readFileSync(join(dir, '.gitignore'), 'utf8'); } catch { return null; } };
+  try {
+    await until(() => frame().includes('First commit'), 'the graph');
+    app.stdin.write('2');
+    await until(() => frame().includes('Unstaged (2)'), 'the Changes view');
+
+    await pick(/❯ M a\.txt/, 'a.txt');
+    app.stdin.write('i');
+    await until(() => frame().includes('Stop tracking a.txt and ignore it?') && frame().includes('2. Every *.txt file'), 'the question');
+    app.stdin.write('2');
+    await until(() => frame().includes('Stopped tracking a.txt and 1 other file the line matches'), 'the note');
+    assert.deepEqual(tracked(), ['keep.md', 'x.cfg']);
+    assert.equal(gitignore(), '*.txt\n');
+    assert.equal(readFileSync(join(dir, 'a.txt'), 'utf8'), 'a, changed\n');
+    assert.equal(readFileSync(join(dir, 'docs', 'b.txt'), 'utf8'), 'b\n');
+    assert.equal(g('ls-files', '--others', '--exclude-standard'), '.gitignore');
+
+    await pick(/❯ M x\.cfg/, 'x.cfg');
+    app.stdin.write('i');
+    await until(() => frame().includes('Stop tracking x.cfg and ignore it?'), 'the question');
+    app.stdin.write('1');
+    await until(() => frame().includes('staged content'), "git's refusal");
+    await until(() => gitignore() === '*.txt\n', 'the .gitignore as it was');
+    assert.deepEqual(tracked(), ['keep.md', 'x.cfg']);
   } finally {
     app.unmount();
   }

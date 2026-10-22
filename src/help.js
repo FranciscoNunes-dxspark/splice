@@ -76,7 +76,7 @@ export const HELP = [
       ['a  u', 'Stage all · Unstage all'],
       ['d', 'Discard the file\'s changes'],
       ['s', 'Stash just this file, staged and unstaged changes (its path is the stash\'s message)'],
-      ['i', 'On an untracked file: ignore it, its folder, or every file with its extension, in .gitignore (/ignore <pattern>)'],
+      ['i', 'Ignore the file, its folder, or every file with its extension, in .gitignore; a tracked file stops being tracked too, staying on disk (/ignore <pattern>)'],
       ['v', 'Select several files (v, move, then s stashes them all together; esc clears it)'],
       ['c  A', 'Commit · Amend the last commit (/commit <message>, \\n for a new line)'],
       ['M', 'Write the message in your own editor: a file in .git, started from what follows /commit (or /amend: the commit\'s message) in the prompt and listing what\'s staged; then /commit --file <it> commits it'],
