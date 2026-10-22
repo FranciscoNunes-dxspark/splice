@@ -281,7 +281,9 @@ test("a PR's diff opens side by side when left that way; h/l pick the side c com
     for (const ch of 'New b') app.stdin.write(ch);
     await new Promise((r) => setTimeout(r, 100));
     app.stdin.write('\r');
-    await until(() => posted.length === 1 && frame().includes('New b'), 'the comment posted', frame);
+    // The prompt gone as well as the comment shown: until then 'New b' is the prompt's own text, and
+    // the viewer doesn't have the keys yet.
+    await until(() => posted.length === 1 && !frame().includes('> /review-comment') && frame().includes('New b'), 'the comment posted', frame);
     assert.deepEqual(posted[0], { path: 'src/app.js', line: 11, side: 'new', text: '  const b = 3;' });
 
     // Up to the unchanged line, and h to its old side: commented on as it was before.
