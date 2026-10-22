@@ -1,35 +1,14 @@
 // Claude through the Claude Code CLI (`claude -p`), signed in as you already are, so Splice never
-// sees a key. The prompts and the parsing of answers are pure, for tests; `ask` runs the CLI.
+// sees a key. The prompts and the parsing of answers are pure, for tests; `ask` (the family's shared
+// claude-cli.js) runs the CLI.
 import { hasMarkers } from './conflict.js';
-import { cli } from './hosting.js';
+import { clip } from './claude-cli.js';
 import { isoDate } from './parse.js';
 
-// Each flag takes seconds off a call: no MCP servers to start, no settings files (whose hooks and
-// plugins load on every run), no skills, and nothing saved to your session history.
-const FLAGS = ['--strict-mcp-config', '--setting-sources', '', '--disable-slash-commands', '--no-session-persistence'];
+export { ask, clip } from './claude-cli.js';
 
 // Explaining and reviewing may look at the rest of the repository, but never change it or run anything.
 export const READ_ONLY = ['Read', 'Grep', 'Glob'];
-
-/** Asks Claude `prompt` about `input` (sent on stdin), in `cwd`. `tools`: built-in tools it may use, none by default. */
-export async function ask(prompt, { input = '', cwd, signal, tools = [] } = {}) {
-  try {
-    return (await cli('claude', ['-p', prompt, '--tools', tools.join(','), ...FLAGS], { cwd, signal, input })).trim();
-  } catch (e) {
-    if (/not installed or not on the PATH/.test(e.message)) {
-      throw new Error('Claude Code (claude) is not installed or not on the PATH. Get it from https://claude.com/claude-code');
-    }
-    throw e;
-  }
-}
-
-const MAX_INPUT = 200_000;
-
-/** Keeps what's sent to Claude to a sensible size, saying where it was cut. */
-export function clip(text, max = MAX_INPUT) {
-  if (text.length <= max) return text;
-  return `${text.slice(0, max)}\n\n[Cut here: the rest (${(text.length - max).toLocaleString('en')} more characters) was left out.]`;
-}
 
 // Splice formats Markdown (src/markdown.js), but in a pane often 60 to 100 columns wide.
 const FORMAT = 'Splice shows your answer in a terminal and formats Markdown: headings, bold, "-" lists, `code` and code blocks are fine. Keep it compact and avoid wide tables.';

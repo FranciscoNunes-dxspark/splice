@@ -825,7 +825,9 @@ export function cli(program, args, { cwd, signal, input } = {}) {
       const lines = (stderr || err.message).trim().split('\n').filter((l) => !/^WARNING:/.test(l));
       reject(new Error(lines.slice(-3).join('\n') || `${program} failed`));
     });
-    // Written to stdin, for what's too big for an argument (a diff for Claude).
+    // Written to stdin, for what's too big for an argument (a diff for Claude). A program that exits
+    // before reading it all (not signed in, say) closes the pipe first: its own error is the answer.
+    child.stdin.on('error', () => {});
     if (input != null) child.stdin.end(input);
   });
 }
