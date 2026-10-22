@@ -17,13 +17,14 @@ const count = (n, one, many = `${one}s`) => (n ? `${n} ${n === 1 ? one : many}` 
 
 /**
  * The rows, from the config: { id, label, value, note, action }, where `action` is what ↵ does:
- * 'toggle' (an on/off setting named `id`, on unless set false, or off unless set true where `off`), 'accent', 'theme', 'roots', 'clear' (the list named `id`) or 'none'.
+ * 'toggle' (an on/off setting named `id`, on unless set false, or off unless set true where `off`), 'accent', 'theme', 'roots', 'cleanupKeep', 'clear' (the list named `id`) or 'none'.
  * `mouse`: whether this terminal can report the mouse at all.
  */
 export function settingRows(config, { file = '', mouse = true } = {}) {
   const roots = config.roots ?? [];
   const recent = config.recent ?? [];
   const history = config.history ?? [];
+  const keep = config.cleanupKeep ?? [];
   const checks = isOn(config.checkForUpdates);
   return [
     { id: 'accent', label: 'Accent colour', value: config.accent ?? `${defaultAccent()} (default)`, colour: config.accent ?? defaultAccent(), note: 'type a new one', action: 'accent' },
@@ -77,6 +78,13 @@ export function settingRows(config, { file = '', mouse = true } = {}) {
       value: isOn(config.checkBeforePush) ? 'on' : 'off',
       note: isOn(config.checkBeforePush) ? 'asks first when the commits have files over 50 MB or what look like secrets' : 'push without looking at the commits first',
       action: 'toggle',
+    },
+    {
+      id: 'cleanupKeep',
+      label: 'Keep on the remote',
+      value: keep.length ? keep.join(', ') : 'none',
+      note: 'branches /cleanup never deletes there',
+      action: 'cleanupKeep',
     },
     { id: 'roots', label: 'Folders to scan', value: count(roots.length, 'folder'), note: 'see them, add or remove', action: 'roots' },
     { id: 'recent', label: 'Recent repositories', value: count(recent.length, 'repository', 'repositories'), note: recent.length ? 'forget them' : '', action: recent.length ? 'clear' : 'none' },
