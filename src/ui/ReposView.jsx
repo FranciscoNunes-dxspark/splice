@@ -35,6 +35,7 @@ export function ReposView({ repos, current, ctx, width, height, active, roots, p
     if (!ctx.viewHasKeys()) return;
     if (nav.handle(input, key)) return;
     if (input === 's') return ctx.prefill('/scan ');
+    if (input === 'c') return ctx.prefill('/clone ');
     if (input === 'F') return a.fetchRepos(ctx);
     if (!sel) return;
     if (key.return) ctx.openRepo(sel.path);

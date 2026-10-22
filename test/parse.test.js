@@ -209,6 +209,18 @@ test('worktrees: main, branch, detached, locked and missing ones, paths with spa
   assert.deepEqual(parseWorktrees(''), []);
 });
 
+test('cloneFolder names the folder as git clone does', async () => {
+  const { cloneFolder } = await import('../src/parse.js');
+  assert.equal(cloneFolder('https://github.com/owner/splice.git'), 'splice');
+  assert.equal(cloneFolder('https://github.com/owner/splice/'), 'splice');
+  assert.equal(cloneFolder('git@github.com:owner/splice.git'), 'splice');
+  assert.equal(cloneFolder('git@host:splice.git'), 'splice');
+  assert.equal(cloneFolder('https://dev.azure.com/org/proj/_git/Splice'), 'Splice');
+  assert.equal(cloneFolder('C:\\Team\\Splice\\.git'), 'Splice');
+  assert.equal(cloneFolder('/srv/repos/splice.bundle'), 'splice');
+  assert.equal(cloneFolder('host:'), null);
+});
+
 test('/remote and /upstream arguments', async () => {
   const { remoteArgs, upstreamArgs } = await import('../src/parse.js');
   assert.deepEqual(remoteArgs(''), {});
