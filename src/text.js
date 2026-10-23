@@ -23,10 +23,22 @@ function charWidths(ch) {
   return w;
 }
 
+// string-width's answers for the rest (❤️, 👍🏽, Hangul, accents typed as combining marks), which are
+// mostly the same rows drawn again on the next frame.
+const others = new Map();
+function otherWidth(s) {
+  let w = others.get(s);
+  if (w === undefined) {
+    if (others.size >= 2000) others.clear();
+    others.set(s, (w = fullWidth(s)));
+  }
+  return w;
+}
+
 /** Columns `s` takes up in the terminal. */
 export function stringWidth(s) {
   if (ASCII.test(s)) return s.length;
-  if (!SIMPLE.test(s)) return fullWidth(s);
+  if (!SIMPLE.test(s)) return otherWidth(s);
   let w = 0;
   for (const ch of s) w += charWidths(ch)[0];
   return w;

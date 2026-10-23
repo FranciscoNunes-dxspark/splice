@@ -81,3 +81,12 @@ test('wrap breaks at spaces, by columns', () => {
   assert.deepEqual(wrap('a\r\nb', 9), ['a', 'b']);
   assert.deepEqual(wrap('averyveryverylongword x', 5), ['averyveryverylongword', 'x']);
 });
+
+test('a width worked out once is the same again', () => {
+  for (const s of ['❤️ ok', '👍🏽', '한국어', 'é']) {
+    assert.equal(stringWidth(s), fullWidth(s));
+    assert.equal(stringWidth(s), fullWidth(s), 'from the cache');
+  }
+  // More than the cache keeps: it starts again rather than growing.
+  for (let i = 0; i < 2500; i++) assert.equal(stringWidth(`❤️ ${i}`), 3 + String(i).length);
+});
