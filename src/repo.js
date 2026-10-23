@@ -91,12 +91,11 @@ const shownRef = (line) => {
  * (a REF_FORMAT listing) every ref is listed, in `allRefs` of the result, and `refs` keeps REF_PATTERNS's:
  * what `git log --all` shows depends on all of them, and it's still one git.
  */
-async function readState(repo, refFormat, toSignature, { allRefs = false, listRefs = null } = {}) {
+async function readState(repo, refFormat, toSignature, { allRefs = false, listRefs = null, fresh = false, out } = {}) {
   const [status, listed, worktrees] = await Promise.all([
     git(repo.root, ['status', '--porcelain=v2', '--branch', '-z', '--untracked-files=all']),
     listRefs ? listRefs() : git(repo.root, ['for-each-ref', `--format=${refFormat}`, ...(allRefs ? [] : REF_PATTERNS)]),
-    // -z needs git 2.36; older ones just show no worktrees.
-    hasLinkedWorktrees(repo) ? git(repo.root, ['worktree', 'list', '--porcelain', '-z']).catch(() => '') : '',
+    hasLinkedWorktrees(repo) ? listWorktrees(repo, { fresh, out }) : '',
   ]);
   const refs = allRefs ? listed.split('\n').filter((l) => l && shownRef(l)).map((l) => `${l}\n`).join('') : listed;
   const state = repoState(repo.gitDir);
@@ -149,6 +148,30 @@ async function keptListing(key, stamp, list, { fresh = false, out = {} } = {}) {
 }
 
 /**
+ * What `git worktree list` reads, besides the refs: each linked worktree's HEAD, where it is (and whether
+ * that's still there: prunable) and its lock, the main one's HEAD, and the config (a bare repository).
+ */
+async function worktreesStamp(repo) {
+  const dir = join(repo.commonDir, 'worktrees');
+  const read = (p) => readFile(p, 'utf8').catch(() => '-');
+  const names = (await readdir(dir).catch(() => [])).sort();
+  const each = await Promise.all(
+    names.map(async (n) => {
+      const [head, gitdir, locked] = await Promise.all([read(join(dir, n, 'HEAD')), read(join(dir, n, 'gitdir')), read(join(dir, n, 'locked'))]);
+      return `${n}\t${head.trim()}\t${gitdir.trim()}\t${existsSync(gitdir.trim())}\t${locked}`;
+    }),
+  );
+  const [refs, head, config] = await Promise.all([refFilesStamp(repo), read(join(repo.commonDir, 'HEAD')), fileStamp(join(repo.commonDir, 'config'))]);
+  return refs && [refs, head.trim(), config, ...each].join('\n');
+}
+
+/** `git worktree list`, kept as the ref listings are. -z needs git 2.36; older ones just show no worktrees. */
+function listWorktrees(repo, { fresh = false, out } = {}) {
+  return keptListing(`worktrees:${repo.commonDir}`, worktreesStamp(repo), () => git(repo.root, ['worktree', 'list', '--porcelain', '-z']).catch(() => ''), { fresh, out });
+}
+
+/**
+ * The cheap read polling runs/**
  * The cheap read polling runs: a different `signature` from the loaded one means something changed outside.
  * The status is read every time; the refs only when the files they're kept in changed (or a while has
  * passed), and then `relisted` says so.
@@ -157,7 +180,7 @@ export async function snapshot(repo) {
   const out = { relisted: false };
   const listRefs = () =>
     keptListing(`poll:${repo.commonDir}`, refFilesStamp(repo), () => git(repo.root, ['for-each-ref', `--format=${SIG_FORMAT}`, ...REF_PATTERNS]), { out });
-  return { ...(await readState(repo, SIG_FORMAT, (refs) => refs, { listRefs })), relisted: out.relisted };
+  return { ...(await readState(repo, SIG_FORMAT, (refs) => refs, { listRefs, out })), relisted: out.relisted };
 }
 
 /**
@@ -389,7 +412,7 @@ async function readSubmodules(repo, state) {
  * listed them again and found a change.
  */
 export async function loadRepo(repo, { graphLimit = 400, freshRefs = false } = {}) {
-  const state = readState(repo, REF_FORMAT, refsSignature, { allRefs: true, listRefs: () => loadRefs(repo, freshRefs) });
+  const state = readState(repo, REF_FORMAT, refsSignature, { allRefs: true, listRefs: () => loadRefs(repo, freshRefs), fresh: freshRefs });
   const [{ snap, log, kept }, remotes, subs, lfs] = await Promise.all([
     readStateAndLog(repo, graphLimit, state),
     readRemotes(repo),

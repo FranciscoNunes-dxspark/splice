@@ -178,6 +178,31 @@ test('a load\'s refs follow HEAD and upstreams, which change no ref', async () =
   assert.equal((await local()).twin, undefined);
 });
 
+test('linked worktrees are listed again when one moves, is locked or goes missing', async () => {
+  const repo = await findRepo(dir);
+  const wt = join(base, 'repo-wt2');
+  git('worktree', 'add', '-q', '-b', 'wt2', '../repo-wt2');
+  const linked = async () => {
+    const d = await loadRepo(repo);
+    assert.equal(d.signature, (await snapshot(repo)).signature);
+    const w = d.worktrees.find((x) => !x.main);
+    return [w.branch, w.head, w.locked, w.prunable];
+  };
+  const head = () => git('rev-parse', 'HEAD');
+  await linked();
+  assert.deepEqual(await linked(), ['wt2', head(), false, false]);
+  execFileSync('git', ['checkout', '-q', '--detach', 'HEAD~1'], { cwd: wt });
+  assert.deepEqual(await linked(), [null, git('rev-parse', 'HEAD~1'), false, false]);
+  git('worktree', 'lock', '--reason', 'kept', '../repo-wt2');
+  assert.deepEqual((await linked()).slice(2), [true, false]);
+  git('worktree', 'unlock', '../repo-wt2');
+  rmSync(wt, { recursive: true, force: true });
+  assert.deepEqual((await linked()).slice(2), [false, true]);
+  git('worktree', 'prune');
+  assert.equal((await loadRepo(repo)).worktrees.length, 1);
+  git('branch', '-D', 'wt2');
+});
+
 test('commit detail: header and files from one git, for plain, merge and root commits', async () => {
   for (const rev of ['HEAD', 'HEAD^1', git('rev-list', '--max-parents=0', 'HEAD')]) {
     const hash = git('rev-parse', rev);
