@@ -61,6 +61,8 @@ import { LFS_MISSING, lfsCommand, lfsError, lfsText, parseLfsFiles, parseLfsLock
 import { run as runGit } from './git.js';
 import { commitsLine, insideSummary, parseGitlinks, parseInside, submoduleInfo } from './submodules.js';
 import { fit } from './text.js';
+import { TAKES, exceptionFrames, framesInRepo, notForSplice, pathAndLine, takenContext } from './take.js';
+import { describeContext, matchFrameFile } from './family.js';
 import { DEFAULT_ACCENT, applyTheme, isColour, setAccent, theme } from './theme.js';
 import {
   REFLOG_FORMAT,
@@ -3720,12 +3722,103 @@ export function openDropped(ctx, text) {
   return true;
 }
 
-/** B on a file, or /blame <path>: who last changed each line of the working-tree version. */
+/**
+ * B on a file, or /blame <path>[:<line>]: who last changed each line of the working-tree version, with
+ * the cursor on that line. A file whose name really ends in :<digits> is taken whole.
+ */
 export function blame(ctx, typed) {
   if (!needRepo(ctx)) return;
-  const path = repoPath(ctx.data.root, typed);
-  if (!path) return ctx.prefill('/blame ');
-  ctx.showPicker(blamePicker(ctx, path));
+  const whole = repoPath(ctx.data.root, typed);
+  if (!whole) return ctx.prefill('/blame ');
+  const at = pathAndLine(typed);
+  const split = at.line && !existsSync(join(ctx.data.root, whole)) ? { path: repoPath(ctx.data.root, at.path), line: at.line } : { path: whole, line: null };
+  ctx.showPicker(blamePicker(ctx, split.path, { line: split.line }));
+}
+
+/** The tracked files, relative to the root with / between folders: one git, for matching paths from elsewhere. */
+const trackedFiles = async (ctx) => (await ctx.git(['ls-files', '-z'])).split('\0').filter(Boolean);
+
+/**
+ * /take <context>: what a sibling app copied for Splice (family.js). An exception opens blame at the first
+ * of its frames that's a file of this repository (a list of them when several are, top frame first); a
+ * file, blame at its line (its history without one); a commit, its diff (offering to fetch it when it isn't
+ * here). Other kinds say which app they're for.
+ */
+export async function take(ctx, text) {
+  const raw = String(text ?? '').trim();
+  if (!raw) return ctx.prefill('/take ');
+  const got = takenContext(raw);
+  if (!got) return ctx.note("That isn't something another app copied: paste the whole /take family:v1:… line.", 'error');
+  if (!TAKES.includes(got.kind)) return ctx.note(notForSplice(got.kind), 'error');
+  if (!needRepo(ctx)) return;
+  const { kind, data } = got;
+  ctx.note(`Taking ${describeContext(got)}`);
+  if (kind === 'commit') return takeCommit(ctx, data);
+  let files;
+  try {
+    files = await trackedFiles(ctx);
+  } catch (e) {
+    return ctx.note(`Couldn't list the files of ${ctx.data.name}: ${firstLine(e.message)}`, 'error');
+  }
+  if (kind === 'file') {
+    const typed = repoPath(ctx.data.root, String(data.path ?? ''));
+    const path = files.includes(typed) || existsSync(join(ctx.data.root, typed)) ? typed : matchFrameFile(String(data.path ?? ''), files);
+    if (!path) return ctx.note(`${data.path} isn't a file of ${ctx.data.name}.`, 'error');
+    const line = Number(data.line) || null;
+    return line ? ctx.showPicker(blamePicker(ctx, path, { line })) : fileHistory(ctx, path);
+  }
+  const frames = exceptionFrames(data);
+  const found = framesInRepo(frames, files);
+  if (!found.length) {
+    return ctx.note(
+      frames.length
+        ? `None of the exception's ${frames.length === 1 ? 'frame is a file' : `${frames.length} frames are files`} of ${ctx.data.name}: ${frames.slice(0, 3).map((f) => basename(String(f.file).replace(/\\/g, '/'))).join(', ')}.`
+        : 'The exception has no stack frames to look for.',
+      'error',
+    );
+  }
+  const open = (f) => ctx.showPicker(blamePicker(ctx, f.path, { line: f.line }));
+  if (found.length === 1) return open(found[0]);
+  ctx.showPicker({
+    title: `${data.type ?? 'Exception'}${data.message ? `: ${data.message}` : ''}`,
+    hint: '↵ blame at the line',
+    items: found.map((f, i) => ({
+      ...f,
+      segments: [
+        { text: `${String(i + 1).padStart(2)} `, color: theme.dim },
+        { text: `${f.path}${f.line ? `:${f.line}` : ''}`, color: theme.local },
+        ...(f.method ? [{ text: `  ${f.method}`, color: theme.dim }] : []),
+      ],
+    })),
+    onPick: open,
+  });
+}
+
+/** /take commit: its diff when the repository has it; otherwise offers to fetch, then looks again. */
+async function takeCommit(ctx, data) {
+  const hash = String(data.hash ?? '').trim();
+  if (!/^[0-9a-f]{4,64}$/i.test(hash)) return ctx.note(`${hash || 'That'} isn't a commit hash.`, 'error');
+  const find = () => ctx.git(['rev-parse', '--verify', '--quiet', `${hash}^{commit}`]).then((s) => s.trim() || null, () => null);
+  const show = (full) => ctx.showPatch({ hash: full, subject: data.subject ?? '' });
+  let full = await find();
+  if (full) return show(full);
+  const from = data.repo ? ` (it came from ${data.repo})` : '';
+  if (!ctx.data.remotes.length) return ctx.note(`${short(hash)} isn't in ${ctx.data.name}${from}, and it has no remote to fetch it from.`, 'error');
+  const ok = await ctx.confirm({
+    title: `${short(hash)} isn't in ${ctx.data.name}${from}. Fetch and look again?`,
+    detail: `git fetch --all, then, if it's still missing, the commit itself from ${ctx.data.remotes.includes('origin') ? 'origin' : ctx.data.remotes[0]}.`,
+    options: YES_NO('Yes, fetch'),
+  });
+  if (!ok) return;
+  await ctx.exec(['fetch', '--all', '--prune'], { label: 'Fetching' });
+  full = await find();
+  if (!full && /^[0-9a-f]{40,64}$/i.test(hash)) {
+    // Servers hand over a commit by its full hash when a branch or a pull request has it.
+    await ctx.exec(['fetch', ctx.data.remotes.includes('origin') ? 'origin' : ctx.data.remotes[0], hash], { label: 'Fetching the commit', quietError: true });
+    full = await find();
+  }
+  if (full) return show(full);
+  ctx.note(`${short(hash)} isn't on ${ctx.data.remotes.join(' or ')} either: it may be on a branch that was never pushed.`, 'error');
 }
 
 /** `!<args>`: any git command. Output longer than a few lines opens in the viewer. */

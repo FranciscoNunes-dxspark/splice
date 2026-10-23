@@ -152,7 +152,7 @@ export const HELP = [
   },
   {
     title: 'Blame',
-    about: 'B, /blame <path>: the working-tree file, so new lines show as not committed yet',
+    about: 'B, /blame <path>[:<line>]: the working-tree file, so new lines show as not committed yet',
     rows: [
       ['↵', 'Diff of the commit that last changed the line (esc comes back here)'],
       ['H', 'The file\'s history'],

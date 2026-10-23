@@ -153,13 +153,16 @@ export async function lineHistory(ctx, path, from, to, rev) {
 
 /**
  * Who last changed each line of `path`: the working-tree version (uncommitted lines show as such),
- * or as of `rev`. ↵ shows the diff of the line's commit to that file; H opens the file's history.
+ * or as of `rev`, with the cursor on `line` when given. ↵ shows the diff of the line's commit to that file;
+ * H opens the file's history.
  */
-export function blamePicker(ctx, path, { rev = null } = {}) {
+export function blamePicker(ctx, path, { rev = null, line = null } = {}) {
   // Every row, for the file around lines Claude explains.
   let all = [];
   return {
-    title: `Blame ${path}${rev ? ` at ${rev.replace(/^[0-9a-f]{40,64}/, short)}` : ''}`,
+    title: `Blame ${path}${rev ? ` at ${rev.replace(/^[0-9a-f]{40,64}/, short)}` : ''}${line ? `, line ${line}` : ''}`,
+    // The cursor starts on `line` (Picker.jsx's `index`), once the lines are in.
+    index: line ? line - 1 : undefined,
     hint: '↵ diff · H history · v select · L lines’ history · e why',
     range: true,
     empty: `${path} is empty.`,

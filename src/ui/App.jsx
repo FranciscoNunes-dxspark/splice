@@ -34,6 +34,7 @@ import { RebaseEditor } from './RebaseEditor.jsx';
 import { WELCOME_HEIGHT, Welcome } from './Pet.jsx';
 import { FACES, moodFor } from '../pet.js';
 import { worthNotifying } from '../notify.js';
+import { decodeContext } from '../family.js';
 
 const VIEWS = [
   { id: 'graph', label: 'Graph' },
@@ -626,7 +627,9 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
     const [errors, declined] = [errorCount.current, declines.current];
     try {
       let r;
-      if (text.startsWith('!')) r = await a.raw(ctx, text.slice(1));
+      // A context another app copied (family.js), pasted without its /take (after the prompt's / or not).
+      if (decodeContext(text.replace(/^\//, ''))) r = await a.take(ctx, text.replace(/^\//, ''));
+      else if (text.startsWith('!')) r = await a.raw(ctx, text.slice(1));
       else if (/^git(\s|$)/.test(text)) r = await a.raw(ctx, text);
       else {
         const [, name, rest] = text.replace(/^\//, '').match(/^(\S+)\s*([\s\S]*)$/);
