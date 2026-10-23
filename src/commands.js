@@ -1,5 +1,6 @@
 import * as a from './actions.js';
 import { splitArgs } from './parse.js';
+import { pathArg } from './drop.js';
 
 // Slash commands. `args` in square brackets are optional, so picking the command runs it straight away.
 // `complete` names the list offered while typing the first argument.
@@ -87,7 +88,7 @@ export const COMMANDS = [
   { name: 'abort', desc: 'Abort the merge, rebase, cherry-pick or revert', run: (ctx) => a.abortOp(ctx) },
   { name: 'history', args: '<path>', desc: "A file's commits, following renames (deleted files too)", complete: 'files', run: (ctx, s) => a.fileHistory(ctx, s) },
   { name: 'blame', args: '<path>[:<line>]', desc: 'Who last changed each line of a file (from that line, given one)', complete: 'files', run: (ctx, s) => a.blame(ctx, s) },
-  { name: 'future', args: '[<path>:<line>]', desc: "The open pull requests whose changes touch a line (blame's cursor line if none given; F in blame)", complete: 'files', run: (ctx, s) => a.future(ctx, s) },
+  { name: 'future', args: '[<path>:<line>]', desc: "The open pull requests whose changes touch a line (none given: the line under the cursor of the blame open, or the last one shown; F in blame)", complete: 'files', run: (ctx, s) => a.future(ctx, s) },
   { name: 'family', desc: 'What this repository offers the other apps (Bosun, Hail, Trawl): ↵ copies the command to paste into one', run: (ctx) => a.family(ctx) },
   { name: 'take', args: '<context>', desc: 'What another app copied for Splice: an exception or a file opens blame at its line, a commit its diff', run: (ctx, s) => a.take(ctx, s) },
   {
@@ -114,7 +115,7 @@ export const COMMANDS = [
     ],
     run: (ctx, s) => a.filter(ctx, s),
   },
-  { name: 'open', args: '<path>', desc: 'Open a repository', complete: 'repos', run: (ctx, s) => (s ? ctx.openRepo(s) : ctx.prefill('/open ')) },
+  { name: 'open', args: '<path>', desc: 'Open a repository', complete: 'repos', run: (ctx, s) => (s ? ctx.openRepo(pathArg(s)) : ctx.prefill('/open ')) },
   { name: 'clone', args: '<url> [folder]', desc: 'Clone a repository next to the open one (or into the folder Splice started in), then open it', run: (ctx, s) => a.clone(ctx, s) },
   { name: 'scan', args: '<folder>', desc: 'Add a folder to scan for repositories', run: (ctx, s) => ctx.addRoot(s) },
   { name: 'last', desc: 'Show the full output of the last command', run: (ctx) => ctx.showLast() },

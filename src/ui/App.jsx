@@ -34,9 +34,9 @@ import { RebaseEditor } from './RebaseEditor.jsx';
 import { WELCOME_HEIGHT, Welcome } from './Pet.jsx';
 import { FACES, moodFor } from '../pet.js';
 import { worthNotifying } from '../notify.js';
-import { decodeContext, readMoods, writeMood } from '../family.js';
+import { decodeContext, pastedLine, readMoods, writeMood } from '../family.js';
 import { droppedPaths } from '../drop.js';
-import { familyMood, moodsToShow, pastedLine, reactionText } from '../siblings.js';
+import { familyMood, moodsToShow, reactionText } from '../siblings.js';
 
 const VIEWS = [
   { id: 'graph', label: 'Graph' },
@@ -258,8 +258,11 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
     // An overlay opened from a picker (a diff of the picked commit) goes back to the picker when closed.
     if (o && o !== cur && !o.back && cur?.kind === 'picker' && typeof next !== 'function') o = { ...o, back: cur };
     overlayRef.current = o;
+    // The last blame shown, for /future without a line (Picker.jsx keeps its cursor on it as `index`).
+    if (o?.kind === 'picker' && o.blame) lastBlame.current = { picker: o, root: ctx.data?.root };
     setOverlayState(o);
   };
+  const lastBlame = useRef(null);
   const pickerIds = useRef(0);
 
   const setPrompt = (value, cursor = value.length) => {
@@ -575,6 +578,8 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
       else setOverlay(next);
     },
     overlay: () => overlayRef.current,
+    // The blame picker last on screen in this repository (open or not), or null.
+    lastBlame: () => (lastBlame.current && lastBlame.current.root === ctx.data?.root ? lastBlame.current.picker : null),
     // Settings change through App's copy, the only one written to disk (ctx.config reads it).
     setConfig,
     closeOverlay: () => {
@@ -710,7 +715,8 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
     // dropped path is a drop (globalKeys), not this, and a path that isn't there just typing, as before.
     const o = overlayRef.current;
     if (focusRef.current === 'view' && !confirmRef.current && (!o || o.kind === 'picker' || (!o.kind && !ctx.viewerTyping?.()))) {
-      const line = pastedLine(input);
+      // (A terminal ends a pasted line with \r, which the family's rule takes as a \n.)
+      const line = pastedLine(input.replace(/\r$/, '\n'));
       // An absolute path (Linux and macOS ones start with /) is a drop, or typing, unless it names a command.
       const command = /^\/([^\s/]+)(\s|$)/.exec(line ?? '')?.[1];
       if (line && !(droppedPaths(line) && !(command && findCommand(command, customRef.current.commands)))) {

@@ -9,8 +9,8 @@ import { join } from 'node:path';
 import React from 'react';
 import { render } from 'ink-testing-library';
 import { removeTemp } from './temp.js';
-import { encodeContext, takeLine } from '../src/family.js';
-import { exceptionFrames, framesInRepo, notForSplice, pathAndLine, takenContext } from '../src/take.js';
+import { contextIn, encodeContext, takeLine } from '../src/family.js';
+import { TAKES, exceptionFrames, framesInRepo, pathAndLine } from '../src/take.js';
 import { App } from '../src/ui/App.jsx';
 
 test('frames matched to the checkout, top first, each file and line once', () => {
@@ -30,14 +30,8 @@ test('a path and a line, as /blame takes them', () => {
   assert.deepEqual(pathAndLine('C:\\x\\a.js:3'), { path: 'C:\\x\\a.js', line: 3 });
 });
 
-test('contexts with or without /take, and the ones for other apps', () => {
-  const line = takeLine('file', { path: 'a.js', line: 2 });
-  assert.deepEqual(takenContext(line), { kind: 'file', data: { path: 'a.js', line: 2 } });
-  assert.deepEqual(takenContext(line.slice('/take '.length)), { kind: 'file', data: { path: 'a.js', line: 2 } });
-  assert.equal(takenContext('a.js'), null);
-  assert.match(notForSplice('request'), /for Hail/);
-  assert.match(notForSplice('query'), /for Trawl/);
-  assert.match(notForSplice('logline'), /for Bosun/);
+test('the kinds Splice takes, as the family says', () => {
+  assert.deepEqual(TAKES, ['exception', 'commit', 'file']);
 });
 
 let base;
@@ -139,7 +133,7 @@ test('/take: an exception opens blame at its frame, a file at its line, a commit
     await until(() => flat(frame()).includes("fffffff isn't in shop (it came from elsewhere), and it has no remote"), 'missing commit');
 
     await command(app, takeLine('request', { method: 'GET', url: 'http://x' }));
-    await until(() => flat(frame()).includes("it's for Hail"), 'the request is for Hail');
+    await until(() => flat(frame()).includes('for Hail: paste it into its prompt instead'), 'the request is for Hail');
 
     // /blame with a line.
     await command(app, 'blame src/orders.js:4');
@@ -149,13 +143,13 @@ test('/take: an exception opens blame at its frame, a file at its line, a commit
     // Y hands the line on, and in the graph the commit (for Sonar).
     app.stdin.write('Y');
     await until(() => copied.length === 1, 'the line copied');
-    assert.deepEqual(takenContext(copied[0]), { kind: 'file', data: { path: 'src/orders.js', line: 4 } });
-    assert.match(flat(frame()), /Copied for the other apps: paste it into one's prompt ⎿ src\/orders\.js:4/);
+    assert.deepEqual(contextIn(copied[0]), { kind: 'file', data: { path: 'src/orders.js', line: 4 } });
+    assert.match(flat(frame()), /Copied for Splice: paste it into Splice's prompt\. src\/orders\.js:4/);
     await esc('Blame src/orders.js');
     app.stdin.write('Y');
     await until(() => copied.length === 2, 'the commit copied');
-    assert.deepEqual(takenContext(copied[1]), { kind: 'commit', data: { repo: 'shop', hash: git('rev-parse', 'HEAD'), subject: 'Better third line' } });
-    assert.match(flat(frame()), /Copied for Sonar: paste it into Sonar's prompt ⎿ commit [0-9a-f]{10} Better third line/);
+    assert.deepEqual(contextIn(copied[1]), { kind: 'commit', data: { repo: 'shop', hash: git('rev-parse', 'HEAD'), subject: 'Better third line' } });
+    assert.match(flat(frame()), /Copied for Sonar: paste it into Sonar's prompt\. commit [0-9a-f]{10} Better third line/);
   } finally {
     app.unmount();
   }

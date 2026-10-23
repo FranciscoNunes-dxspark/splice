@@ -163,7 +163,7 @@ export const HELP = [
       ['v  L', 'Select lines (v, move, v) · Every commit that changed them, and how (git log -L)'],
       ['e', 'Claude explains why the line, or the selected lines, are the way they are, from the file and the commits that changed them'],
       ['Y', 'Copy /take file with the line, for the other apps'],
-      ['F', 'Blame of the future: the open pull requests whose changes touch the line, each with its hunk; ↵ its diff (/future <path>:<line>)'],
+      ['F', 'Blame of the future: the open pull requests whose changes touch the line, each with its hunk; ↵ its diff (/future <path>:<line>, or /future alone for the last blame\'s line)'],
     ],
   },
   {

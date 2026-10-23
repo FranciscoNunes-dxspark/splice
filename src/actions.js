@@ -65,8 +65,8 @@ import { fit } from './text.js';
 import { futureItems, futureRefspecs, lineInBase, nameList, touchingHunks } from './future.js';
 import { historyArgs, outgoingArgs, parseRiskLog, riskBlobs, riskFiles, riskSummary, riskText, scoreRisk } from './risk.js';
 import { familyOffers } from './siblings.js';
-import { TAKES, exceptionFrames, framesInRepo, notForSplice, pathAndLine, takenContext } from './take.js';
-import { describeContext, matchFrameFile, projectAt, shareLine, takeLine } from './family.js';
+import { TAKES, exceptionFrames, framesInRepo, pathAndLine } from './take.js';
+import { APP_NAMES, TAKEN_BY, contextIn, copiedNote, describeContext, matchFrameFile, notMine, projectAt, shareLine, takeLine } from './family.js';
 import { DEFAULT_ACCENT, applyTheme, isColour, setAccent, theme } from './theme.js';
 import {
   REFLOG_FORMAT,
@@ -3600,10 +3600,11 @@ export async function reviewPr(ctx, text, given = null) {
   ctx.note(`Reviewing ${pr.label} "${pr.title}" in ${path}, on ${name}.\n/open ${main} goes back to your own work. /cleanup removes this worktree, and ${name} once ${pr.label} is merged.`, 'ok');
 }
 
-/** Copies `line`, a command for a sibling app (family.js), saying which and how to use it. */
-export function copyFor(ctx, app, line, what = line) {
-  ctx.copy(line, `a command for ${app}`);
-  ctx.note(`Copied for ${app}: paste it into ${app}'s prompt\n${what}`, 'ok');
+/** Copies `line`, a command for a sibling app or apps (family.js), saying which and how to use it. */
+export function copyFor(ctx, apps, line) {
+  const names = [].concat(apps).map((a) => APP_NAMES[a]);
+  ctx.copy(line, `a command for ${names.join(' or ')}`);
+  ctx.note(copiedNote(apps, line), 'ok');
 }
 
 /**
@@ -3614,27 +3615,29 @@ export function copyFor(ctx, app, line, what = line) {
 export function family(ctx) {
   if (!needRepo(ctx)) return;
   const offers = familyOffers(projectAt(ctx.data.root), ctx.data.name);
-  const appW = Math.max(0, ...offers.map((o) => o.app.length));
+  const appW = Math.max(0, ...offers.map((o) => APP_NAMES[o.app].length));
   ctx.showPicker({
     title: `What ${ctx.data.name} offers the other apps`,
     hint: '↵ copy the line, to paste into that app',
     empty: `Nothing in ${ctx.data.name} for the other apps: no bosun.json, Procfile, compose file or dev script for Bosun, no .http files for Hail, no connection strings (appsettings*.json, .env) for Trawl.`,
-    items: offers.map((o) => ({ ...o, segments: [{ text: o.app.padEnd(appW), color: theme.accent, bold: true }, { text: `  ${o.line}` }, { text: `  ${o.what}`, color: theme.dim }] })),
+    items: offers.map((o) => ({ ...o, segments: [{ text: APP_NAMES[o.app].padEnd(appW), color: theme.accent, bold: true }, { text: `  ${o.line}` }, { text: `  ${o.what}`, color: theme.dim }] })),
     onPick: (o) => copyFor(ctx, o.app, o.line),
   });
 }
 
+// The siblings that take a kind of context, Splice aside (it takes some itself).
+const othersTaking = (kind) => TAKEN_BY[kind].filter((a) => a !== 'splice');
+
 /** Y on a commit in the graph: `/take commit` for Sonar, which finds the deployments that carry it. */
 export function shareCommit(ctx, c) {
   const data = { repo: ctx.data.name, hash: c.hash, subject: c.subject };
-  copyFor(ctx, 'Sonar', takeLine('commit', data), describeContext({ kind: 'commit', data }));
+  copyFor(ctx, othersTaking('commit'), takeLine('commit', data));
 }
 
-/** Y on a line in blame: `/take file` with the line, for whichever app is to look at it. */
+/** Y on a line in blame: `/take file` with the line, for whichever app takes one (another Splice, on another checkout). */
 export function shareFileLine(ctx, path, line) {
   const data = { path, ...(line ? { line } : {}) };
-  ctx.copy(takeLine('file', data), 'a /take line for the other apps');
-  ctx.note(`Copied for the other apps: paste it into one's prompt\n${describeContext({ kind: 'file', data })}`, 'ok');
+  copyFor(ctx, TAKEN_BY.file, takeLine('file', data));
 }
 
 /**
@@ -3661,7 +3664,7 @@ export async function runAt(ctx, ref) {
     const r = await ctx.exec(['worktree', 'add', '--detach', path, hash], { label: 'Adding worktree' });
     if (!r.ok) return r;
   }
-  copyFor(ctx, 'Bosun', shareLine('move', [path]));
+  copyFor(ctx, 'bosun', shareLine('move', [path]));
   const crew = projectAt(path).crew;
   ctx.note(`${short(hash)} is checked out in ${path}${at ? ' (from before)' : ''}.${crew ? '' : " Bosun may find nothing to run there: it has no bosun.json, Procfile, compose file or dev script."} /cleanup removes it when you're done.`);
 }
@@ -3886,13 +3889,17 @@ export async function future(ctx, target) {
   let at = target && typeof target === 'object' ? target : null;
   if (!at) {
     const typed = String(target ?? '').trim();
-    const open = ctx.overlay();
     if (typed) {
       const p = pathAndLine(typed);
       at = { path: repoPath(ctx.data.root, p.path), line: p.line, rev: null };
-    } else if (open?.kind === 'picker' && open.blame && open.items?.[open.index ?? 0]) {
-      at = { ...open.blame, line: open.items[open.index ?? 0].line };
-    } else return ctx.prefill('/future ');
+    } else {
+      // The line under the cursor of the blame that's open, else of the last one shown.
+      const open = ctx.overlay();
+      const blame = open?.kind === 'picker' && open.blame ? open : ctx.lastBlame?.();
+      const row = blame?.items?.[blame.index ?? 0];
+      if (!row) return ctx.note('No blame to take a line from: /future <path>:<line>, or F on a line in blame (/blame <path>).', 'error');
+      at = { ...blame.blame, line: row.line };
+    }
   }
   if (!at.path || !at.line) return ctx.note('Say which line: /future <path>:<line>, or F on a line in blame.', 'error');
   const host = needHost(ctx);
@@ -3960,9 +3967,9 @@ const trackedFiles = async (ctx) => (await ctx.git(['ls-files', '-z'])).split('\
 export async function take(ctx, text) {
   const raw = String(text ?? '').trim();
   if (!raw) return ctx.prefill('/take ');
-  const got = takenContext(raw);
+  const got = contextIn(raw);
   if (!got) return ctx.note("That isn't something another app copied: paste the whole /take family:v1:… line.", 'error');
-  if (!TAKES.includes(got.kind)) return ctx.note(notForSplice(got.kind), 'error');
+  if (!TAKES.includes(got.kind)) return ctx.note(notMine('splice', got), 'error');
   if (!needRepo(ctx)) return;
   const { kind, data } = got;
   ctx.note(`Taking ${describeContext(got)}`);

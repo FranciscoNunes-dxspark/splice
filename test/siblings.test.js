@@ -11,23 +11,13 @@ import React from 'react';
 import { render } from 'ink-testing-library';
 import { removeTemp } from './temp.js';
 import { encodeContext, projectAt, takeLine, writeMood } from '../src/family.js';
-import { familyMood, familyOffers, moodsToShow, pastedLine, reactionText, trawlLine } from '../src/siblings.js';
+import { familyMood, familyOffers, moodsToShow, reactionText, trawlName } from '../src/siblings.js';
 import { App } from '../src/ui/App.jsx';
 
-test('a paste for the prompt: a command line or a context, without the newline at its end', () => {
-  const ctx = encodeContext('commit', { hash: 'abc' });
-  assert.equal(pastedLine('/take x\r'), '/take x');
-  assert.equal(pastedLine(`\x1b[200~${ctx}\n\x1b[201~`), ctx);
-  assert.equal(pastedLine('/'), null, 'one key');
-  assert.equal(pastedLine('jjj'), null, 'keys typed fast');
-  assert.equal(pastedLine('/a\n/b'), null, 'several lines');
-});
-
-test('Trawl lines: Azure SQL signed in through az, else /add; never a password', () => {
-  assert.equal(trawlLine({ name: 'Shop', kind: 'sqlserver', server: 'shop.database.windows.net', port: 1433, database: 'Shop', entra: true }, 'repo'), '/azure-sql shop.database.windows.net Shop');
-  assert.equal(trawlLine({ name: 'Shop', kind: 'sqlserver', server: 'shop.database.windows.net', database: 'Shop', user: 'app', password: 'p' }, 'repo'), '/add Shop shop.database.windows.net Shop --user app');
-  assert.equal(trawlLine({ name: 'Local', kind: 'sqlserver', server: 'localhost', port: 1433, database: 'Shop' }, 'repo'), '/add Local localhost,1433 Shop');
-  assert.equal(trawlLine({ name: 'DATABASE_URL', kind: 'postgres', server: 'db', port: 5432, database: 'orders', user: 'me', password: 's' }, 'repo'), '/add orders db:5432 orders --kind postgres --user me');
+test("Trawl's name for a database: its settings' key, the database's for an environment variable's", () => {
+  assert.equal(trawlName({ name: 'Shop', database: 'Shop' }, 'repo'), 'Shop');
+  assert.equal(trawlName({ name: 'DATABASE_URL', database: 'orders' }, 'repo'), 'orders');
+  assert.equal(trawlName({ name: 'DATABASE_URL' }, 'repo'), 'repo');
 });
 
 test("Twig's mood as the family says it, and the others' worth a word", () => {
@@ -73,10 +63,10 @@ after(() => removeTemp(base));
 test('what a repository offers the others', () => {
   const offers = familyOffers(projectAt(dir), 'shop');
   assert.deepEqual(offers.map((o) => [o.app, o.line]), [
-    ['Bosun', `/move ${dir}`],
-    ['Hail', `/open ${join(dir, 'api', 'orders.http')}`],
-    ['Trawl', '/azure-sql shop.database.windows.net Shop'],
-    ['Trawl', '/add orders db.local:5432 orders --kind postgres --user me'],
+    ['bosun', `/move ${dir}`],
+    ['hail', `/open ${join(dir, 'api', 'orders.http')}`],
+    ['trawl', '/azure-sql shop.database.windows.net Shop'],
+    ['trawl', '/add orders db.local:5432 orders --kind postgres --user me'],
   ]);
   assert.ok(!offers.some((o) => o.line.includes('hunter2')));
 });

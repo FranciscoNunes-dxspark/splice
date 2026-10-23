@@ -1,12 +1,9 @@
 // What Splice does with a context a sibling app copied (family.js's /take family:v1:…), and the lines it
 // hands them. Pure: actions.js's `take` asks git and opens the pickers.
-import { contextIn, decodeContext, matchFrameFile, stackFrames } from './family.js';
+import { TAKEN_BY, matchFrameFile, stackFrames } from './family.js';
 
-/** The app each kind of context Splice doesn't take is for, by name. */
-export const CONTEXT_APPS = { request: 'Hail', rows: 'Trawl', query: 'Trawl', logline: 'Bosun' };
-
-/** The kinds Splice takes. */
-export const TAKES = ['exception', 'file', 'commit'];
+/** The kinds Splice takes (family.js's TAKEN_BY says the same). */
+export const TAKES = Object.keys(TAKEN_BY).filter((k) => TAKEN_BY[k].includes('splice'));
 
 /** The frames of an exception context, top first: its `frames`, else read from its `stack` text. */
 export function exceptionFrames(data) {
@@ -41,14 +38,4 @@ export function pathAndLine(typed) {
   const m = /^(.+?)(?::|#L)(\d+)(?::\d+)?$/.exec(s);
   if (m && !/^[A-Za-z]$/.test(m[1])) return { path: m[1], line: Number(m[2]) };
   return { path: s, line: null };
-}
-
-/** What was typed after /take, or at the prompt: { kind, data }, or null when it isn't a context. */
-export const takenContext = (text) => contextIn(text) ?? decodeContext(text);
-
-/** The line saying a context is for another app: "That's an HTTP request: it's for Hail. Paste it into Hail's prompt." */
-export function notForSplice(kind) {
-  const app = CONTEXT_APPS[kind];
-  const what = { request: 'an HTTP request', rows: 'some rows', query: 'a query', logline: 'a log line' }[kind] ?? `a ${kind}`;
-  return app ? `That's ${what}: it's for ${app}. Paste it into ${app}'s prompt.` : `Splice doesn't take ${what}.`;
 }

@@ -122,6 +122,8 @@ test('F in blame: the open pull requests changing the line, with their hunks; â†
   const frame = () => app.lastFrame() ?? '';
   try {
     await until(() => frame().includes('Ten lines'), 'the graph');
+    await command(app, 'future');
+    await until(() => flat(frame()).includes('No blame to take a line from'), 'no blame shown yet');
     await command(app, 'blame f.txt:6');
     await until(() => /â¯.*6 â”‚ five/.test(frame()), 'blame on line 6');
     app.stdin.write('F');
@@ -143,6 +145,11 @@ test('F in blame: the open pull requests changing the line, with their hunks; â†
     // From the prompt, with a line given.
     app.stdin.write('\x1b');
     await until(() => frame().includes('Ten lines'), 'the graph again');
+    // Without one: the line the last blame's cursor was on.
+    await command(app, 'future');
+    await until(() => frame().includes('1 open pull request changing line 6 of f.txt'), "the last blame's line");
+    app.stdin.write('\x1b');
+    await until(() => frame().includes('Ten lines'), 'the graph once more');
     await command(app, 'future f.txt:10');
     await until(() => frame().includes('changing line 10 of f.txt') && /#2\s+Shout nine/.test(frame()), 'the other one');
     app.stdin.write('\x1b');
