@@ -163,7 +163,7 @@ export function blamePicker(ctx, path, { rev = null, line = null } = {}) {
     title: `Blame ${path}${rev ? ` at ${rev.replace(/^[0-9a-f]{40,64}/, short)}` : ''}${line ? `, line ${line}` : ''}`,
     // The cursor starts on `line` (Picker.jsx's `index`), once the lines are in.
     index: line ? line - 1 : undefined,
-    hint: '↵ diff · H history · v select · L lines’ history · e why · F open PRs changing it',
+    hint: '↵ diff · H history · v/L lines’ history · e why · F PRs',
     range: true,
     // What /future reads, with the line under the cursor.
     blame: { path, rev },

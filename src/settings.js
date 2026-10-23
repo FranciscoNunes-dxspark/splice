@@ -80,6 +80,13 @@ export function settingRows(config, { file = '', mouse = true } = {}) {
       action: 'toggle',
     },
     {
+      id: 'riskBeforePush',
+      label: 'Risk check before push',
+      value: isOn(config.riskBeforePush) ? 'on' : 'off',
+      note: isOn(config.riskBeforePush) ? 'asks first when the commits score high (/risk says why)' : 'push without scoring the commits',
+      action: 'toggle',
+    },
+    {
       id: 'cleanupKeep',
       label: 'Keep on the remote',
       value: keep.length ? keep.join(', ') : 'none',

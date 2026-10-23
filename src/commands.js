@@ -25,6 +25,7 @@ export const COMMANDS = [
   { name: 'update-branch', args: '[base] [--stack]', desc: 'Rebase the current branch onto the latest default branch (or base); --stack moves the branches stacked with it too', complete: 'refs', run: (ctx, s) => a.updateBranch(ctx, s) },
   { name: 'pull', args: '[--rebase]', desc: 'Pull the current branch', run: (ctx, s) => a.pull(ctx, splitArgs(s)) },
   { name: 'push', args: '[--force] [remote]', desc: 'Push the current branch (sets the upstream the first time; asks first if its commits have big files or secrets); to another remote if named', run: (ctx, s) => a.push(ctx, splitArgs(s)) },
+  { name: 'risk', desc: 'How risky the commits a push would send look (churn, whose files, size, tests), and why', run: (ctx) => a.risk(ctx) },
   { name: 'remote', args: '[add|rename|remove|set-url] [...]', desc: 'The remotes: list them, or add <name> <url>, rename <old> <new>, remove <name>, set-url <name> <url>', run: (ctx, s) => a.remote(ctx, s) },
   { name: 'upstream', args: '[branch] <remote/branch>', desc: 'Set the branch a local branch tracks (--unset to stop)', complete: 'refs', run: (ctx, s) => a.upstream(ctx, s) },
   { name: 'stash', args: '[-u | --no-untracked] [message]', desc: 'Stash all changes (untracked files too, unless set off in /settings), with an optional message', run: (ctx, s) => a.stash(ctx, s) },

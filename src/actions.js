@@ -63,6 +63,7 @@ import { run as runGit } from './git.js';
 import { commitsLine, insideSummary, parseGitlinks, parseInside, submoduleInfo } from './submodules.js';
 import { fit } from './text.js';
 import { futureItems, futureRefspecs, lineInBase, nameList, touchingHunks } from './future.js';
+import { historyArgs, outgoingArgs, parseRiskLog, riskBlobs, riskFiles, riskSummary, riskText, scoreRisk } from './risk.js';
 import { TAKES, exceptionFrames, framesInRepo, notForSplice, pathAndLine, takenContext } from './take.js';
 import { describeContext, matchFrameFile, projectAt, shareLine } from './family.js';
 import { DEFAULT_ACCENT, applyTheme, isColour, setAccent, theme } from './theme.js';
@@ -200,14 +201,14 @@ export async function push(ctx, args = []) {
       });
       if (!ok) return;
     }
-    if (!(await checkBeforePush(ctx, pushRange({ upstream: branch.upstream, remote: named })))) return { ok: false };
+    if (!(await beforePush(ctx, pushRange({ upstream: branch.upstream, remote: named })))) return { ok: false };
     // Only a branch without an upstream starts tracking the remote it was pushed to.
     return ctx.exec(['push', ...flags, ...(branch.upstream ? [] : ['-u']), named, branch.head], { label: 'Pushing' });
   }
   if (!branch.upstream) {
     const remote = remotes.includes('origin') ? 'origin' : remotes[0];
     if (!remote) return ctx.note('This repository has no remote. Add one with: !remote add origin <url>', 'error');
-    if (!(await checkBeforePush(ctx, pushRange()))) return { ok: false };
+    if (!(await beforePush(ctx, pushRange()))) return { ok: false };
     return ctx.exec(['push', ...flags, '-u', remote, branch.head], { label: 'Pushing' });
   }
   if (flags.includes('--force-with-lease')) {
@@ -219,8 +220,74 @@ export async function push(ctx, args = []) {
     });
     if (!ok) return;
   }
-  if (!(await checkBeforePush(ctx, pushRange({ upstream: branch.upstream })))) return { ok: false };
+  if (!(await beforePush(ctx, pushRange({ upstream: branch.upstream })))) return { ok: false };
   return ctx.exec(['push', ...flags], { label: 'Pushing' });
+}
+
+/** Both checks before a push: big files and secrets, then the risk score. True to push. */
+const beforePush = async (ctx, range) => (await checkBeforePush(ctx, range)) && (await riskBeforePush(ctx, range));
+
+/** The risk of pushing the commits in `range` (risk.js): three gits, whatever the size of the push. Null when there's nothing to push. */
+async function readRisk(ctx, range, signal) {
+  const outgoing = parseRiskLog(await ctx.git(outgoingArgs(range), { signal }));
+  if (!outgoing.length) return null;
+  const blobs = riskBlobs(outgoing);
+  const [sizes, history] = await Promise.all([
+    blobs.length ? ctx.git(['cat-file', '--batch-check'], { signal, input: `${blobs.join('\n')}\n` }).then(parseBatchCheck) : new Map(),
+    riskFiles(outgoing).length ? ctx.git(historyArgs(riskFiles(outgoing)), { signal }).then(parseRiskLog) : [],
+  ]);
+  return scoreRisk({ outgoing, history, sizes });
+}
+
+/** The range a plain push of the current branch would send. */
+function currentPushRange(ctx) {
+  const { branch } = ctx.data.status;
+  return pushRange(branch.upstream ? { upstream: branch.upstream } : {});
+}
+
+/** /risk: how risky the commits a push would send look, and why, in the viewer. */
+export async function risk(ctx) {
+  if (!needRepo(ctx)) return;
+  let found = null;
+  const r = await ctx.task(
+    'Scoring the commits to push',
+    async (signal) => {
+      found = await readRisk(ctx, currentPushRange(ctx), signal);
+      return { stdout: '', stderr: '' };
+    },
+    { label: 'Scoring the commits to push', refresh: false, quiet: true },
+  );
+  if (!r.ok) return r;
+  if (!found) return ctx.note('Nothing to push, so nothing to score.');
+  ctx.showText(`Risk before push: ${found.level}`, riskText(found));
+}
+
+/**
+ * Before a push, when the "Risk check before push" setting is on (it is unless set off): a high score shows
+ * its reasons and asks first. True to push; a check that can't run doesn't hold the push up.
+ */
+async function riskBeforePush(ctx, range) {
+  if (ctx.config.riskBeforePush === false) return true;
+  let found = null;
+  const r = await ctx.task(
+    'Scoring the commits to push',
+    async (signal) => {
+      found = await readRisk(ctx, range, signal);
+      return { stdout: '', stderr: '' };
+    },
+    { label: 'Scoring the commits to push', refresh: false, quiet: true, quietError: true },
+  );
+  if (!r.ok) return !r.error?.cancelled && r.error?.message !== 'busy';
+  if (found?.level !== 'high') return true;
+  ctx.showText(`Before pushing: the risk is ${found.level}`, riskText(found));
+  const ok = await ctx.confirm({
+    title: `Push anyway? The risk is ${riskSummary(found)}.`,
+    detail: 'Why, above. No leaves the commits here, to split them up or add tests first. (Risk check before push, in /settings.)',
+    options: YES_NO('Yes, push anyway'),
+    danger: true,
+  });
+  ctx.closeOverlay();
+  return Boolean(ok);
 }
 
 /**

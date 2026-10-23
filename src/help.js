@@ -9,7 +9,7 @@ export const HELP = [
       ['1-7 / tab', 'Graph, Changes, Branches, Worktrees, Stash, PRs, Repos (shift+tab goes back)'],
       ['/ or :', 'Command prompt (slash commands, with completion)'],
       ['!', 'Run any git command, e.g.  !log --stat -5'],
-      ['f  p  P', 'Fetch all · Pull · Push (sets the upstream the first time; asks first if the commits have a file over 50 MB or what looks like a secret)'],
+      ['f  p  P', 'Fetch all · Pull · Push (sets the upstream the first time; asks first if the commits have a file over 50 MB or what looks like a secret, or their risk scores high: /risk)'],
       ['r', 'Refresh'],
       ['z', 'Undo the last commit, amend, merge, rebase, reset, switch or discard (asks first)'],
       ['esc', 'Cancel the running command, or clear the activity lines'],
