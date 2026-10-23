@@ -1275,6 +1275,22 @@ export async function addWorktree(ctx, argText) {
   return r;
 }
 
+// `git worktree unlock`: from the view `wt` is the selected one; from the command line it's a path, or
+// nothing when exactly one worktree is locked.
+export async function unlockWorktree(ctx, wt) {
+  if (!needRepo(ctx)) return;
+  if (typeof wt !== 'object' || !wt) {
+    const locked = ctx.data.worktrees.filter((w) => w.locked);
+    const [path] = splitArgs(wt ?? '');
+    if (path) wt = ctx.data.worktrees.find((w) => samePath(w.path, resolve(ctx.data.root, path)));
+    else if (locked.length === 1) [wt] = locked;
+    else return ctx.note(locked.length ? 'More than one worktree is locked: give the path of the one to unlock.' : 'No worktree is locked.', 'error');
+    if (!wt) return ctx.note(`No worktree at ${path}.`, 'error');
+  }
+  if (!wt.locked) return ctx.note(`The worktree at ${wt.path} isn't locked.`, 'error');
+  return ctx.exec(['worktree', 'unlock', wt.path], { label: 'Unlocking worktree' });
+}
+
 export async function removeWorktree(ctx, wt) {
   if (!needRepo(ctx)) return;
   // Its folder is already gone; prune just clears git's record of it (and any others like it).

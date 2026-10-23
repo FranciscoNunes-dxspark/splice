@@ -167,6 +167,7 @@ export const HELP = [
       ['↵', 'Open it in Splice'],
       ['n', 'New worktree (/worktree <path> [ref]; the path is relative to the repository)'],
       ['x', 'Remove it (asks first; the branch stays), or prune one whose folder is gone'],
+      ['u', 'Unlock a locked worktree (/unlock-worktree [path])'],
       ['C', 'Clean up: remove worktrees without changes, branches with nothing unpushed, and the branches of merged pull requests on the remote (/cleanup)'],
     ],
   },
