@@ -58,7 +58,7 @@ function subLines(s) {
     '',
     [{ text: what ?? '' }],
     '',
-    [{ text: 'I init/update · o open it as a repository', color: theme.dim }],
+    [{ text: 'I init/update · o open it as a repository · /submodules lists them all', color: theme.dim }],
   ];
 }
 

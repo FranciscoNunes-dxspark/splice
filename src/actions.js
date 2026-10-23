@@ -37,7 +37,7 @@ import {
   withShipped,
   withoutShipped,
 } from './prflow.js';
-import { cloneFolder, defaultBranch, filterArgs, parseBlame, filterLabel, filterLogArgs, findArgs, firstBadCommit, parseLog, parseNameStatus, parseStatus, relTime, remoteArgs, searchArgs, splitArgs, stashArgs, upstreamArgs } from './parse.js';
+import { cloneFolder, defaultBranch, filterArgs, parseBlame, filterLabel, filterLogArgs, findArgs, firstBadCommit, parseLog, parseNameStatus, parseStatus, relTime, remoteArgs, searchArgs, splitArgs, stashArgs, parseSubmodules, upstreamArgs } from './parse.js';
 import { buildPatch, coversAll, parseDiff, picksBySignature, splitUnits } from './patch.js';
 import {
   COMMIT_LIST_FORMAT,
@@ -56,6 +56,7 @@ import { eachLimited, fetchRepo } from './repos.js';
 import { nextTheme, settingRows, settingSegments } from './settings.js';
 import { forcePushes, forwardInput, planSync, rebasingElsewhere, syncSummary, syncText, updateBranchArgs } from './sync.js';
 import { SIGNING_KEYS, checkGpgKey, explainSigning, needsPinentryCheck, signingConfig } from './signing.js';
+import { commitsLine, insideSummary, parseGitlinks, parseInside, submoduleInfo } from './submodules.js';
 import { fit } from './text.js';
 import { DEFAULT_ACCENT, applyTheme, isColour, setAccent, theme } from './theme.js';
 import {
@@ -1785,17 +1786,19 @@ export async function discardAll(ctx) {
 }
 
 /**
- * I on a submodule in Changes, /submodule-update [path]: clones what isn't yet and checks out the commit this
- * repository records, in one submodule or all of them (and theirs, recursively). Asks first when that moves
- * one off another commit it has checked out.
+ * I on a submodule in Changes or /submodules, /submodule-update [path]: clones what isn't yet and checks out
+ * the commit this repository records, in one submodule or all of them (and theirs, recursively). Asks first
+ * when that moves one off another commit it has checked out. With `init: false` (u in /submodules) only
+ * ones already initialised are updated.
  */
-export async function updateSubmodules(ctx, text) {
+export async function updateSubmodules(ctx, text, { init = true } = {}) {
   if (!needRepo(ctx)) return;
   const subs = ctx.data.submodules ?? [];
   if (!subs.length) return ctx.note('This repository has no submodules.', 'error');
   const path = (text ?? '').trim().replace(/[\\/]+$/, '');
   const target = path ? subs.find((s) => s.path === path) : null;
   if (path && !target) return ctx.note(`No submodule at ${path}.`, 'error');
+  if (!init && target?.state === 'uninitialised') return ctx.note(`${target.path} isn't initialised yet: I clones and checks it out.`, 'error');
   const moving = (target ? [target] : subs).filter((s) => s.state === 'out of date');
   if (moving.length) {
     const ok = await ctx.confirm({
@@ -1805,13 +1808,110 @@ export async function updateSubmodules(ctx, text) {
     });
     if (!ok) return;
   }
-  return ctx.exec(['submodule', 'update', '--init', '--recursive', ...(target ? ['--', target.path] : [])], { label: 'Updating submodules' });
+  const args = ['submodule', 'update', ...(init ? ['--init', '--recursive'] : []), ...(target ? ['--', target.path] : [])];
+  return ctx.exec(args, { label: 'Updating submodules' });
 }
 
-/** o or ↵ on a submodule in Changes: opens it in Splice as the repository it is. */
+/** o or ↵ on a submodule in Changes or /submodules: opens it in Splice as the repository it is. */
 export function openSubmodule(ctx, sub) {
   if (sub.state === 'uninitialised') return ctx.note(`${sub.path} isn't initialised yet: I clones and checks it out.`, 'error');
   return ctx.openRepo(join(ctx.data.root, sub.path));
+}
+
+/**
+ * The submodules with what each records and has, its branch and its own changes, read when the list opens
+ * (never in a poll): `git submodule status` and `git ls-files --stage` for them all, then one status in each
+ * checked-out one.
+ */
+export async function readSubmodules(ctx) {
+  const root = ctx.data.root;
+  const status = await ctx.git(['submodule', 'status']);
+  const subs = parseSubmodules(status, ctx.data.status.files);
+  if (!subs.length) return [];
+  const links = await ctx.git(['ls-files', '--stage', '--', ...subs.map((s) => s.path)]).catch(() => '');
+  const recorded = parseGitlinks(links);
+  return Promise.all(
+    subs.map(async (s) => {
+      const inside =
+        s.state === 'uninitialised'
+          ? null
+          : await ctx.git(['-C', join(root, s.path), 'status', '--porcelain=v2', '--branch', '-z', '--untracked-files=normal']).then(parseInside, () => null);
+      return submoduleInfo(s, recorded[s.path], inside);
+    }),
+  );
+}
+
+const SUB_ICONS = {
+  uninitialised: ['○', 'not initialised', 'warn'],
+  'out of date': ['↻', 'out of date', 'warn'],
+  conflict: ['!', 'conflict', 'del'],
+  modified: ['●', 'changes inside', 'warn'],
+  ok: ['✓', 'up to date', 'dim'],
+};
+
+function submoduleSegments(info) {
+  const [icon, text, tone] = SUB_ICONS[info.state] ?? SUB_ICONS.ok;
+  const inside = insideSummary(info);
+  return [
+    { text: `${icon} `, color: theme[tone], bold: true },
+    { text: info.path, strong: true },
+    { text: `  ${text}`, color: theme[tone] },
+    { text: info.current ? `  ${info.branch ? `⎇ ${info.branch}` : 'detached'}` : '', color: theme.hunk },
+    { text: `  ${commitsLine(info)}`, color: theme.dim },
+    { text: inside ? `  ${inside}` : '', color: theme.warn },
+  ];
+}
+
+/**
+ * `/submodules`: every submodule, with the commit recorded here against the one it has out, its branch and
+ * whether it has changes of its own. ↵ opens one, I initialises and updates it, u updates it to the recorded
+ * commit, f fetches in it, U moves it to its remote branch's newest commit (asks first), s syncs its URL.
+ */
+export function showSubmodules(ctx, { replace = false, index } = {}) {
+  if (!needRepo(ctx)) return;
+  if (!ctx.data.submodules?.length && !replace) return ctx.note('This repository has no submodules.', 'error');
+  // After a change, the list is read again (if it's still on screen: ↵ opened the submodule).
+  const again = () => {
+    const o = ctx.overlay();
+    if (o?.submodules) showSubmodules(ctx, { replace: true, index: o.index });
+  };
+  const initialised = (s) => {
+    if (s.state !== 'uninitialised') return true;
+    ctx.note(`${s.path} isn't initialised yet: I clones and checks it out.`, 'error');
+    return false;
+  };
+  ctx.showPicker(
+    {
+      title: 'Submodules',
+      hint: '↵ open · I init/update · u update · f fetch · U to its remote branch · s sync URL',
+      empty: 'This repository has no submodules.',
+      submodules: true,
+      index,
+      load: async () => (await readSubmodules(ctx)).map((s) => ({ ...s, segments: submoduleSegments(s) })),
+      onPick: (s) => openSubmodule(ctx, s),
+      keys: {
+        y: (s) => ctx.copy(s.path),
+        I: async (s) => (await updateSubmodules(ctx, s.path), again()),
+        u: async (s) => (await updateSubmodules(ctx, s.path, { init: false }), again()),
+        f: async (s) => initialised(s) && (await ctx.exec(['-C', s.path, 'fetch', '--prune'], { label: `Fetching in ${s.path}` }), again()),
+        U: async (s) => (await updateRemote(ctx, s), again()),
+        s: async (s) => (await ctx.exec(['submodule', 'sync', '--recursive', '--', s.path], { label: 'Syncing submodule URLs' }), again()),
+      },
+    },
+    { replace },
+  );
+}
+
+/** U in /submodules: `git submodule update --remote` for one, which checks out its remote branch's newest commit. Asks first. */
+async function updateRemote(ctx, s) {
+  const ok = await ctx.confirm({
+    title: `Move ${s.path} to the newest commit on its remote branch?`,
+    detail:
+      'git submodule update --remote fetches it and checks out the tip of the branch .gitmodules names (its default branch otherwise), detached. This repository then shows it as changed, to commit if you want to keep it.',
+    options: YES_NO('Yes, move it'),
+  });
+  if (!ok) return null;
+  return ctx.exec(['submodule', 'update', '--init', '--remote', '--', s.path], { label: `Updating ${s.path} from its remote` });
 }
 
 /** Takes one side of a conflicted file and marks it resolved. */

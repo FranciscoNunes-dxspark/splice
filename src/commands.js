@@ -28,6 +28,7 @@ export const COMMANDS = [
   { name: 'remote', args: '[add|rename|remove|set-url] [...]', desc: 'The remotes: list them, or add <name> <url>, rename <old> <new>, remove <name>, set-url <name> <url>', run: (ctx, s) => a.remote(ctx, s) },
   { name: 'upstream', args: '[branch] <remote/branch>', desc: 'Set the branch a local branch tracks (--unset to stop)', complete: 'refs', run: (ctx, s) => a.upstream(ctx, s) },
   { name: 'stash', args: '[-u | --no-untracked] [message]', desc: 'Stash all changes (untracked files too, unless set off in /settings), with an optional message', run: (ctx, s) => a.stash(ctx, s) },
+  { name: 'submodules', desc: 'Every submodule: the commit recorded against the one it has, its branch and its own changes; open, update, fetch or sync one', run: (ctx) => a.showSubmodules(ctx) },
   { name: 'submodule-update', args: '[path]', desc: 'Initialise and check out the recorded commit of every submodule, or one', run: (ctx, s) => a.updateSubmodules(ctx, s) },
   { name: 'ignore', args: '<pattern>', desc: "Add a pattern to the repository's .gitignore (i on a file in Changes offers some)", run: (ctx, s) => a.ignore(ctx, s) },
   { name: 'discard', desc: 'Discard all uncommitted changes (asks first)', run: (ctx) => a.discardAll(ctx) },

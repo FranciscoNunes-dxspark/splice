@@ -93,6 +93,7 @@ export const HELP = [
       { heading: 'Submodules', about: 'listed last with their state: not initialised, out of date, changes inside, up to date' },
       ['I', 'Initialise it and check out the commit recorded here (/submodule-update [path])'],
       ['o  ↵', 'Open it in Splice as its own repository'],
+      '/submodules lists them all, with their branches and the commits recorded and checked out.',
     ],
   },
   {
@@ -116,6 +117,19 @@ export const HELP = [
       ['J K', 'Scroll'],
       ['o  t  b', 'Take ours · Take theirs · Keep both (ours, then theirs) for the block; nothing is staged'],
       ['esc  ←  h', 'Back to the file list, where space marks the file resolved'],
+    ],
+  },
+  {
+    title: 'Submodules',
+    about: '/submodules: each one\'s state, branch, the commit recorded here and the one it has, and its own changes',
+    rows: [
+      ['↵', 'Open it in Splice as its own repository'],
+      ['I', 'Initialise it (clone it if need be) and check out the commit recorded here'],
+      ['u', 'Check out the commit recorded here, in one already initialised (asks first when it moves it)'],
+      ['f', 'Fetch inside it'],
+      ['U', 'Move it to the newest commit on its remote branch (git submodule update --remote; asks first)'],
+      ['s', 'Sync its URL from .gitmodules (git submodule sync)'],
+      ['y', 'Copy its path'],
     ],
   },
   {
