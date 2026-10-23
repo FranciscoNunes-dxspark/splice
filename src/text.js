@@ -13,6 +13,9 @@ const ASCII = /^[\x20-\x7e]*$/;
 const SIMPLE =
   /^[\x20-\x7e\xa0-\u02ff\u0370-\u0482\u2010-\u2027\u2030-\u205e\u2070-\u20cf\u2100-\u27bf\u2800-\u2bff\u3000-\u3029\u3030-\u303f\u3041-\u3098\u309b-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uff01-\uff9d\u{1f300}-\u{1f3fa}\u{1f400}-\u{1faff}]*$/u;
 
+/** Whether every character of `s` is a grapheme of its own (none joins the next), as most text is. */
+export const oneByOne = (s) => SIMPLE.test(s);
+
 // Per character of SIMPLE: [its width as string-width counts it, its width as cli-truncate cuts it].
 // cli-truncate's slice-ansi counts differently (an emoji outside the BMP as one column), and the
 // probe asks it, so a cut lands where cli-truncate's would.
