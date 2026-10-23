@@ -60,6 +60,7 @@ export const COMMANDS = [
   { name: 'split', desc: 'Claude splits your uncommitted changes into logical commits, each reviewed before it is made', run: (ctx) => a.claudeSplit(ctx) },
   { name: 'ship', args: '[--into <branch>]', desc: 'Push the branch, open its pull request (Claude drafts it) and turn on auto-merge, in one go; once merged, switch to the default branch, pull and delete it', run: (ctx, s) => a.ship(ctx, s) },
   { name: 'unlock-worktree', args: '[path]', desc: 'Unlock a locked worktree (the only locked one, or the one at a path; u in Worktrees)', run: (ctx, s) => a.unlockWorktree(ctx, s) },
+  { name: 'run-at', args: '[commit]', desc: 'Check a commit (HEAD if none given) out in a worktree of its own (../<repo>-at-<hash>) and copy the line that runs it in Bosun (w in Graph)', complete: 'refs', run: (ctx, s) => a.runAt(ctx, s) },
   { name: 'review-pr', args: '<number>', desc: 'Check a pull request out in a worktree of its own (../<repo>-pr-<n>) and open it, or bring that one up to date (w in PRs)', run: (ctx, s) => a.reviewPr(ctx, s) },
   { name: 'backport', args: '<pr-number> <branch>', desc: 'Cherry-pick a merged pull request onto a release branch, as backport/<n>-to-<branch>, push it and open its pull request (asks first)', run: (ctx, s) => a.backport(ctx, s) },
   { name: 'changelog', args: '[since-tag] [--into-release <tag>]', desc: 'Claude writes release notes from the commits and merged PRs since a tag (the latest by default); --into-release: the notes of that release', complete: 'refs', run: (ctx, s) => a.changelog(ctx, s) },

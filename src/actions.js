@@ -30,6 +30,7 @@ import {
   prNumber,
   reviewBranch,
   reviewPath,
+  runAtPath,
   shipArgs,
   shipSteps,
   shippedEntry,
@@ -62,7 +63,7 @@ import { run as runGit } from './git.js';
 import { commitsLine, insideSummary, parseGitlinks, parseInside, submoduleInfo } from './submodules.js';
 import { fit } from './text.js';
 import { TAKES, exceptionFrames, framesInRepo, notForSplice, pathAndLine, takenContext } from './take.js';
-import { describeContext, matchFrameFile } from './family.js';
+import { describeContext, matchFrameFile, projectAt, shareLine } from './family.js';
 import { DEFAULT_ACCENT, applyTheme, isColour, setAccent, theme } from './theme.js';
 import {
   REFLOG_FORMAT,
@@ -3528,6 +3529,41 @@ export async function reviewPr(ctx, text, given = null) {
   }
   if (!(await ctx.openRepo(path))) return;
   ctx.note(`Reviewing ${pr.label} "${pr.title}" in ${path}, on ${name}.\n/open ${main} goes back to your own work. /cleanup removes this worktree, and ${name} once ${pr.label} is merged.`, 'ok');
+}
+
+/** Copies `line`, a command for a sibling app (family.js), saying which and how to use it. */
+export function copyFor(ctx, app, line, what = line) {
+  ctx.copy(line, `a command for ${app}`);
+  ctx.note(`Copied for ${app}: paste it into ${app}'s prompt\n${what}`, 'ok');
+}
+
+/**
+ * /run-at [commit], w in the graph: a detached worktree at the commit (HEAD when none is given) beside the
+ * main working tree, <repo>-at-<short hash> (as /review-pr makes its own), then Bosun's /move to that folder
+ * copied, to run the project as it was then. Again for the same commit, the worktree that's there is used.
+ * /cleanup offers to remove these once nothing in them has changed.
+ */
+export async function runAt(ctx, ref) {
+  if (!needRepo(ctx)) return;
+  const want = String(ref ?? '').trim() || 'HEAD';
+  const hash = await ctx.git(['rev-parse', '--verify', '--quiet', `${want}^{commit}`]).then((s) => s.trim(), () => '');
+  if (!hash) return ctx.note(`${want} isn't a commit of ${ctx.data.name}.`, 'error');
+  const main = ctx.data.worktrees.find((w) => w.main)?.path ?? ctx.data.root;
+  const path = runAtPath(main, hash);
+  let at = ctx.data.worktrees.find((w) => samePath(w.path, path));
+  if (at?.prunable) {
+    if (!(await ctx.exec(['worktree', 'prune'], { label: 'Pruning worktrees', refresh: false })).ok) return;
+    at = null;
+  }
+  if (at && at.head !== hash) return ctx.note(`The worktree at ${path} has ${at.branch ?? short(at.head ?? '')} out, not ${short(hash)}. Move it away first.`, 'error');
+  if (!at) {
+    if (existsSync(path)) return ctx.note(`${path} is there already, and isn't a worktree of this repository. Move it away first.`, 'error');
+    const r = await ctx.exec(['worktree', 'add', '--detach', path, hash], { label: 'Adding worktree' });
+    if (!r.ok) return r;
+  }
+  copyFor(ctx, 'Bosun', shareLine('move', [path]));
+  const crew = projectAt(path).crew;
+  ctx.note(`${short(hash)} is checked out in ${path}${at ? ' (from before)' : ''}.${crew ? '' : " Bosun may find nothing to run there: it has no bosun.json, Procfile, compose file or dev script."} /cleanup removes it when you're done.`);
 }
 
 // A /backport waiting for /continue after a conflict: { id, label, title, url, branch, name, remote }.

@@ -190,6 +190,7 @@ export function GraphView({ data, ctx, width, height, active, filter, jump }) {
     else if (input === 'v') a.revert(ctx, c);
     else if (input === 'X') a.reset(ctx, c.hash, short);
     else if (input === 'B') a.bisectMark(ctx, c);
+    else if (input === 'w') a.runAt(ctx, c.hash);
     // From this commit (included) up to HEAD.
     else if (input === 'i') a.openRebase(ctx, c.parents[0] ?? null, short);
     else if (input === 'e' || input === 'R') a.claudeLook(ctx, input === 'e' ? 'explain' : 'review', { kind: 'commit', hash: c.hash, subject: c.subject });
