@@ -2,7 +2,7 @@
 import { existsSync } from 'node:fs';
 import { isAbsolute, join, relative } from 'node:path';
 // actions.js imports this module too; only functions cross, called long after both have loaded.
-import { claudeBlame, future } from './actions.js';
+import { claudeBlame, future, shareFileLine } from './actions.js';
 import { HISTORY_FORMAT, isoDate, parseBlame, parseFileHistory, relTime } from './parse.js';
 import { parseDiff } from './patch.js';
 import { theme } from './theme.js';
@@ -186,6 +186,7 @@ export function blamePicker(ctx, path, { rev = null, line = null } = {}) {
       L: (l, lines) => lineHistory(ctx, path, lines[0].line, lines.at(-1).line, rev),
       e: (l, lines) => claudeBlame(ctx, path, lines, all, rev),
       F: (l) => future(ctx, { path, line: l.line, rev }),
+      Y: (l) => shareFileLine(ctx, path, l.line),
       y: (l) => (l.commit.uncommitted ? ctx.note(`Line ${l.line} isn't committed yet.`) : ctx.copy(l.commit.hash, `the hash of ${short(l.commit.hash)}`)),
     },
   };

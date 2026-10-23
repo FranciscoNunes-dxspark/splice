@@ -65,7 +65,7 @@ import { fit } from './text.js';
 import { futureItems, futureRefspecs, lineInBase, nameList, touchingHunks } from './future.js';
 import { historyArgs, outgoingArgs, parseRiskLog, riskBlobs, riskFiles, riskSummary, riskText, scoreRisk } from './risk.js';
 import { TAKES, exceptionFrames, framesInRepo, notForSplice, pathAndLine, takenContext } from './take.js';
-import { describeContext, matchFrameFile, projectAt, shareLine } from './family.js';
+import { describeContext, matchFrameFile, projectAt, shareLine, takeLine } from './family.js';
 import { DEFAULT_ACCENT, applyTheme, isColour, setAccent, theme } from './theme.js';
 import {
   REFLOG_FORMAT,
@@ -3603,6 +3603,19 @@ export async function reviewPr(ctx, text, given = null) {
 export function copyFor(ctx, app, line, what = line) {
   ctx.copy(line, `a command for ${app}`);
   ctx.note(`Copied for ${app}: paste it into ${app}'s prompt\n${what}`, 'ok');
+}
+
+/** Y on a commit in the graph: `/take commit` for Sonar, which finds the deployments that carry it. */
+export function shareCommit(ctx, c) {
+  const data = { repo: ctx.data.name, hash: c.hash, subject: c.subject };
+  copyFor(ctx, 'Sonar', takeLine('commit', data), describeContext({ kind: 'commit', data }));
+}
+
+/** Y on a line in blame: `/take file` with the line, for whichever app is to look at it. */
+export function shareFileLine(ctx, path, line) {
+  const data = { path, ...(line ? { line } : {}) };
+  ctx.copy(takeLine('file', data), 'a /take line for the other apps');
+  ctx.note(`Copied for the other apps: paste it into one's prompt\n${describeContext({ kind: 'file', data })}`, 'ok');
 }
 
 /**

@@ -92,7 +92,8 @@ async function command(app, text) {
 const flat = (s) => s.replace(/\s+/g, ' ');
 
 test('/take: an exception opens blame at its frame, a file at its line, a commit its diff; other kinds say whose they are', async () => {
-  lastApp = render(React.createElement(App, { initialPath: dir, config: { recent: [], roots: [], history: [] }, copy: () => {} }));
+  const copied = [];
+  lastApp = render(React.createElement(App, { initialPath: dir, config: { recent: [], roots: [], history: [] }, copy: (t) => copied.push(t) }));
   const app = lastApp;
   const frame = () => app.lastFrame() ?? '';
   const esc = async (what) => {
@@ -144,6 +145,17 @@ test('/take: an exception opens blame at its frame, a file at its line, a commit
     await command(app, 'blame src/orders.js:4');
     await until(() => frame().includes('Blame src/orders.js, line 4'), '/blame path:line');
     assert.match(frame(), /❯.*4 │ four/);
+
+    // Y hands the line on, and in the graph the commit (for Sonar).
+    app.stdin.write('Y');
+    await until(() => copied.length === 1, 'the line copied');
+    assert.deepEqual(takenContext(copied[0]), { kind: 'file', data: { path: 'src/orders.js', line: 4 } });
+    assert.match(flat(frame()), /Copied for the other apps: paste it into one's prompt ⎿ src\/orders\.js:4/);
+    await esc('Blame src/orders.js');
+    app.stdin.write('Y');
+    await until(() => copied.length === 2, 'the commit copied');
+    assert.deepEqual(takenContext(copied[1]), { kind: 'commit', data: { repo: 'shop', hash: git('rev-parse', 'HEAD'), subject: 'Better third line' } });
+    assert.match(flat(frame()), /Copied for Sonar: paste it into Sonar's prompt ⎿ commit [0-9a-f]{10} Better third line/);
   } finally {
     app.unmount();
   }
