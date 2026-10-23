@@ -716,7 +716,7 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
     const o = overlayRef.current;
     if (focusRef.current === 'view' && !confirmRef.current && (!o || o.kind === 'picker' || (!o.kind && !ctx.viewerTyping?.()))) {
       // (A terminal ends a pasted line with \r, which the family's rule takes as a \n.)
-      const line = pastedLine(input.replace(/\r$/, '\n'));
+      const line = pastedLine(input);
       // An absolute path (Linux and macOS ones start with /) is a drop, or typing, unless it names a command.
       const command = /^\/([^\s/]+)(\s|$)/.exec(line ?? '')?.[1];
       if (line && !(droppedPaths(line) && !(command && findCommand(command, customRef.current.commands)))) {
