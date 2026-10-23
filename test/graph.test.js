@@ -72,3 +72,11 @@ test('the working-tree row sits in HEAD\'s column, with a line down to it when t
   assert.deepEqual(blocked.rows.map(text), ['●', '●', '●']);
   assert.equal(layoutGraph(rows([['a']]), { wip: 'gone' }).wip, null);
 });
+
+test('an octopus merge draws one line across to each branch it merged, each in its colour', () => {
+  const out = layoutGraph(rows([['m', 'a', 'f', 'g'], ['g', 'a'], ['f', 'a'], ['a']])).rows;
+  assert.deepEqual(out.map(text), ['○<┬─╮', '│ │ │', '│ ● │', '│ │ ●', '├─┴─╯', '●']);
+  const [top] = out.map((r) => r.graph);
+  assert.deepEqual([top[1].color, top[3].color], [top[2].color, top[4].color]);
+  assert.notEqual(top[2].color, top[4].color);
+});
