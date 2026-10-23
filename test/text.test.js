@@ -90,3 +90,26 @@ test('a width worked out once is the same again', () => {
   // More than the cache keeps: it starts again rather than growing.
   for (let i = 0; i < 2500; i++) assert.equal(stringWidth(`❤️ ${i}`), 3 + String(i).length);
 });
+
+// wrap as it was, measuring each line whole: the reference for the one that adds widths up.
+function wrapWhole(text, width) {
+  const lines = [];
+  for (const para of text.replace(/\r/g, '').split('\n').map(clean)) {
+    let line = '';
+    for (const word of para.split(' ')) {
+      const next = line ? `${line} ${word}` : word;
+      if (fullWidth(next) <= width || !line) line = next;
+      else (lines.push(line), (line = word));
+    }
+    lines.push(line);
+  }
+  return lines;
+}
+
+test('wrap breaks where measuring each line whole would', () => {
+  const pieces = ['a', 'word', 'longerword', '', '中文', '❯', '✨', '👍🏽', 'é', '؀', '한국', '‍', 'x‍', '\t', '\n'];
+  for (let i = 0; i < 2000; i++) {
+    const text = Array.from({ length: 1 + random(20) }, () => pieces[random(pieces.length)]).join(random(4) ? ' ' : '  ');
+    for (const w of [1, 4, 7, 12]) assert.deepEqual(wrap(text, w), wrapWhole(text, w), `${JSON.stringify(text)} in ${w}`);
+  }
+});

@@ -113,12 +113,22 @@ export function wrap(text, width) {
   // Split before cleaning: clean() drops control characters, newlines included.
   for (const para of text.replace(/\r/g, '').split('\n').map(clean)) {
     let line = '';
+    // While no character joins another, words joined by a space are as wide as their widths added
+    // up, so the line's width is kept as it grows rather than measured again for every word.
+    let lineW = 0;
+    let simple = true;
     for (const word of para.split(' ')) {
-      const next = line ? `${line} ${word}` : word;
-      if (stringWidth(next) <= width || !line) line = next;
-      else {
+      const one = oneByOne(word);
+      const nextW = !line ? stringWidth(word) : simple && one ? lineW + 1 + stringWidth(word) : stringWidth(`${line} ${word}`);
+      if (nextW <= width || !line) {
+        simple = line ? simple && one : one;
+        line = line ? `${line} ${word}` : word;
+        lineW = nextW;
+      } else {
         lines.push(line);
         line = word;
+        lineW = stringWidth(word);
+        simple = one;
       }
     }
     lines.push(line);
