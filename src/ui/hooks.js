@@ -157,18 +157,72 @@ export function useKeyTranslation(translate) {
 }
 
 // Results of slow reads (diffs, commit details), keyed by what was asked, so moving back is instant.
+// At most 300 of them and about MAX_WEIGHT characters of text: past either, the oldest go.
 const cache = new Map();
+const MAX_ENTRIES = 300;
+const MAX_WEIGHT = 16_000_000;
+let weight = 0;
+
+/** About how much text `value` holds: its strings' lengths, looking at no more than 5000 values. */
+export function weigh(value) {
+  let total = 0;
+  let seen = 0;
+  const stack = [value];
+  while (stack.length && seen++ < 5000) {
+    const v = stack.pop();
+    if (typeof v === 'string') total += v.length;
+    else if (v && typeof v === 'object') {
+      total += 8;
+      for (const x of Array.isArray(v) ? v : Object.values(v)) stack.push(x);
+    } else total += 1;
+  }
+  return total;
+}
+
+function remember(key, value) {
+  const old = cache.get(key);
+  if (old) weight -= old.weight;
+  cache.delete(key);
+  const entry = { value, weight: weigh(value) };
+  cache.set(key, entry);
+  weight += entry.weight;
+  // The newest stays, however big.
+  while (cache.size > 1 && (cache.size > MAX_ENTRIES || weight > MAX_WEIGHT)) {
+    const [first, { weight: w }] = cache.entries().next().value;
+    cache.delete(first);
+    weight -= w;
+  }
+}
+
+/** Lets go of the cached answers whose keys `stale(key)` picks. */
+export function forgetAsync(stale) {
+  for (const [k, { weight: w }] of cache) {
+    if (stale(k)) {
+      cache.delete(k);
+      weight -= w;
+    }
+  }
+}
+
+/** What the cache holds now: { entries, weight } (for tests). */
+export const asyncCacheSize = () => ({ entries: cache.size, weight });
 
 /**
  * Runs `load` for `key` after a short pause (so holding j doesn't spawn a git per row),
- * keeping the previous value on screen until the new one arrives.
+ * keeping the previous value on screen until the new one arrives. Answers are cached by key;
+ * `stale(key)`, when given, says which other keys the one shown makes useless (the same file read
+ * for an older load), and those are let go once it is on screen.
  */
-export function useAsync(key, load, delay = 60) {
-  const [state, setState] = useState(() => (cache.has(key) ? { value: cache.get(key), key } : { loading: true }));
+export function useAsync(key, load, delay = 60, { stale } = {}) {
+  const [state, setState] = useState(() => (cache.has(key) ? { value: cache.get(key).value, key } : { loading: true }));
+  const staleRef = useRef(stale);
+  staleRef.current = stale;
   useEffect(() => {
     if (key == null) return;
+    const shown = () => staleRef.current && forgetAsync((k) => k !== key && staleRef.current(k));
     if (cache.has(key)) {
-      setState({ value: cache.get(key), key });
+      setState({ value: cache.get(key).value, key });
+      shown();
       return;
     }
     let live = true;
@@ -176,9 +230,11 @@ export function useAsync(key, load, delay = 60) {
     const t = setTimeout(() => {
       load().then(
         (value) => {
-          cache.set(key, value);
-          if (cache.size > 300) cache.delete(cache.keys().next().value);
-          if (live) setState({ value, key });
+          remember(key, value);
+          if (live) {
+            setState({ value, key });
+            shown();
+          }
         },
         (error) => live && setState({ error, key }),
       );
