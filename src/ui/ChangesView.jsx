@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Box, useInput } from 'ink';
 import { dirname, basename } from 'node:path/posix';
 import * as a from '../actions.js';
@@ -84,6 +84,30 @@ function pairSegments(row, dRows, words, digits, width) {
   return [...half(row.left, row.old, leftW), { text: '│', color: theme.border }, ...half(row.right, row.new, width - 1 - leftW)];
 }
 
+// useAsync keeps its last 300 answers, and a diff's key has the load in it (data.loadedAt), so once a newer
+// load's diff is on screen the ones read before it are never asked for again; but they'd stay in memory, a
+// big diff once per reload while it's open. So each comes in a box, and the boxes of older loads are
+// emptied once a newer one is shown.
+const boxes = new Set();
+
+/** `text` (a promise) in a box for the load it was read for. */
+export async function boxDiff(loadedAt, text) {
+  const box = { loadedAt, text: await text };
+  boxes.add(box);
+  return box;
+}
+
+/** Empties the boxes of loads before `shown`'s, which nothing shows again. */
+export function emptyOlder(shown) {
+  if (!shown) return;
+  for (const b of boxes) {
+    if (b.loadedAt < shown.loadedAt) {
+      b.text = null;
+      boxes.delete(b);
+    }
+  }
+}
+
 export function ChangesView({ data, ctx, width, height, active }) {
   const { conflicts, unstaged, staged } = data.changes;
   const rows = useMemo(() => {
@@ -131,8 +155,9 @@ export function ChangesView({ data, ctx, width, height, active }) {
   }
 
   const diffKey = target === 'diff' && (split || pane === 'diff') ? `change:${data.root}:${fileKey}:${data.loadedAt}` : null;
-  const diff = useAsync(diffKey, () => changeDiff(data.root, f));
-  const raw = diff.error ? diff.error.message : (diff.value ?? '');
+  const diff = useAsync(diffKey, () => boxDiff(data.loadedAt, changeDiff(data.root, f)));
+  useEffect(() => emptyOlder(diff.value), [diff.value]);
+  const raw = diff.error ? diff.error.message : (diff.value?.text ?? '');
   const parsed = useMemo(() => parseDiff(raw), [raw]);
   const dRows = useMemo(() => diffRows(parsed, raw), [parsed, raw]);
   const words = useMemo(() => wordChanges(dRows.map((r) => clean(r.text))), [dRows]);
