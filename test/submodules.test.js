@@ -160,3 +160,32 @@ test('/submodules lists recorded and checked-out commits, branch and changes; u,
     app.unmount();
   }
 });
+
+test('a load keeps git submodule status\'s answer until a submodule or what records it changes', async () => {
+  const { findRepo, loadRepo } = await import('../src/repo.js');
+  const path = join(base, 'kept');
+  init(path);
+  writeFileSync(join(path, 'a.txt'), 'a\n');
+  run(path, 'add', '.');
+  run(path, 'commit', '-q', '-m', 'First');
+  run(path, '-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', lib, 'lib');
+  run(path, 'commit', '-q', '-m', 'Add the library');
+  const repo = await findRepo(path);
+  const subs = async () => (await loadRepo(repo)).submodules.map((s) => [s.path, s.state, s.sha.slice(0, 7), s.describe]);
+  const head = (cwd) => run(cwd, 'rev-parse', 'HEAD').slice(0, 7);
+  const sub = join(path, 'lib');
+  for (let i = 0; i < 3; i++) assert.deepEqual(await subs(), [['lib', 'ok', head(sub), 'heads/main']]);
+  // A tag in the submodule describes it.
+  run(sub, 'tag', 'v1');
+  assert.deepEqual(await subs(), [['lib', 'ok', head(sub), 'v1']]);
+  // Another commit checked out in it.
+  writeFileSync(join(sub, 'more.txt'), 'more\n');
+  run(sub, 'add', '.');
+  run(sub, 'commit', '-q', '-m', 'More');
+  assert.deepEqual((await subs())[0].slice(0, 3), ['lib', 'out of date', head(sub)]);
+  run(sub, 'checkout', '-q', 'HEAD~1');
+  assert.deepEqual(await subs(), [['lib', 'ok', head(sub), 'v1']]);
+  // Taken out of the working tree.
+  run(path, 'submodule', 'deinit', '-q', '-f', 'lib');
+  assert.deepEqual((await subs()).map((s) => s.slice(0, 2)), [['lib', 'uninitialised']]);
+});

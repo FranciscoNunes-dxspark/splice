@@ -267,6 +267,58 @@ async function readStateAndLog(repo, graphLimit, state) {
   return { snap, log, kept: entry };
 }
 
+// `git submodule status` starts a few gits, and two `git describe`s in each submodule, so its answer is kept
+// with what it depends on: .gitmodules, HEAD's commit and the index (the commits recorded), the status's
+// lines about submodules, and in each submodule whether it's checked out, its HEAD and its refs (the commit
+// it has out and what describes it).
+const subLists = new Map();
+
+/** A submodule's git folder: its .git, or the folder a .git file names. Null when it isn't checked out. */
+async function subGitDir(path) {
+  try {
+    if ((await stat(join(path, '.git'))).isDirectory()) return join(path, '.git');
+    const m = /^gitdir: (.+)$/m.exec(await readFile(join(path, '.git'), 'utf8'));
+    return m ? resolve(path, m[1].trim()) : null;
+  } catch {
+    return null;
+  }
+}
+
+async function subStamp(repo, path) {
+  const dir = await subGitDir(join(repo.root, path));
+  if (!dir) return `${path}\t-`;
+  const head = (await readFile(join(dir, 'HEAD'), 'utf8').catch(() => '')).trim();
+  const ref = /^ref: (.+)$/.exec(head)?.[1];
+  const refs = await Promise.all([ref ? fileStamp(join(dir, ref)) : '', fileStamp(join(dir, 'packed-refs')), fileStamp(join(dir, 'refs', 'tags'))]);
+  return `${path}\t${head}\t${refs.join('\t')}`;
+}
+
+async function readSubmodules(repo, state) {
+  const kept = subLists.get(repo.root);
+  let stamp = null;
+  if (kept) {
+    const snap = await state;
+    const lines = snap.status.split('\0').filter((p) => p.startsWith('# branch.oid ') || /^[12u] \S+ S/.test(p));
+    const [modules, index, ...subs] = await Promise.all([
+      fileStamp(join(repo.root, '.gitmodules')),
+      fileStamp(join(repo.gitDir, 'index')),
+      ...parseSubmodules(kept.raw).map((sub) => subStamp(repo, sub.path)),
+    ]);
+    stamp = [modules, index, ...lines, ...subs].join('\n');
+    if (kept.stamp === stamp) return kept.raw;
+  }
+  let raw;
+  try {
+    raw = await git(repo.root, ['submodule', 'status']);
+  } catch {
+    return '';
+  }
+  subLists.delete(repo.root);
+  subLists.set(repo.root, { stamp, raw });
+  if (subLists.size > 4) subLists.delete(subLists.keys().next().value);
+  return raw;
+}
+
 /** Loads everything the views show. */
 export async function loadRepo(repo, { graphLimit = 400 } = {}) {
   const state = readState(repo, REF_FORMAT, refsSignature, { allRefs: true });
@@ -275,7 +327,7 @@ export async function loadRepo(repo, { graphLimit = 400 } = {}) {
     readRemotes(repo),
     // Only a repository with submodules pays for asking about them. Not part of the signature: what
     // polling needs to notice (a submodule's commit or changes) is in the status already.
-    existsSync(join(repo.root, '.gitmodules')) ? git(repo.root, ['submodule', 'status']).catch(() => '') : '',
+    existsSync(join(repo.root, '.gitmodules')) ? readSubmodules(repo, state) : '',
     readLfs(repo, state),
   ]);
   const status = parseStatus(snap.status);
