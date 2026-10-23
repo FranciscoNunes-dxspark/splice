@@ -287,13 +287,13 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
     addEntry({ title, status, lines });
   };
 
-  const reload = async ({ graphLimit } = {}) => {
+  const reload = async ({ graphLimit, freshRefs = false } = {}) => {
     const repo = repoRef.current;
     if (!repo) return;
     const mine = ++seq.current;
     const load = (async () => {
       try {
-        const d = await loadRepo(repo, { graphLimit: graphLimit ?? dataRef.current?.graphLimit ?? 400 });
+        const d = await loadRepo(repo, { graphLimit: graphLimit ?? dataRef.current?.graphLimit ?? 400, freshRefs });
         if (repoRef.current !== repo) return;
         // A newer load wins over this one. It started later, so whoever awaits this one waits for it
         // too: a command reading ctx.data after `await reload()` (the poller's reload having started
@@ -843,7 +843,7 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
       polling.current = true;
       try {
         const snap = await snapshot(repo);
-        if (repoRef.current === repo && dataRef.current && snap.signature !== dataRef.current.signature) await reload();
+        if (repoRef.current === repo && dataRef.current && snap.signature !== dataRef.current.signature) await reload({ freshRefs: snap.relisted });
       } catch {
         // The repo may be mid-operation or gone; the next tick tries again.
       } finally {

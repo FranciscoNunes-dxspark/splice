@@ -159,6 +159,25 @@ test('polling notices every way a ref changes, though it lists them only when th
   await changed('both deleted');
 });
 
+test('a load\'s refs follow HEAD and upstreams, which change no ref', async () => {
+  const repo = await findRepo(dir);
+  const local = async () => Object.fromEntries((await loadRepo(repo)).refs.local.map((b) => [b.name, [b.current, b.upstream, b.ahead ?? 0]]));
+  git('branch', 'twin');
+  await local();
+  assert.deepEqual((await local()).twin, [false, null, 0]);
+  // The same commit checked out under another name: only HEAD changed.
+  git('switch', '-q', 'twin');
+  assert.deepEqual((await local()).twin, [true, null, 0]);
+  git('switch', '-q', 'main');
+  assert.deepEqual((await local()).twin, [false, null, 0]);
+  // An upstream set: only the config changed.
+  git('branch', '-q', '--set-upstream-to=side', 'twin');
+  const [current, upstream] = (await local()).twin;
+  assert.deepEqual([current, upstream], [false, 'side']);
+  git('branch', '-D', 'twin');
+  assert.equal((await local()).twin, undefined);
+});
+
 test('commit detail: header and files from one git, for plain, merge and root commits', async () => {
   for (const rev of ['HEAD', 'HEAD^1', git('rev-list', '--max-parents=0', 'HEAD')]) {
     const hash = git('rev-parse', rev);

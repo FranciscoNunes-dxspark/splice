@@ -103,19 +103,19 @@ async function readState(repo, refFormat, toSignature, { allRefs = false, listRe
   return { status, refs, allRefs: allRefs ? listed : null, worktrees, state, signature: `${state}\n${status}\n${toSignature(refs)}\n${worktrees}` };
 }
 
-// Polling's ref listing, by common dir, kept while the files git keeps the refs in are as they were (see
-// refFilesStamp), and listed again at least every RELIST_MS whatever they say.
-const polledRefs = new Map();
+// Ref listings, polling's by common dir and a load's by worktree, kept while the files git keeps the refs
+// in are as they were (refFilesStamp), and listed again at least every RELIST_MS whatever they say.
+const keptRefs = new Map();
 const RELIST_MS = 30_000;
 
 /**
- * When packed-refs and each folder under refs/ were last changed: git writes a ref by renaming a lock file
- * over it, which changes its folder, so a ref written, added or removed changes this. Null for the reftable
- * backend, whose refs aren't files.
+ * When packed-refs and each folder under refs/ (the common dir's, and a linked worktree's own) were last
+ * changed: git writes a ref by renaming a lock file over it, which changes its folder, so a ref written,
+ * added or removed changes this. Null for the reftable backend, whose refs aren't files.
  */
-export async function refFilesStamp(commonDir) {
-  if (existsSync(join(commonDir, 'reftable'))) return null;
-  const parts = [`packed-refs ${await fileStamp(join(commonDir, 'packed-refs'))}`];
+export async function refFilesStamp(repo) {
+  if (existsSync(join(repo.commonDir, 'reftable'))) return null;
+  const parts = [`packed-refs ${await fileStamp(join(repo.commonDir, 'packed-refs'))}`];
   const walk = async (dir) => {
     let entries;
     try {
@@ -127,28 +127,50 @@ export async function refFilesStamp(commonDir) {
     }
     await Promise.all(entries.filter((e) => e.isDirectory()).map((e) => walk(join(dir, e.name))));
   };
-  await walk(join(commonDir, 'refs'));
+  await Promise.all([walk(join(repo.commonDir, 'refs')), repo.gitDir !== repo.commonDir && walk(join(repo.gitDir, 'refs'))]);
   return parts.sort().join('\n');
 }
 
 /**
- * The cheap read polling runs: a different `signature` from the loaded one means something changed outside.
- * The status is read every time; the refs only when the files they're kept in changed (or a while has passed).
+ * `list()`'s listing, or the one kept for `key` while `stamp` (a promise, made before listing) is unchanged
+ * and it isn't RELIST_MS old; `fresh` lists anyway. Sets `relisted` on `out` when it listed.
  */
-export function snapshot(repo) {
-  const stamp = refFilesStamp(repo.commonDir);
-  const listRefs = async () => {
-    const now = Date.now();
-    const before = await stamp;
-    const kept = polledRefs.get(repo.commonDir);
-    if (before && kept?.stamp === before && now - kept.at < RELIST_MS) return kept.refs;
-    const refs = await git(repo.root, ['for-each-ref', `--format=${SIG_FORMAT}`, ...REF_PATTERNS]);
-    polledRefs.delete(repo.commonDir);
-    polledRefs.set(repo.commonDir, { stamp: before, refs, at: now });
-    if (polledRefs.size > 4) polledRefs.delete(polledRefs.keys().next().value);
-    return refs;
-  };
-  return readState(repo, SIG_FORMAT, (refs) => refs, { listRefs });
+async function keptListing(key, stamp, list, { fresh = false, out = {} } = {}) {
+  const now = Date.now();
+  const before = await stamp;
+  const kept = keptRefs.get(key);
+  if (!fresh && before && kept?.stamp === before && now - kept.at < RELIST_MS) return kept.refs;
+  const refs = await list();
+  out.relisted = true;
+  keptRefs.delete(key);
+  keptRefs.set(key, { stamp: before, refs, at: now });
+  if (keptRefs.size > 8) keptRefs.delete(keptRefs.keys().next().value);
+  return refs;
+}
+
+/**
+ * The cheap read polling runs: a different `signature` from the loaded one means something changed outside.
+ * The status is read every time; the refs only when the files they're kept in changed (or a while has
+ * passed), and then `relisted` says so.
+ */
+export async function snapshot(repo) {
+  const out = { relisted: false };
+  const listRefs = () =>
+    keptListing(`poll:${repo.commonDir}`, refFilesStamp(repo), () => git(repo.root, ['for-each-ref', `--format=${SIG_FORMAT}`, ...REF_PATTERNS]), { out });
+  return { ...(await readState(repo, SIG_FORMAT, (refs) => refs, { listRefs })), relisted: out.relisted };
+}
+
+/**
+ * A load's listing of every ref (REF_FORMAT), kept as polling's is: what it shows besides the refs is which
+ * one is HEAD (the HEAD file) and how far branches are from their upstreams (the config names those).
+ */
+function loadRefs(repo, fresh) {
+  const stamp = Promise.all([
+    refFilesStamp(repo),
+    readFile(join(repo.gitDir, 'HEAD'), 'utf8').catch(() => ''),
+    fileStamp(join(repo.commonDir, 'config')),
+  ]).then(([refs, head, config]) => refs && `${refs}\n${head}\n${config}`);
+  return keptListing(`load:${repo.root}`, stamp, () => git(repo.root, ['for-each-ref', `--format=${REF_FORMAT}`]), { fresh });
 }
 
 const reused = new Map();
@@ -362,9 +384,12 @@ async function readSubmodules(repo, state) {
   return raw;
 }
 
-/** Loads everything the views show. */
-export async function loadRepo(repo, { graphLimit = 400 } = {}) {
-  const state = readState(repo, REF_FORMAT, refsSignature, { allRefs: true });
+/**
+ * Loads everything the views show. `freshRefs` lists the refs even when their files look as they were: polling
+ * listed them again and found a change.
+ */
+export async function loadRepo(repo, { graphLimit = 400, freshRefs = false } = {}) {
+  const state = readState(repo, REF_FORMAT, refsSignature, { allRefs: true, listRefs: () => loadRefs(repo, freshRefs) });
   const [{ snap, log, kept }, remotes, subs, lfs] = await Promise.all([
     readStateAndLog(repo, graphLimit, state),
     readRemotes(repo),
