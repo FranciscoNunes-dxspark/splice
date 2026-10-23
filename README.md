@@ -317,7 +317,7 @@ The app icon at every size it ships in, drawn by `scripts/logo.js` like the rest
 
 The downloaded Splice keeps itself up to date. Once a day at most, after it opens, it asks GitHub for the latest release, and if it's newer than yours, downloads it in the background and puts it in place of the executable you ran; the new version starts the next time you open Splice. The activity lines and the welcome box say how far it got. `/update` does the same at once, whenever you like: it asks for the latest release however recently Splice last looked, and installs it even with the settings below turned off.
 
-- It asks GitHub's public API first, then through [gh](https://cli.github.com) with your existing sign-in (needed while the repository is private), and downloads the same way.
+- It asks GitHub's public API, and downloads from GitHub the same way. (With [gh](https://cli.github.com) signed in, it falls back to that, which is how a private fork's releases are seen.)
 - The download must match the checksum published with the release (`SHA256SUMS.txt`), or nothing is replaced.
 - On Windows a running program can't be overwritten, only renamed, so the old executable is moved aside (`splice.exe.old.<time>`) and deleted on a later start.
 - If Splice can't write to the folder it's in (installed under Program Files, say), or anything else goes wrong, nothing changes: it says a new version is out, and why it couldn't install it, with the download link.
