@@ -229,8 +229,12 @@ export const asyncCacheSize = () => ({ entries: cache.size, weight });
  */
 export function useAsync(key, load, delay = 60, { stale } = {}) {
   const [state, setState] = useState(() => (cache.has(key) ? { value: cache.get(key).value, key } : { loading: true }));
+  // Through refs, so the effect (kept while the key stays) holds on to no render's closures: those
+  // would keep that render's data alive after newer data replaced it.
   const staleRef = useRef(stale);
   staleRef.current = stale;
+  const loadRef = useRef(load);
+  loadRef.current = load;
   useEffect(() => {
     if (key == null) return;
     const shown = () => staleRef.current && forgetAsync((k) => k !== key && staleRef.current(k));
@@ -242,7 +246,7 @@ export function useAsync(key, load, delay = 60, { stale } = {}) {
     let live = true;
     setState((s) => ({ ...s, loading: true }));
     const t = setTimeout(() => {
-      load().then(
+      loadRef.current().then(
         (value) => {
           remember(key, value);
           if (live) {

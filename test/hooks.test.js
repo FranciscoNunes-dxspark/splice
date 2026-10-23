@@ -4,6 +4,8 @@ import assert from 'node:assert/strict';
 import React from 'react';
 import { render } from 'ink-testing-library';
 import { Text } from 'ink';
+import { setFlagsFromString } from 'node:v8';
+import { runInNewContext } from 'node:vm';
 import { asyncCacheSize, forgetAsync, useAsync, useListNav, weigh } from '../src/ui/hooks.js';
 
 const h = React.createElement;
@@ -95,5 +97,33 @@ test('useListNav with keyOf keeps the cursor on the same row when the rows chang
   await until(() => app.lastFrame() === 'at r', 'on r');
   app.rerender(h(List, { rows: ['n', 'q', 'r', 'a'], resetKey: 3, keyed: false }));
   await until(() => app.lastFrame() === 'at q', 'index 1 again');
+  app.unmount();
+});
+
+test('useAsync lets go of an older render\'s data while its key stays the same', async () => {
+  setFlagsFromString('--expose-gc');
+  const gc = runInNewContext('gc');
+  function View({ data }) {
+    const s = useAsync('kept-key', async () => data.name, 0);
+    return h(Text, null, String(s.value));
+  }
+  let data = { name: 'first', big: new Array(1e5).fill(1) };
+  const first = new WeakRef(data);
+  const app = render(h(View, { data }));
+  await until(() => app.lastFrame() === 'first', 'the first answer');
+  for (let i = 0; i < 3; i++) {
+    data = { name: `next ${i}`, big: new Array(1e5).fill(1) };
+    app.rerender(h(View, { data }));
+    await sleep(5);
+  }
+  // A WeakRef read keeps its target until the job ends, so collect in a job that doesn't read it.
+  let gone = false;
+  for (let i = 0; i < 20 && !gone; i++) {
+    gc();
+    await sleep(10);
+    gone = first.deref() === undefined;
+    await sleep(0);
+  }
+  assert.ok(gone, 'the first render\'s data is gone');
   app.unmount();
 });
