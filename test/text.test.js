@@ -113,3 +113,11 @@ test('wrap breaks where measuring each line whole would', () => {
     for (const w of [1, 4, 7, 12]) assert.deepEqual(wrap(text, w), wrapWhole(text, w), `${JSON.stringify(text)} in ${w}`);
   }
 });
+
+test('wrap hands back printable ASCII that fits as it is, as measuring would', () => {
+  const lines = ['', ' ', '   ', 'a', 'one two', '    indented line', '  two  spaces  ', 'exactly ten', 'tab\there', 'x'.repeat(12)];
+  for (const line of lines) {
+    for (const w of [0, 1, 5, 11, 12, 40]) assert.deepEqual(wrap(line, w), wrapWhole(line, w), `${JSON.stringify(line)} in ${w}`);
+  }
+  assert.deepEqual(wrap('fits\nand this fits too\r\n', 20), ['fits', 'and this fits too', '']);
+});

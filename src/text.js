@@ -112,6 +112,13 @@ export function wrap(text, width) {
   const lines = [];
   // Split before cleaning: clean() drops control characters, newlines included.
   for (const para of text.replace(/\r/g, '').split('\n').map(clean)) {
+    // Most lines are printable ASCII that fits as it is, less its leading spaces (the words below
+    // drop them too).
+    const fits = para[0] === ' ' ? para.trimStart() : para;
+    if (fits.length <= width && ASCII.test(fits)) {
+      lines.push(fits);
+      continue;
+    }
     let line = '';
     // While no character joins another, words joined by a space are as wide as their widths added
     // up, so the line's width is kept as it grows rather than measured again for every word.
