@@ -91,10 +91,10 @@ const shownRef = (line) => {
  * (a REF_FORMAT listing) every ref is listed, in `allRefs` of the result, and `refs` keeps REF_PATTERNS's:
  * what `git log --all` shows depends on all of them, and it's still one git.
  */
-async function readState(repo, refFormat, toSignature, { allRefs = false } = {}) {
+async function readState(repo, refFormat, toSignature, { allRefs = false, listRefs = null } = {}) {
   const [status, listed, worktrees] = await Promise.all([
     git(repo.root, ['status', '--porcelain=v2', '--branch', '-z', '--untracked-files=all']),
-    git(repo.root, ['for-each-ref', `--format=${refFormat}`, ...(allRefs ? [] : REF_PATTERNS)]),
+    listRefs ? listRefs() : git(repo.root, ['for-each-ref', `--format=${refFormat}`, ...(allRefs ? [] : REF_PATTERNS)]),
     // -z needs git 2.36; older ones just show no worktrees.
     hasLinkedWorktrees(repo) ? git(repo.root, ['worktree', 'list', '--porcelain', '-z']).catch(() => '') : '',
   ]);
@@ -103,9 +103,52 @@ async function readState(repo, refFormat, toSignature, { allRefs = false } = {})
   return { status, refs, allRefs: allRefs ? listed : null, worktrees, state, signature: `${state}\n${status}\n${toSignature(refs)}\n${worktrees}` };
 }
 
-/** The cheap read polling runs: a different `signature` from the loaded one means something changed outside. */
+// Polling's ref listing, by common dir, kept while the files git keeps the refs in are as they were (see
+// refFilesStamp), and listed again at least every RELIST_MS whatever they say.
+const polledRefs = new Map();
+const RELIST_MS = 30_000;
+
+/**
+ * When packed-refs and each folder under refs/ were last changed: git writes a ref by renaming a lock file
+ * over it, which changes its folder, so a ref written, added or removed changes this. Null for the reftable
+ * backend, whose refs aren't files.
+ */
+export async function refFilesStamp(commonDir) {
+  if (existsSync(join(commonDir, 'reftable'))) return null;
+  const parts = [`packed-refs ${await fileStamp(join(commonDir, 'packed-refs'))}`];
+  const walk = async (dir) => {
+    let entries;
+    try {
+      // The folder's time before its entries: a change in between makes the next stamp differ.
+      parts.push(`${dir} ${(await stat(dir)).mtimeMs}`);
+      entries = await readdir(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    await Promise.all(entries.filter((e) => e.isDirectory()).map((e) => walk(join(dir, e.name))));
+  };
+  await walk(join(commonDir, 'refs'));
+  return parts.sort().join('\n');
+}
+
+/**
+ * The cheap read polling runs: a different `signature` from the loaded one means something changed outside.
+ * The status is read every time; the refs only when the files they're kept in changed (or a while has passed).
+ */
 export function snapshot(repo) {
-  return readState(repo, SIG_FORMAT, (refs) => refs);
+  const stamp = refFilesStamp(repo.commonDir);
+  const listRefs = async () => {
+    const now = Date.now();
+    const before = await stamp;
+    const kept = polledRefs.get(repo.commonDir);
+    if (before && kept?.stamp === before && now - kept.at < RELIST_MS) return kept.refs;
+    const refs = await git(repo.root, ['for-each-ref', `--format=${SIG_FORMAT}`, ...REF_PATTERNS]);
+    polledRefs.delete(repo.commonDir);
+    polledRefs.set(repo.commonDir, { stamp: before, refs, at: now });
+    if (polledRefs.size > 4) polledRefs.delete(polledRefs.keys().next().value);
+    return refs;
+  };
+  return readState(repo, SIG_FORMAT, (refs) => refs, { listRefs });
 }
 
 const reused = new Map();

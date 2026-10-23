@@ -129,6 +129,36 @@ test('the graph is kept while nothing it shows changed, and read again when any 
   assert.equal(hashes(await loadRepo(repo)).length, fresh().length);
 });
 
+test('polling notices every way a ref changes, though it lists them only when their files changed', async () => {
+  const repo = await findRepo(dir);
+  let last = (await loadRepo(repo)).signature;
+  const changed = async (what) => {
+    const sig = (await snapshot(repo)).signature;
+    assert.notEqual(sig, last, what);
+    assert.equal(sig, (await loadRepo(repo)).signature, what);
+    assert.equal((await snapshot(repo)).signature, sig, what);
+    last = sig;
+  };
+  assert.equal((await snapshot(repo)).signature, last);
+  git('branch', 'poll-a');
+  await changed('a branch made');
+  git('update-ref', 'refs/heads/poll-a', 'HEAD~1');
+  await changed('a branch moved');
+  git('tag', 'release/poll-1');
+  await changed('a tag in a folder of its own');
+  git('pack-refs', '--all');
+  assert.equal((await snapshot(repo)).signature, last, 'packing changes no ref');
+  git('update-ref', 'refs/heads/poll-a', 'HEAD');
+  await changed('a packed branch moved');
+  git('tag', '-d', 'release/poll-1');
+  await changed('a packed tag deleted');
+  git('update-ref', 'refs/remotes/origin/poll-a', 'HEAD');
+  await changed('a remote branch fetched');
+  git('branch', '-D', 'poll-a');
+  git('update-ref', '-d', 'refs/remotes/origin/poll-a');
+  await changed('both deleted');
+});
+
 test('commit detail: header and files from one git, for plain, merge and root commits', async () => {
   for (const rev of ['HEAD', 'HEAD^1', git('rev-list', '--max-parents=0', 'HEAD')]) {
     const hash = git('rev-parse', rev);
