@@ -62,6 +62,7 @@ import { LFS_MISSING, lfsCommand, lfsError, lfsText, parseLfsFiles, parseLfsLock
 import { run as runGit } from './git.js';
 import { commitsLine, insideSummary, parseGitlinks, parseInside, submoduleInfo } from './submodules.js';
 import { fit } from './text.js';
+import { futureItems, futureRefspecs, lineInBase, nameList, touchingHunks } from './future.js';
 import { TAKES, exceptionFrames, framesInRepo, notForSplice, pathAndLine, takenContext } from './take.js';
 import { describeContext, matchFrameFile, projectAt, shareLine } from './family.js';
 import { DEFAULT_ACCENT, applyTheme, isColour, setAccent, theme } from './theme.js';
@@ -3769,6 +3770,83 @@ export function blame(ctx, typed) {
   const at = pathAndLine(typed);
   const split = at.line && !existsSync(join(ctx.data.root, whole)) ? { path: repoPath(ctx.data.root, at.path), line: at.line } : { path: whole, line: null };
   ctx.showPicker(blamePicker(ctx, split.path, { line: split.line }));
+}
+
+// /future's answers that don't change: a pull request's files against its target, by both commits' hashes.
+const futureFiles = new Map();
+
+/**
+ * F in blame, /future [<path>:<line>]: the open pull requests whose changes touch a line (the one under
+ * blame's cursor when none is typed). One fetch brings every pull request's head and the branches they go
+ * into; each is then asked which files it changes (once per head, cached), and the ones changing this file
+ * for their hunks, compared in their merge base (future.js says how lines are carried back there).
+ * ↵ on one opens its diff.
+ */
+export async function future(ctx, target) {
+  if (!needRepo(ctx)) return;
+  let at = target && typeof target === 'object' ? target : null;
+  if (!at) {
+    const typed = String(target ?? '').trim();
+    const open = ctx.overlay();
+    if (typed) {
+      const p = pathAndLine(typed);
+      at = { path: repoPath(ctx.data.root, p.path), line: p.line, rev: null };
+    } else if (open?.kind === 'picker' && open.blame && open.items?.[open.index ?? 0]) {
+      at = { ...open.blame, line: open.items[open.index ?? 0].line };
+    } else return ctx.prefill('/future ');
+  }
+  if (!at.path || !at.line) return ctx.note('Say which line: /future <path>:<line>, or F on a line in blame.', 'error');
+  const host = needHost(ctx);
+  if (!host) return;
+  if (!host.headRef) return ctx.note(`Splice can't fetch pull requests from ${host.name}.`, 'error');
+  const where = `line ${at.line} of ${at.path}`;
+  const remote = host.remoteName;
+  let found = [];
+  let asked = 0;
+  const r = await ctx.task(
+    `Open pull requests changing ${where}`,
+    async (signal) => {
+      const read = (args) => ctx.git(args, { signal });
+      const prs = (ctx.prSeen?.get(`${ctx.data.root}\n${remote}`) ?? (await host.list())).filter((p) => p.state == null || p.state === 'open');
+      asked = prs.length;
+      if (!prs.length) return { stdout: '', stderr: '' };
+      await read(['fetch', '--quiet', '--no-tags', remote, ...futureRefspecs(prs, host.headRef, remote)]);
+      try {
+        const refs = new Map(
+          (await read(['for-each-ref', '--format=%(objectname) %(refname)', 'refs/splice/future', `refs/remotes/${remote}`]))
+            .split('\n')
+            .filter(Boolean)
+            .map((l) => [l.slice(l.indexOf(' ') + 1), l.slice(0, l.indexOf(' '))]),
+        );
+        // The file as of the commit blamed, or on disk, carried back to each merge base (once per base).
+        const bases = new Map();
+        for (const pr of prs) {
+          const head = refs.get(`refs/splice/future/${pr.id}`);
+          const base = refs.get(`refs/remotes/${remote}/${pr.target}`);
+          if (!head || !base) continue;
+          const key = `${base} ${head}`;
+          if (!futureFiles.has(key)) futureFiles.set(key, nameList(await read(['diff', '--name-only', '--no-renames', `${base}...${head}`, '--'])));
+          if (!futureFiles.get(key).includes(at.path)) continue;
+          const mb = (await read(['merge-base', base, head])).trim();
+          if (!bases.has(mb)) bases.set(mb, lineInBase(await read(['diff', '--no-color', '--no-ext-diff', '-U0', mb, ...(at.rev ? [at.rev] : []), '--', at.path]), at.line));
+          const hunks = touchingHunks(await read(['diff', '--no-color', '--no-ext-diff', '-U0', mb, head, '--', at.path]), bases.get(mb).line);
+          if (hunks.length) found.push({ pr, hunks });
+        }
+      } finally {
+        await ctx.git(['for-each-ref', '--format=delete %(refname)', 'refs/splice/future']).then((del) => del && ctx.git(['update-ref', '--stdin'], { input: del }), () => {}).catch(() => {});
+      }
+      return { stdout: '', stderr: '' };
+    },
+    { label: 'Looking at the open pull requests', refresh: false, quiet: true },
+  );
+  if (!r.ok) return r;
+  if (!found.length) return ctx.note(asked ? `None of the ${asked} open pull request${asked === 1 ? '' : 's'} changes ${where}.` : `There are no open pull requests on ${host.name}.`);
+  ctx.showPicker({
+    title: `${found.length} open pull request${found.length === 1 ? '' : 's'} changing ${where}`,
+    hint: '↵ its diff',
+    items: futureItems(found),
+    onPick: (it) => ctx.showPrDiff(it.pr),
+  });
 }
 
 /** The tracked files, relative to the root with / between folders: one git, for matching paths from elsewhere. */

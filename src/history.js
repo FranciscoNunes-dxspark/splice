@@ -2,7 +2,7 @@
 import { existsSync } from 'node:fs';
 import { isAbsolute, join, relative } from 'node:path';
 // actions.js imports this module too; only functions cross, called long after both have loaded.
-import { claudeBlame } from './actions.js';
+import { claudeBlame, future } from './actions.js';
 import { HISTORY_FORMAT, isoDate, parseBlame, parseFileHistory, relTime } from './parse.js';
 import { parseDiff } from './patch.js';
 import { theme } from './theme.js';
@@ -163,8 +163,10 @@ export function blamePicker(ctx, path, { rev = null, line = null } = {}) {
     title: `Blame ${path}${rev ? ` at ${rev.replace(/^[0-9a-f]{40,64}/, short)}` : ''}${line ? `, line ${line}` : ''}`,
     // The cursor starts on `line` (Picker.jsx's `index`), once the lines are in.
     index: line ? line - 1 : undefined,
-    hint: '↵ diff · H history · v select · L lines’ history · e why',
+    hint: '↵ diff · H history · v select · L lines’ history · e why · F open PRs changing it',
     range: true,
+    // What /future reads, with the line under the cursor.
+    blame: { path, rev },
     empty: `${path} is empty.`,
     load: async () => {
       // A file deleted from the working tree still has a blame in HEAD.
@@ -183,6 +185,7 @@ export function blamePicker(ctx, path, { rev = null, line = null } = {}) {
       H: () => ctx.showPicker(historyPicker(ctx, path)),
       L: (l, lines) => lineHistory(ctx, path, lines[0].line, lines.at(-1).line, rev),
       e: (l, lines) => claudeBlame(ctx, path, lines, all, rev),
+      F: (l) => future(ctx, { path, line: l.line, rev }),
       y: (l) => (l.commit.uncommitted ? ctx.note(`Line ${l.line} isn't committed yet.`) : ctx.copy(l.commit.hash, `the hash of ${short(l.commit.hash)}`)),
     },
   };

@@ -86,6 +86,7 @@ export const COMMANDS = [
   { name: 'abort', desc: 'Abort the merge, rebase, cherry-pick or revert', run: (ctx) => a.abortOp(ctx) },
   { name: 'history', args: '<path>', desc: "A file's commits, following renames (deleted files too)", complete: 'files', run: (ctx, s) => a.fileHistory(ctx, s) },
   { name: 'blame', args: '<path>[:<line>]', desc: 'Who last changed each line of a file (from that line, given one)', complete: 'files', run: (ctx, s) => a.blame(ctx, s) },
+  { name: 'future', args: '[<path>:<line>]', desc: "The open pull requests whose changes touch a line (blame's cursor line if none given; F in blame)", complete: 'files', run: (ctx, s) => a.future(ctx, s) },
   { name: 'take', args: '<context>', desc: 'What another app copied for Splice: an exception or a file opens blame at its line, a commit its diff', run: (ctx, s) => a.take(ctx, s) },
   {
     name: 'find',
