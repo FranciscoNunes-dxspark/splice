@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import React from 'react';
 import { render } from 'ink-testing-library';
 import { Text } from 'ink';
-import { asyncCacheSize, forgetAsync, useAsync, weigh } from '../src/ui/hooks.js';
+import { asyncCacheSize, forgetAsync, useAsync, useListNav, weigh } from '../src/ui/hooks.js';
 
 const h = React.createElement;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -66,5 +66,34 @@ test('useAsync keeps answers by key, within its bounds, and lets go of the ones 
   app.rerender(h(Show, { k: 'diff:x@2', stale: stale(2) }));
   await until(() => app.lastFrame().startsWith('diff:x@2'), 'the newer load');
   await until(() => asyncCacheSize().entries === 1, 'the older loads let go');
+  app.unmount();
+});
+
+test('useListNav with keyOf keeps the cursor on the same row when the rows change', async () => {
+  let nav;
+  function List({ rows, resetKey, keyed = true }) {
+    nav = useListNav(rows.length, 5, { resetKey, keyOf: keyed ? (i) => rows[i] : undefined });
+    return h(Text, null, `at ${rows[nav.index] ?? '-'}`);
+  }
+  const app = render(h(List, { rows: ['a', 'b', 'c'], resetKey: 1 }));
+  nav.handle('j', {});
+  await until(() => app.lastFrame() === 'at b', 'the cursor on b');
+  app.rerender(h(List, { rows: ['x', 'y', 'a', 'b', 'c'], resetKey: 1 }));
+  await until(() => app.lastFrame() === 'at b', 'still on b, rows in above it');
+  assert.equal(nav.index, 3);
+  nav.handle('j', {});
+  await until(() => app.lastFrame() === 'at c', 'moved on to c');
+  app.rerender(h(List, { rows: ['c', 'a'], resetKey: 1 }));
+  await until(() => app.lastFrame() === 'at c', 'c, moved up');
+  app.rerender(h(List, { rows: ['a', 'z'], resetKey: 1 }));
+  await until(() => app.lastFrame() === 'at a', 'c gone: the row where it was');
+  app.rerender(h(List, { rows: ['q', 'r', 'a'], resetKey: 2 }));
+  await until(() => app.lastFrame() === 'at q', 'a new resetKey: back on top');
+  // Without keyOf, the index stays.
+  app.rerender(h(List, { rows: ['q', 'r', 'a'], resetKey: 3, keyed: false }));
+  nav.handle('j', {});
+  await until(() => app.lastFrame() === 'at r', 'on r');
+  app.rerender(h(List, { rows: ['n', 'q', 'r', 'a'], resetKey: 3, keyed: false }));
+  await until(() => app.lastFrame() === 'at q', 'index 1 again');
   app.unmount();
 });

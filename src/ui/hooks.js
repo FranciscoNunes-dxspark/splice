@@ -17,9 +17,10 @@ export function useTerminalSize() {
  * Cursor and scroll position for a list of `count` rows shown `height` at a time.
  * Rows where `selectable(i)` is false (section headers) are skipped over.
  * `resetKey` puts the cursor back on top when it changes (another repo, another filter), or on
- * row `start` (where it also starts).
+ * row `start` (where it also starts). With `keyOf(i)` (what row i is: an id, a path), the cursor
+ * stays on the same thing when the rows change under it (read again, rows coming in above it).
  */
-export function useListNav(count, height, { selectable = () => true, resetKey, start = 0 } = {}) {
+export function useListNav(count, height, { selectable = () => true, resetKey, start = 0, keyOf } = {}) {
   const [index, setIndex] = useState(start);
   const offset = useRef(0);
   // The index as of the last key, which may not have rendered yet (j then d, typed fast).
@@ -29,13 +30,24 @@ export function useListNav(count, height, { selectable = () => true, resetKey, s
   // until the cursor moves again.
   const free = useRef(false);
   const [, setScrolled] = useState(0);
+  // What the cursor was on (keyOf), to find again when the rows change.
+  const on = useRef(null);
   let i = index;
   if (lastKey.current !== resetKey) {
     lastKey.current = resetKey;
     i = start;
     offset.current = 0;
     free.current = false;
+    on.current = null;
     if (index !== start) setIndex(start);
+  } else if (keyOf && on.current != null && count && keyOf(Math.max(0, Math.min(i, count - 1))) !== on.current) {
+    for (let j = 0; j < count; j++) {
+      if (keyOf(j) === on.current) {
+        i = j;
+        if (index !== j) setIndex(j);
+        break;
+      }
+    }
   }
 
   const find = (from, dir) => {
@@ -60,6 +72,7 @@ export function useListNav(count, height, { selectable = () => true, resetKey, s
   const moveTo = (j) => {
     free.current = false;
     latest.current = j;
+    if (keyOf) on.current = keyOf(j) ?? null;
     setIndex(j);
   };
   const go = (target, dir) => {
@@ -99,6 +112,7 @@ export function useListNav(count, height, { selectable = () => true, resetKey, s
   };
 
   latest.current = i;
+  if (keyOf && count) on.current = keyOf(i) ?? null;
   return { index: i, offset: offset.current, handle, setIndex: moveTo, pick, scrollBy, current: () => latest.current };
 }
 
