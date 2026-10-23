@@ -13,7 +13,7 @@ import { App } from '../src/ui/App.jsx';
 test('the settings list: values, plurals, and what ↵ does', () => {
   const rows = settingRows({ recent: [], roots: [], history: [] }, { file: '/home/me/.splice/config.json' });
   const by = Object.fromEntries(rows.map((r) => [r.id, r]));
-  assert.deepEqual(rows.map((r) => r.id), ['accent', 'theme', 'mouse', 'checkForUpdates', 'autoUpdate', 'stashUntracked', 'notify', 'sideBySide', 'checkBeforePush', 'riskBeforePush', 'cleanupKeep', 'roots', 'recent', 'history', 'file']);
+  assert.deepEqual(rows.map((r) => r.id), ['accent', 'theme', 'mouse', 'checkForUpdates', 'autoUpdate', 'stashUntracked', 'notify', 'sideBySide', 'checkBeforePush', 'riskBeforePush', 'familyMoods', 'cleanupKeep', 'roots', 'recent', 'history', 'file']);
   assert.equal(by.accent.value, `${DEFAULT_ACCENT} (default)`);
   // The theme: auto unless set, saying which it is here; ↵ goes round dark, light, auto.
   assert.equal(by.theme.value, 'auto (dark here)');
@@ -153,6 +153,9 @@ test('settings change in place, are saved as they change, and the accent repaint
     await down('Risk check before push');
     app.stdin.write('\r');
     await until(() => /Risk check before push\s+off/.test(frame()) && saved().riskBeforePush === false, 'the risk check off, saved');
+    await down('Family moods');
+    app.stdin.write('\r');
+    await until(() => /Family moods\s+off/.test(frame()) && saved().familyMoods === false, 'family moods off, saved');
 
     // The branches /cleanup keeps on the remote: n puts /cleanup-keep in the prompt, x takes one off.
     await down('Keep on the remote');

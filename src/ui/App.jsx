@@ -34,7 +34,9 @@ import { RebaseEditor } from './RebaseEditor.jsx';
 import { WELCOME_HEIGHT, Welcome } from './Pet.jsx';
 import { FACES, moodFor } from '../pet.js';
 import { worthNotifying } from '../notify.js';
-import { decodeContext } from '../family.js';
+import { decodeContext, readMoods, writeMood } from '../family.js';
+import { droppedPaths } from '../drop.js';
+import { familyMood, moodsToShow, pastedLine, reactionText } from '../siblings.js';
 
 const VIEWS = [
   { id: 'graph', label: 'Graph' },
@@ -149,8 +151,10 @@ const DOUBLE_CLICK_MS = 400;
 // mouse.js's terminalMouse() from cli.jsx (missing where the terminal can't report it); tests pass their own.
 // `copy` puts text on the clipboard (cli.jsx's; tests pass a stub). `notify(title, body)` says something
 // finished (cli.jsx rings the terminal's bell and raises a desktop notification); without it, as in most
-// tests, nothing is said.
-export function App({ initialPath, reopenLast = false, config: initialConfig, checkUpdate, installUpdate, askClaude, setTitle, makeHost = hostFor, mouse, copy, notify }) {
+// tests, nothing is said. `familyHome` is the family's folder for the mascots' moods (family.js's familyDir,
+// from cli.jsx): without it, as in most tests, Twig neither tells the siblings its mood nor reads theirs;
+// `moodEvery` is how often theirs are read.
+export function App({ initialPath, reopenLast = false, config: initialConfig, checkUpdate, installUpdate, askClaude, setTitle, makeHost = hostFor, mouse, copy, notify, familyHome = null, moodEvery = 30_000 }) {
   const { exit } = useApp();
   const { columns, rows } = useTerminalSize();
   const [config, setConfigState] = useState(initialConfig);
@@ -179,6 +183,8 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
     return () => clearTimeout(t);
   }, [entries]);
   const [prVersion, setPrVersion] = useState(0);
+  // A sibling's mood worth a word ("Ping says: …"), until esc puts it away.
+  const [reaction, setReaction] = useState(null);
   // Counts ctx.showInGraph calls, so the graph looks for the commit asked for (ctx.pendingJump).
   const [jump, setJump] = useState(0);
   // A word in the bottom line for a moment ("Copied 3 lines"), where it moves nothing on screen.
@@ -699,6 +705,19 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
   // over an overlay), a key you mapped becomes the key it stands for, for the view and App alike, or
   // runs its command line. Then ctrl+p opens the palette, from a view or the prompt.
   const sendKey = useKeyTranslation((input) => {
+    // A paste in a view (or over a list or the viewer, but not into a search being typed there) that is a
+    // command line or a context another app copied: into the prompt, to look at before running it. A
+    // dropped path is a drop (globalKeys), not this, and a path that isn't there just typing, as before.
+    const o = overlayRef.current;
+    if (focusRef.current === 'view' && !confirmRef.current && (!o || o.kind === 'picker' || (!o.kind && !ctx.viewerTyping?.()))) {
+      const line = pastedLine(input);
+      // An absolute path (Linux and macOS ones start with /) is a drop, or typing, unless it names a command.
+      const command = /^\/([^\s/]+)(\s|$)/.exec(line ?? '')?.[1];
+      if (line && !(droppedPaths(line) && !(command && findCommand(command, customRef.current.commands)))) {
+        prefill(line);
+        return null;
+      }
+    }
     let out = input;
     if (focusRef.current === 'view' && !overlayRef.current && !confirmRef.current) {
       const b = translateKey(customRef.current.keymap, viewRef.current, input);
@@ -878,6 +897,7 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
   const globalKeys = (input, key) => {
     if (key.escape) {
       if (busyRef.current) busyRef.current.abort();
+      else if (reaction) setReaction(null);
       else if (!filter || view !== 'graph') {
         setEntries([]);
         setWelcome(false);
@@ -1003,14 +1023,36 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
   const act = activityRows(entries);
   const bottom = confirmReq ? confirmHeight(confirmReq) : 3 + suggestions.length;
   const mood = moodFor({ data, busy, lastEntry: entries.at(-1) });
+  // Twig's mood for the family (family.js), written whenever it changes, and the others' read every half
+  // a minute: a worried, sad or happy one from the last 15 minutes gets a line, once. "Family moods" in
+  // /settings turns both off.
+  const moodsOn = Boolean(familyHome) && config.familyMoods !== false;
+  const shared = familyMood(mood, { data, lastEntry: entries.at(-1), busy });
+  useEffect(() => {
+    if (moodsOn) writeMood('splice', shared, { dir: familyHome });
+  }, [moodsOn, shared.mood, shared.reason]);
+  const seenMoods = useRef(new Set());
+  useEffect(() => {
+    if (!moodsOn) return void setReaction(null);
+    const look = () => {
+      const fresh = moodsToShow(readMoods('splice', { dir: familyHome }), seenMoods.current);
+      for (const m of fresh) seenMoods.current.add(`${m.app}:${m.at}`);
+      if (fresh[0]) setReaction({ text: reactionText(fresh[0]), mood: fresh[0].mood });
+    };
+    look();
+    const t = setInterval(look, moodEvery);
+    t.unref?.();
+    return () => clearInterval(t);
+  }, [moodsOn, familyHome, moodEvery]);
+  const reactionH = reaction ? 1 : 0;
   // The welcome box only appears when the terminal has room for it next to a useful view.
   const showWelcome = welcome && H >= 28;
-  const mainH = Math.max(6, H - 2 - act.length - (busy ? 1 : 0) - bottom - 1 - (showWelcome ? WELCOME_HEIGHT : 0));
+  const mainH = Math.max(6, H - 2 - reactionH - act.length - (busy ? 1 : 0) - bottom - 1 - (showWelcome ? WELCOME_HEIGHT : 0));
   const viewActive = focus === 'view' && !overlay && !confirmReq;
   layout.current = {
     mainTop: 2,
     mainH,
-    promptTop: 2 + mainH + (showWelcome ? WELCOME_HEIGHT : 0) + act.length + (busy ? 1 : 0),
+    promptTop: 2 + mainH + (showWelcome ? WELCOME_HEIGHT : 0) + reactionH + act.length + (busy ? 1 : 0),
     sugCount: suggestions.length,
     tabs: tabLabels(data),
   };
@@ -1071,6 +1113,13 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
         {main}
       </Box>
       {showWelcome ? <Welcome mood={mood} data={data} width={W} update={update} /> : null}
+      {reaction ? (
+        <Row
+          pointer={false}
+          width={W}
+          segments={[{ text: `${FACES[reaction.mood === 'happy' ? 'happy' : 'worried']} `, color: theme.accent, bold: true }, { text: reaction.text }, { text: '  · esc puts it away', color: theme.dim }]}
+        />
+      ) : null}
       {act.map((segs, i) => (
         <Row key={i} pointer={false} width={W} segments={segs} />
       ))}

@@ -64,6 +64,7 @@ import { commitsLine, insideSummary, parseGitlinks, parseInside, submoduleInfo }
 import { fit } from './text.js';
 import { futureItems, futureRefspecs, lineInBase, nameList, touchingHunks } from './future.js';
 import { historyArgs, outgoingArgs, parseRiskLog, riskBlobs, riskFiles, riskSummary, riskText, scoreRisk } from './risk.js';
+import { familyOffers } from './siblings.js';
 import { TAKES, exceptionFrames, framesInRepo, notForSplice, pathAndLine, takenContext } from './take.js';
 import { describeContext, matchFrameFile, projectAt, shareLine, takeLine } from './family.js';
 import { DEFAULT_ACCENT, applyTheme, isColour, setAccent, theme } from './theme.js';
@@ -3603,6 +3604,24 @@ export async function reviewPr(ctx, text, given = null) {
 export function copyFor(ctx, app, line, what = line) {
   ctx.copy(line, `a command for ${app}`);
   ctx.note(`Copied for ${app}: paste it into ${app}'s prompt\n${what}`, 'ok');
+}
+
+/**
+ * /family: what this repository offers the sibling apps (siblings.js's familyOffers): Bosun's /move when it
+ * has something to run, Hail's /open for each .http file, Trawl's /azure-sql or /add for each database its
+ * settings name (never a password). ↵ copies the line, to paste into that app.
+ */
+export function family(ctx) {
+  if (!needRepo(ctx)) return;
+  const offers = familyOffers(projectAt(ctx.data.root), ctx.data.name);
+  const appW = Math.max(0, ...offers.map((o) => o.app.length));
+  ctx.showPicker({
+    title: `What ${ctx.data.name} offers the other apps`,
+    hint: '↵ copy the line, to paste into that app',
+    empty: `Nothing in ${ctx.data.name} for the other apps: no bosun.json, Procfile, compose file or dev script for Bosun, no .http files for Hail, no connection strings (appsettings*.json, .env) for Trawl.`,
+    items: offers.map((o) => ({ ...o, segments: [{ text: o.app.padEnd(appW), color: theme.accent, bold: true }, { text: `  ${o.line}` }, { text: `  ${o.what}`, color: theme.dim }] })),
+    onPick: (o) => copyFor(ctx, o.app, o.line),
+  });
 }
 
 /** Y on a commit in the graph: `/take commit` for Sonar, which finds the deployments that carry it. */

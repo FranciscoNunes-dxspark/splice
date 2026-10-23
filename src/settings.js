@@ -87,6 +87,13 @@ export function settingRows(config, { file = '', mouse = true } = {}) {
       action: 'toggle',
     },
     {
+      id: 'familyMoods',
+      label: 'Family moods',
+      value: isOn(config.familyMoods) ? 'on' : 'off',
+      note: isOn(config.familyMoods) ? 'Twig tells the other apps how it feels, and says when theirs are worried, sad or happy' : 'keep to itself',
+      action: 'toggle',
+    },
+    {
       id: 'cleanupKeep',
       label: 'Keep on the remote',
       value: keep.length ? keep.join(', ') : 'none',

@@ -19,6 +19,8 @@ export const HELP = [
       ['q / ctrl+c', 'Quit'],
       ['mouse', 'Click a tab, a row or the prompt · double-click does ↵ · the wheel scrolls\ndrag to select text, copied when you let go'],
       ['drop', 'Drop a folder on the terminal to open it (a folder of repositories lists them in Repos)\ndrop a file of the open repository to see its history'],
+      ['paste', 'A command line (/…) or what another app copied (family:v1:…), pasted in a view, goes into the prompt to run with ↵'],
+      ['/family  /take', 'What this repository offers the other apps (Bosun, Hail, Trawl), ↵ copies the line · /take <what one copied>: an exception, a file or a commit'],
     ],
   },
   {

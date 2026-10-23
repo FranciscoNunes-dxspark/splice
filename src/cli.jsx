@@ -10,6 +10,7 @@ import { ask } from './claude.js';
 import { copyToClipboard } from './clipboard.js';
 import { terminalMouse } from './mouse.js';
 import { notification } from './notify.js';
+import { familyDir } from './family.js';
 
 const args = process.argv.slice(2);
 
@@ -64,6 +65,7 @@ const app = render(
     checkUpdate={checkUpdate}
     installUpdate={COMPILED ? installUpdate : undefined}
     askClaude={ask}
+    familyHome={familyDir()}
     setTitle={setTitle}
     mouse={mouse}
     copy={copy}
