@@ -1,9 +1,10 @@
-import { existsSync, realpathSync } from 'node:fs';
+import { existsSync, realpathSync, statSync } from 'node:fs';
 import { open, readFile, readdir, stat } from 'node:fs/promises';
 import { basename, join, resolve } from 'node:path';
 import { samePath } from './config.js';
 import { git } from './git.js';
 import { layoutGraph } from './graph.js';
+import { theme } from './theme.js';
 import { isPointer, lfsMissing, parseLfsFiles, usesLfs } from './lfs.js';
 import {
   COMMIT_FORMAT,
@@ -79,16 +80,27 @@ function refsSignature(raw) {
 // No worktrees folder means no linked worktrees, and nothing to ask git.
 const hasLinkedWorktrees = (repo) => existsSync(join(repo.commonDir, 'worktrees'));
 
-/** Status, refs (in `refFormat`) and linked worktrees, with the signature polling compares. */
-async function readState(repo, refFormat, toSignature) {
-  const [status, refs, worktrees] = await Promise.all([
+/** Whether a listing's line (its refname first, up to \x1f) is one of REF_PATTERNS's refs, as for-each-ref matches them. */
+const shownRef = (line) => {
+  const ref = line.slice(0, line.indexOf('\x1f'));
+  return REF_PATTERNS.some((p) => ref === p || ref.startsWith(`${p}/`));
+};
+
+/**
+ * Status, refs (in `refFormat`) and linked worktrees, with the signature polling compares. With `allRefs`
+ * (a REF_FORMAT listing) every ref is listed, in `allRefs` of the result, and `refs` keeps REF_PATTERNS's:
+ * what `git log --all` shows depends on all of them, and it's still one git.
+ */
+async function readState(repo, refFormat, toSignature, { allRefs = false } = {}) {
+  const [status, listed, worktrees] = await Promise.all([
     git(repo.root, ['status', '--porcelain=v2', '--branch', '-z', '--untracked-files=all']),
-    git(repo.root, ['for-each-ref', `--format=${refFormat}`, ...REF_PATTERNS]),
+    git(repo.root, ['for-each-ref', `--format=${refFormat}`, ...(allRefs ? [] : REF_PATTERNS)]),
     // -z needs git 2.36; older ones just show no worktrees.
     hasLinkedWorktrees(repo) ? git(repo.root, ['worktree', 'list', '--porcelain', '-z']).catch(() => '') : '',
   ]);
+  const refs = allRefs ? listed.split('\n').filter((l) => l && shownRef(l)).map((l) => `${l}\n`).join('') : listed;
   const state = repoState(repo.gitDir);
-  return { status, refs, worktrees, state, signature: `${state}\n${status}\n${toSignature(refs)}\n${worktrees}` };
+  return { status, refs, allRefs: allRefs ? listed : null, worktrees, state, signature: `${state}\n${status}\n${toSignature(refs)}\n${worktrees}` };
 }
 
 /** The cheap read polling runs: a different `signature` from the loaded one means something changed outside. */
@@ -174,15 +186,70 @@ export async function checkPointers(root, files, paths) {
   return out;
 }
 
+// The graph's log, by worktree: `git log --all` is the slowest git a load runs (it walks the history to
+// order it), and most loads (staging, an editor saving) change nothing it shows. What it shows depends on
+// every ref, HEAD (each worktree's), the shallow boundary and how many commits are asked for: its `stamp`.
+const logs = new Map();
+
+const logStamp = (repo, snap, graphLimit) =>
+  [
+    graphLimit,
+    snap.allRefs,
+    // HEAD: its commit and branch, from the status's header lines.
+    snap.status.split('\0').filter((p) => p.startsWith('# branch.oid ') || p.startsWith('# branch.head ')).join('\n'),
+    snap.worktrees,
+    shallowStamp(repo),
+  ].join('\0');
+
+function shallowStamp(repo) {
+  try {
+    const s = statSync(join(repo.commonDir, 'shallow'));
+    return `${s.mtimeMs}:${s.size}`;
+  } catch {
+    return '';
+  }
+}
+
+// A few repositories' worth: opening one after another from Repos shouldn't keep every graph.
+function keepLog(repo, entry) {
+  logs.delete(repo.root);
+  logs.set(repo.root, entry);
+  if (logs.size > 4) logs.delete(logs.keys().next().value);
+  return entry;
+}
+
+function readLog(repo, graphLimit) {
+  // An empty repository has nothing to log, which git reports as an error.
+  return git(repo.root, [
+    'log', '--date-order', '--decorate=full', ...DECORATE_REFS, `-n${graphLimit}`,
+    `--format=${LOG_FORMAT}`, '--exclude=refs/stash', '--all',
+  ]).catch(() => '');
+}
+
+/**
+ * The state and the log. Once a log has been read for this worktree and limit, the state is read first
+ * and the log only when its stamp changed; otherwise both at once, and nothing kept, since a ref that
+ * moved while they ran could leave the log older than the stamp. Read in turn, the log is never older.
+ */
+async function readStateAndLog(repo, graphLimit) {
+  const kept = logs.get(repo.root);
+  if (kept?.limit !== graphLimit) {
+    const [snap, log] = await Promise.all([readState(repo, REF_FORMAT, refsSignature, { allRefs: true }), readLog(repo, graphLimit)]);
+    keepLog(repo, { limit: graphLimit, stamp: null, log });
+    return { snap, log, kept: null };
+  }
+  const snap = await readState(repo, REF_FORMAT, refsSignature, { allRefs: true });
+  const stamp = logStamp(repo, snap, graphLimit);
+  if (kept.stamp === stamp) return { snap, log: kept.log, kept };
+  const log = await readLog(repo, graphLimit);
+  const entry = keepLog(repo, { limit: graphLimit, stamp, log });
+  return { snap, log, kept: entry };
+}
+
 /** Loads everything the views show. */
 export async function loadRepo(repo, { graphLimit = 400 } = {}) {
-  const [snap, log, remotes, subs, lfs] = await Promise.all([
-    readState(repo, REF_FORMAT, refsSignature),
-    // An empty repository has nothing to log, which git reports as an error.
-    git(repo.root, [
-      'log', '--date-order', '--decorate=full', ...DECORATE_REFS, `-n${graphLimit}`,
-      `--format=${LOG_FORMAT}`, '--exclude=refs/stash', '--all',
-    ]).catch(() => ''),
+  const [{ snap, log, kept }, remotes, subs, lfs] = await Promise.all([
+    readStateAndLog(repo, graphLimit),
     readRemotes(repo),
     // Only a repository with submodules pays for asking about them. Not part of the signature: what
     // polling needs to notice (a submodule's commit or changes) is in the status already.
@@ -191,10 +258,15 @@ export async function loadRepo(repo, { graphLimit = 400 } = {}) {
   ]);
   const status = parseStatus(snap.status);
   const refs = parseRefs(snap.refs);
-  const graph = layoutGraph(parseLog(log), {
-    wip: status.files.length ? status.branch.oid : null,
-    main: defaultBranch(refs, remotes.remotes)?.name,
-  });
+  const wip = status.files.length ? status.branch.oid : null;
+  const main = defaultBranch(refs, remotes.remotes)?.name;
+  // The same log laid out the same way, in the same colours, is the same graph: kept with the log.
+  const colours = `${theme.lanes.join()} ${theme.accent}`;
+  const graph =
+    kept?.graph && kept.wip === wip && kept.main === main && kept.colours === colours
+      ? kept.graph
+      : layoutGraph(parseLog(log), { wip, main });
+  if (kept) Object.assign(kept, { graph, wip, main, colours });
   // Without linked worktrees, the main one is the open one, and status already says what it has out.
   const worktrees = snap.worktrees
     ? parseWorktrees(snap.worktrees).map((w) => ({ ...w, path: resolve(w.path), current: samePath(w.path, repo.root) }))

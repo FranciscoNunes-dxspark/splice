@@ -93,6 +93,42 @@ test('worktrees: just the open one until another is added', async () => {
   git('worktree', 'remove', '../repo-wt');
 });
 
+test('the graph is kept while nothing it shows changed, and read again when any ref, HEAD or the limit does', async () => {
+  const repo = await findRepo(dir);
+  const hashes = (d) => d.graph.filter((r) => r.commit).map((r) => r.commit.hash);
+  const fresh = () => git('log', '--date-order', '--format=%H', '--exclude=refs/stash', '--all').split('\n');
+  await loadRepo(repo);
+  const first = await loadRepo(repo);
+  // Changes in the working tree leave the log as it was: the same graph, rows and all.
+  writeFileSync(join(dir, 'a.txt'), 'edited\n');
+  const dirty = await loadRepo(repo);
+  writeFileSync(join(dir, 'a.txt'), 'edited again\n');
+  const again = await loadRepo(repo);
+  assert.equal(again.graph, dirty.graph);
+  assert.equal(again.signature, (await snapshot(repo)).signature);
+  assert.deepEqual(hashes(again), hashes(first));
+  git('checkout', '-q', '--', 'a.txt');
+  // A commit only a ref outside the views' refs reaches still shows, as git log --all shows it.
+  const tree = git('rev-parse', 'HEAD^{tree}');
+  const loose = git('commit-tree', tree, '-p', 'HEAD', '-m', 'Kept elsewhere');
+  git('update-ref', 'refs/keep/x', loose);
+  const kept = await loadRepo(repo);
+  assert.deepEqual(hashes(kept), fresh());
+  assert.equal(kept.signature, (await snapshot(repo)).signature);
+  git('update-ref', '-d', 'refs/keep/x');
+  assert.deepEqual(hashes(await loadRepo(repo)), fresh());
+  // HEAD moving to a commit already in the graph changes where HEAD is drawn.
+  git('checkout', '-q', '--detach', 'HEAD^1');
+  const detached = await loadRepo(repo);
+  assert.ok(detached.graph.find((r) => r.commit?.hash === git('rev-parse', 'HEAD')).commit.refs.some((r) => r.type === 'head'));
+  git('checkout', '-q', 'main');
+  const back = await loadRepo(repo);
+  assert.ok(back.graph.find((r) => r.commit?.hash === git('rev-parse', 'HEAD')).commit.refs.some((r) => r.name === 'main' && r.head));
+  // A smaller limit is a new log.
+  assert.equal((await loadRepo(repo, { graphLimit: 2 })).graph.filter((r) => r.commit).length, 2);
+  assert.equal(hashes(await loadRepo(repo)).length, fresh().length);
+});
+
 test('commit detail: header and files from one git, for plain, merge and root commits', async () => {
   for (const rev of ['HEAD', 'HEAD^1', git('rev-list', '--max-parents=0', 'HEAD')]) {
     const hash = git('rev-parse', rev);
