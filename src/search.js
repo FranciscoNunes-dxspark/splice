@@ -87,17 +87,29 @@ export function wordChanges(lines) {
   return out;
 }
 
+// The comparison's table, big enough for the longest lines compared.
+const TABLE = new Uint16Array((MAX_TOKENS + 1) * (MAX_TOKENS + 1));
+
 /** The changed ranges of an old and a new line (both with their - or + in front), or null. */
 function comparePair(oldLine, newLine) {
   const a = oldLine.slice(1).match(TOKEN) ?? [];
   const b = newLine.slice(1).match(TOKEN) ?? [];
   if (!a.length || !b.length || a.length > MAX_TOKENS || b.length > MAX_TOKENS) return null;
-  // Longest common subsequence of the tokens.
+  // Longest common subsequence of the tokens. The tokens both lines start with are kept as they come (the
+  // walk below takes a match whenever there is one), so the table only covers what follows them: one
+  // table, row x - p at (x - p) * w, shared by every pair.
   const n = a.length;
   const m = b.length;
-  const len = Array.from({ length: n + 1 }, () => new Uint16Array(m + 1));
-  for (let x = n - 1; x >= 0; x--) {
-    for (let y = m - 1; y >= 0; y--) len[x][y] = a[x] === b[y] ? len[x + 1][y + 1] + 1 : Math.max(len[x + 1][y], len[x][y + 1]);
+  let p = 0;
+  while (p < n && p < m && a[p] === b[p]) p++;
+  const w = m - p + 1;
+  const len = TABLE;
+  const at = (x, y) => (x - p) * w + (y - p);
+  len.fill(0, at(n, p), at(n, m) + 1);
+  for (let x = n - 1; x >= p; x--) {
+    const row = at(x, p) - p;
+    len[row + m] = 0;
+    for (let y = m - 1; y >= p; y--) len[row + y] = a[x] === b[y] ? len[row + w + y + 1] + 1 : Math.max(len[row + w + y], len[row + y + 1]);
   }
   const keptA = new Array(n).fill(false);
   const keptB = new Array(m).fill(false);
@@ -105,7 +117,7 @@ function comparePair(oldLine, newLine) {
     if (a[x] === b[y]) {
       keptA[x++] = true;
       keptB[y++] = true;
-    } else if (len[x + 1][y] >= len[x][y + 1]) x++;
+    } else if (len[at(x + 1, y)] >= len[at(x, y + 1)]) x++;
     else y++;
   }
   const old = ranges(a, keptA);

@@ -96,3 +96,14 @@ test('/ in the viewer: matches as you type, n and N between them, esc clears the
     app.unmount();
   }
 });
+
+test('word diffs: what two lines start with is kept, and what follows is compared as before', () => {
+  const lines = ['-  total = price * count + tax', '+  total = price * quantity + tax', '-a b a', '+a a b a'];
+  const w = wordChanges(lines);
+  const at = (i) => w.get(i).map(([a, b]) => lines[i].slice(a, b));
+  assert.deepEqual(at(0), ['count']);
+  assert.deepEqual(at(1), ['quantity']);
+  // After the common "a ", the walk takes the first match it meets.
+  assert.deepEqual(w.get(2), []);
+  assert.deepEqual(at(3), ['a']);
+});
