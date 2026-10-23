@@ -4,13 +4,13 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import React from 'react';
 import { render } from 'ink-testing-library';
 import { removeTemp } from './temp.js';
-import { encodeContext, projectAt, takeLine, writeMood } from '../src/family.js';
+import { encodeContext, projectAt, shareLine, takeLine, writeMood } from '../src/family.js';
 import { familyMood, familyOffers, moodsToShow, reactionText, trawlName } from '../src/siblings.js';
 import { App } from '../src/ui/App.jsx';
 
@@ -40,7 +40,8 @@ let lastApp = null;
 const git = (...args) => execFileSync('git', args, { cwd: dir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, GIT_OPTIONAL_LOCKS: '0' } }).trim();
 
 before(() => {
-  base = mkdtempSync(join(tmpdir(), 'splice-family-'));
+  // Its long name: Windows' temp folder is a short (8.3) one, which git, and so Splice, gives in full.
+  base = realpathSync.native(mkdtempSync(join(tmpdir(), 'splice-family-')));
   dir = join(base, 'shop');
   home = join(base, 'family');
   mkdirSync(join(dir, 'api'), { recursive: true });
@@ -63,8 +64,8 @@ after(() => removeTemp(base));
 test('what a repository offers the others', () => {
   const offers = familyOffers(projectAt(dir), 'shop');
   assert.deepEqual(offers.map((o) => [o.app, o.line]), [
-    ['bosun', `/move ${dir}`],
-    ['hail', `/open ${join(dir, 'api', 'orders.http')}`],
+    ['bosun', shareLine('move', [dir])],
+    ['hail', shareLine('open', [join(dir, 'api', 'orders.http')])],
     ['trawl', '/azure-sql shop.database.windows.net Shop'],
     ['trawl', '/add orders db.local:5432 orders --kind postgres --user me'],
   ]);
@@ -139,12 +140,13 @@ test('a paste opens the prompt; /family copies a line; a sibling\'s mood gets a 
     app.stdin.write('\r');
     await until(() => frame().includes('What shop offers the other apps'), 'the list');
     assert.match(frame(), /Bosun\s+\/move /);
-    assert.match(frame(), /Hail\s+\/open .*orders\.http/);
+    // The whole line is the pure test's above; a Windows path quoted may not fit the width.
+    assert.match(frame(), /Hail\s+\/open /);
     assert.match(frame(), /Trawl\s+\/azure-sql shop\.database\.windows\.net Shop/);
     assert.match(frame(), /Trawl\s+\/add orders db\.local:5432 orders --kind postgres --user me/);
     app.stdin.write('\r');
     await until(() => copied.length === 1, 'copied');
-    assert.equal(copied[0], `/move ${dir}`);
+    assert.equal(copied[0], shareLine('move', [dir]));
     assert.match(flat(frame()), /Copied for Bosun: paste it into Bosun's prompt/);
   } finally {
     app.unmount();

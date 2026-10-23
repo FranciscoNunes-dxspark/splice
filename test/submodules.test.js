@@ -127,9 +127,11 @@ test('/submodules lists recorded and checked-out commits, branch and changes; u,
     await until(() => run(sub, 'rev-parse', 'HEAD') === recorded, 'the recorded commit checked out');
     await until(() => new RegExp(`lib\\s+changes inside\\s+detached\\s+at ${recorded.slice(0, 7)}`).test(frame()), 'the list read again');
 
-    // f fetches inside it.
+    // f fetches inside it, then reads the list again: a key pressed while it's loading has no row to act on.
+    const mark = app.frames.length;
     app.stdin.write('f');
     await until(() => frame().includes('git -C lib fetch --prune'), 'the fetch inside it');
+    await until(() => app.frames.slice(mark).some((f) => f.includes('Loading…')) && !frame().includes('Loading…') && frame().includes('changes inside'), 'the list read again after the fetch');
 
     // U moves it to its remote branch's newest commit, after asking.
     writeFileSync(join(lib, 'newer.txt'), 'newer\n');
@@ -178,7 +180,10 @@ test('a load keeps git submodule status\'s answer until a submodule or what reco
   // A tag in the submodule describes it.
   run(sub, 'tag', 'v1');
   assert.deepEqual(await subs(), [['lib', 'ok', head(sub), 'v1']]);
-  // Another commit checked out in it.
+  // Another commit checked out in it (the clone has no identity of its own, and CI's git none globally).
+  run(sub, 'config', 'user.name', 'Test');
+  run(sub, 'config', 'user.email', 'test@example.com');
+  run(sub, 'config', 'commit.gpgsign', 'false');
   writeFileSync(join(sub, 'more.txt'), 'more\n');
   run(sub, 'add', '.');
   run(sub, 'commit', '-q', '-m', 'More');

@@ -1,6 +1,6 @@
 // A file's history and blame, as pickers (ctx.showPicker): each one opens the other, and ↵ shows a commit's diff.
-import { existsSync } from 'node:fs';
-import { isAbsolute, join, relative } from 'node:path';
+import { existsSync, realpathSync } from 'node:fs';
+import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
 // actions.js imports this module too; only functions cross, called long after both have loaded.
 import { claudeBlame, future, shareFileLine } from './actions.js';
 import { HISTORY_FORMAT, isoDate, parseBlame, parseFileHistory, relTime } from './parse.js';
@@ -11,11 +11,34 @@ import { fit, stringWidth } from './text.js';
 const short = (hash) => hash.slice(0, 7);
 const MAX_HISTORY = 2000;
 
-/** A path as typed in a command, made relative to the repository root with forward slashes. */
+const outside = (rel) => rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel);
+
+// A path's own name as far as it exists (a Windows short 8.3 name in full, a link followed), the rest as given.
+function realOf(p) {
+  try {
+    return realpathSync.native(p);
+  } catch {
+    const up = dirname(p);
+    return up === p ? p : join(realOf(up), basename(p));
+  }
+}
+
+/**
+ * A path as typed in a command, made relative to the repository root with forward slashes. An absolute
+ * one that only looks outside the root (another app's short name for a folder, or a link) is read through
+ * both paths' real names.
+ */
 export function repoPath(root, typed) {
   let p = String(typed ?? '').trim();
   if (/^(["']).+\1$/.test(p)) p = p.slice(1, -1);
-  if (isAbsolute(p)) p = relative(root, p);
+  if (isAbsolute(p)) {
+    let rel = relative(root, p);
+    if (outside(rel)) {
+      const real = relative(realOf(root), realOf(p));
+      if (!outside(real)) rel = real;
+    }
+    p = rel;
+  }
   return p.replace(/\\/g, '/').replace(/^(\.\/)+/, '').replace(/\/+$/, '');
 }
 

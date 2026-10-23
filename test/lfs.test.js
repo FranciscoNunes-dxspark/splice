@@ -136,7 +136,13 @@ let lastApp = null;
 async function until(check, what, ms = 8000) {
   const end = Date.now() + ms;
   while (Date.now() < end) {
-    if (check()) return new Promise((r) => setTimeout(r, 100));
+    let ok = false;
+    try {
+      ok = check();
+    } catch {
+      // not yet: git lfs pull replaces a file by renaming, so on Windows it can be missing for a moment
+    }
+    if (ok) return new Promise((r) => setTimeout(r, 100));
     await new Promise((r) => setTimeout(r, 40));
   }
   throw new Error(`Timed out waiting for ${what}. Last frame:\n${lastApp?.lastFrame()}`);

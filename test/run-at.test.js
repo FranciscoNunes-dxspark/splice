@@ -3,13 +3,14 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import React from 'react';
 import { render } from 'ink-testing-library';
 import { removeTemp } from './temp.js';
 import { planCleanup, runAtHash } from '../src/cleanup.js';
+import { shareLine } from '../src/family.js';
 import { runAtPath } from '../src/prflow.js';
 import { App } from '../src/ui/App.jsx';
 
@@ -40,7 +41,8 @@ const run = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8',
 const git = (...args) => run(dir, ...args);
 
 before(() => {
-  base = mkdtempSync(join(tmpdir(), 'splice-runat-'));
+  // Its long name: Windows' temp folder is a short (8.3) one, which git, and so Splice, gives in full.
+  base = realpathSync.native(mkdtempSync(join(tmpdir(), 'splice-runat-')));
   dir = join(base, 'shop');
   mkdirSync(dir);
   process.env.SPLICE_HOME = join(base, 'home');
@@ -87,7 +89,7 @@ test('w on an old commit: its own worktree, Bosun\'s /move copied; /cleanup remo
     await until(() => /❯.*The old way/.test(frame()), 'the old commit');
     app.stdin.write('w');
     await until(() => existsSync(wt) && copied.length === 1, 'the worktree and the copy');
-    assert.equal(copied[0], `/move ${wt}`);
+    assert.equal(copied[0], shareLine('move', [wt]));
     assert.equal(run(wt, 'rev-parse', 'HEAD'), old);
     await until(() => frame().replace(/\s+/g, ' ').includes("Copied for Bosun: paste it into Bosun's prompt"), 'what was copied');
     assert.equal(git('status', '--porcelain'), '', 'the repository as it was');
