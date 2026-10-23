@@ -11,7 +11,7 @@ import { render } from 'ink-testing-library';
 import { removeTemp } from './temp.js';
 import { App } from '../src/ui/App.jsx';
 import { LFS_MISSING, isPointer, lfsCommand, lfsError, lfsMissing, lfsSummary, lfsText, parseLfsFiles, parseLfsLocks, usesLfs } from '../src/lfs.js';
-import { checkPointers } from '../src/repo.js';
+import { checkPointers, findRepo, loadRepo } from '../src/repo.js';
 
 test('usesLfs looks for filter=lfs on a line that is not a comment', () => {
   assert.equal(usesLfs('*.psd filter=lfs diff=lfs merge=lfs -text\n'), true);
@@ -153,6 +153,29 @@ const start = (path) => {
   lastApp = render(React.createElement(App, { initialPath: path, config: { recent: [], roots: [], history: [] } }));
   return lastApp;
 };
+
+test('a load keeps ls-files\'s answer while HEAD, the index and the files it listed are as they were', { skip: !hasLfs && 'git lfs is not installed' }, async () => {
+  const path = join(base, 'kept');
+  run(base, ['clone', '-q', join(base, 'origin'), path], { GIT_LFS_SKIP_SMUDGE: '1' });
+  for (const [k, v] of [['core.autocrlf', 'false'], ['user.name', 'Test'], ['user.email', 'test@example.com'], ['commit.gpgsign', 'false']]) run(path, ['config', k, v]);
+  run(path, ['lfs', 'install', '--local']);
+  const repo = await findRepo(path);
+  const marks = async () => Object.fromEntries(Object.entries((await loadRepo(repo)).lfs.files).map(([p, f]) => [p, f.content]));
+  for (let i = 0; i < 3; i++) assert.deepEqual(await marks(), { 'x.bin': false, 'y.bin': false });
+  // Pulling fills the pointers in, which git status doesn't see.
+  run(path, ['lfs', 'pull']);
+  assert.deepEqual(await marks(), { 'x.bin': true, 'y.bin': true });
+  assert.deepEqual(await marks(), { 'x.bin': true, 'y.bin': true });
+  // A file staged is listed, and still after it's committed.
+  writeFileSync(join(path, 'z.bin'), 'zed\n');
+  run(path, ['add', 'z.bin']);
+  assert.deepEqual(await marks(), { 'x.bin': true, 'y.bin': true, 'z.bin': true });
+  run(path, ['commit', '-q', '-m', 'Another']);
+  assert.deepEqual(await marks(), { 'x.bin': true, 'y.bin': true, 'z.bin': true });
+  run(path, ['rm', '-q', 'y.bin']);
+  run(path, ['commit', '-q', '-m', 'One less']);
+  assert.deepEqual(await marks(), { 'x.bin': true, 'z.bin': true });
+});
 
 test('/lfs in a repository without LFS says so', async () => {
   const app = start(plain);

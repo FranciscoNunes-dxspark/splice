@@ -144,17 +144,38 @@ async function readStashes(repo, refs) {
   );
 }
 
+// `git lfs ls-files` starts a dozen gits of its own, so its answer is kept with what it depends on: HEAD's
+// commit, the index (what it lists), and the size of each file it listed (how it tells content from a
+// pointer). Only answers, not failures, are kept: installing git lfs is noticed at the next load.
+const lfsLists = new Map();
+
+async function lfsStamp(repo, snap, files) {
+  const head = snap.status.split('\0').find((p) => p.startsWith('# branch.oid ')) ?? '';
+  const sizes = await Promise.all(
+    Object.keys(files).map((p) => stat(join(repo.root, p)).then((s) => `${s.size}:${s.mtimeMs}`, () => '-')),
+  );
+  return [head, await fileStamp(join(repo.gitDir, 'index')), ...sizes].join('\n');
+}
+
 /**
  * Git LFS, for a repository that uses it (a .gitattributes line with filter=lfs, or LFS's folder in .git), else
  * null, at the cost of reading one file: { installed, files } with ls-files's files, each pointer or content.
  * Not part of the signature: pulling turns pointers into content without git status seeing a change, and
- * everything that does that reloads afterwards.
+ * everything that does that reloads afterwards. `state` is the load's readState, which the kept answer is
+ * checked against; the first load in a repository asks ls-files alongside it.
  */
-async function readLfs(repo) {
+async function readLfs(repo, state) {
   const attributes = await readFile(join(repo.root, '.gitattributes'), 'utf8').catch(() => '');
   if (!usesLfs(attributes) && !existsSync(join(repo.commonDir, 'lfs'))) return null;
+  const kept = lfsLists.get(repo.root);
+  const stamp = kept ? await lfsStamp(repo, await state, kept.value.files) : null;
+  if (kept && kept.stamp === stamp) return kept.value;
   try {
-    return { installed: true, files: parseLfsFiles(await git(repo.root, ['lfs', 'ls-files'])) };
+    const value = { installed: true, files: parseLfsFiles(await git(repo.root, ['lfs', 'ls-files'])) };
+    lfsLists.delete(repo.root);
+    lfsLists.set(repo.root, { stamp, value });
+    if (lfsLists.size > 4) lfsLists.delete(lfsLists.keys().next().value);
+    return value;
   } catch (e) {
     // Before the first commit there's nothing to list.
     return { installed: !lfsMissing(e.message), files: {} };
@@ -231,14 +252,14 @@ function readLog(repo, graphLimit) {
  * and the log only when its stamp changed; otherwise both at once, and nothing kept, since a ref that
  * moved while they ran could leave the log older than the stamp. Read in turn, the log is never older.
  */
-async function readStateAndLog(repo, graphLimit) {
+async function readStateAndLog(repo, graphLimit, state) {
   const kept = logs.get(repo.root);
   if (kept?.limit !== graphLimit) {
-    const [snap, log] = await Promise.all([readState(repo, REF_FORMAT, refsSignature, { allRefs: true }), readLog(repo, graphLimit)]);
+    const [snap, log] = await Promise.all([state, readLog(repo, graphLimit)]);
     keepLog(repo, { limit: graphLimit, stamp: null, log });
     return { snap, log, kept: null };
   }
-  const snap = await readState(repo, REF_FORMAT, refsSignature, { allRefs: true });
+  const snap = await state;
   const stamp = logStamp(repo, snap, graphLimit);
   if (kept.stamp === stamp) return { snap, log: kept.log, kept };
   const log = await readLog(repo, graphLimit);
@@ -248,13 +269,14 @@ async function readStateAndLog(repo, graphLimit) {
 
 /** Loads everything the views show. */
 export async function loadRepo(repo, { graphLimit = 400 } = {}) {
+  const state = readState(repo, REF_FORMAT, refsSignature, { allRefs: true });
   const [{ snap, log, kept }, remotes, subs, lfs] = await Promise.all([
-    readStateAndLog(repo, graphLimit),
+    readStateAndLog(repo, graphLimit, state),
     readRemotes(repo),
     // Only a repository with submodules pays for asking about them. Not part of the signature: what
     // polling needs to notice (a submodule's commit or changes) is in the status already.
     existsSync(join(repo.root, '.gitmodules')) ? git(repo.root, ['submodule', 'status']).catch(() => '') : '',
-    readLfs(repo),
+    readLfs(repo, state),
   ]);
   const status = parseStatus(snap.status);
   const refs = parseRefs(snap.refs);
