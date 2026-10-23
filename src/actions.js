@@ -53,9 +53,12 @@ import {
 } from './rebase.js';
 import { blobIds, checkCommits, foundCount, foundSummary, parseBatchCheck, parsePushLog, pushCheckText, pushLogArgs, pushRange } from './pushcheck.js';
 import { eachLimited, fetchRepo } from './repos.js';
+import { checkPointers } from './repo.js';
 import { nextTheme, settingRows, settingSegments } from './settings.js';
 import { forcePushes, forwardInput, planSync, rebasingElsewhere, syncSummary, syncText, updateBranchArgs } from './sync.js';
 import { SIGNING_KEYS, checkGpgKey, explainSigning, needsPinentryCheck, signingConfig } from './signing.js';
+import { LFS_MISSING, lfsCommand, lfsError, lfsText, parseLfsFiles, parseLfsLocks, withoutHints } from './lfs.js';
+import { run as runGit } from './git.js';
 import { commitsLine, insideSummary, parseGitlinks, parseInside, submoduleInfo } from './submodules.js';
 import { fit } from './text.js';
 import { DEFAULT_ACCENT, applyTheme, isColour, setAccent, theme } from './theme.js';
@@ -1912,6 +1915,152 @@ async function updateRemote(ctx, s) {
   });
   if (!ok) return null;
   return ctx.exec(['submodule', 'update', '--init', '--remote', '--', s.path], { label: `Updating ${s.path} from its remote` });
+}
+
+/**
+ * Whether Git LFS can be asked about this repository: it uses LFS and git lfs is installed. Says why not
+ * otherwise, checking `git lfs version` for a repository that doesn't use it, so the answer is the right one.
+ */
+async function lfsReady(ctx) {
+  if (!needRepo(ctx)) return false;
+  const lfs = ctx.data.lfs;
+  if (lfs && !lfs.installed) {
+    ctx.note(LFS_MISSING, 'error');
+    return false;
+  }
+  if (lfs) return true;
+  const installed = await ctx.git(['lfs', 'version']).then(() => true, () => false);
+  ctx.note(installed ? "This repository doesn't use Git LFS: no line of its .gitattributes has filter=lfs (git lfs track <pattern> adds one)." : LFS_MISSING, 'error');
+  return false;
+}
+
+/**
+ * `/lfs [pull | fetch | locks | lock <path> | unlock <path> [--force]]`: alone, how many files LFS keeps and
+ * which are only pointers here, with `git lfs status`; pull and fetch download them; the rest are locks.
+ */
+export async function lfs(ctx, text) {
+  const cmd = lfsCommand(text);
+  if (cmd.error) return ctx.note(cmd.error, 'error');
+  if (!(await lfsReady(ctx))) return;
+  if (cmd.action === 'status') {
+    return ctx.showAsync('Git LFS', async () => {
+      try {
+        const [files, status] = await Promise.all([ctx.git(['lfs', 'ls-files']), ctx.git(['lfs', 'status'])]);
+        const changed = ctx.data.status.files.map((f) => f.path);
+        return lfsText(await checkPointers(ctx.data.root, parseLfsFiles(files), changed), status);
+      } catch (e) {
+        return lfsError(e.message);
+      }
+    });
+  }
+  if (cmd.action === 'pull') return lfsExec(ctx, ['pull', ...cmd.args], { label: 'Downloading LFS files' });
+  if (cmd.action === 'fetch') return lfsExec(ctx, ['fetch', ...cmd.args], { label: 'Fetching LFS files' });
+  if (cmd.action === 'locks') return showLfsLocks(ctx);
+  if (cmd.action === 'lock') return lfsLock(ctx, cmd.path);
+  return lfsUnlock(ctx, { path: cmd.path }, { force: cmd.force });
+}
+
+/** `git lfs <args>` as ctx.exec runs git, visible and cancellable, with git lfs's hints left out of what it says. */
+function lfsExec(ctx, args, { label, refresh = true } = {}) {
+  const root = ctx.data.root;
+  const shown = args.map((a) => (/\s/.test(a) ? JSON.stringify(a) : a)).join(' ');
+  return ctx.task(
+    `git lfs ${shown}`,
+    async (signal) => {
+      try {
+        const r = await runGit(root, ['lfs', ...args], { signal });
+        return { stdout: r.stdout, stderr: withoutHints(r.stderr) };
+      } catch (e) {
+        if (!e.cancelled) e.message = lfsError(e.message);
+        throw e;
+      }
+    },
+    { label, refresh },
+  );
+}
+
+async function lfsLock(ctx, path) {
+  const r = await lfsExec(ctx, ['lock', path], { label: 'Locking', refresh: false });
+  redrawLocks(ctx);
+  return r;
+}
+
+/** Unlocks `lock` ({ path } or { id, path }). Forcing it (someone else's lock) asks first. */
+async function lfsUnlock(ctx, lock, { force = false } = {}) {
+  if (force) {
+    const ok = await ctx.confirm({
+      title: `Force the lock on ${lock.path} open${lock.owner ? `, held by ${lock.owner}` : ''}?`,
+      detail: 'Whoever holds it is no longer protected from someone else changing the file at the same time; their changes may then conflict with yours.',
+      options: YES_NO('Yes, unlock it'),
+      danger: true,
+    });
+    if (!ok) return null;
+  }
+  const r = await lfsExec(ctx, ['unlock', ...(force ? ['--force'] : []), ...(lock.id ? [`--id=${lock.id}`] : [lock.path])], { label: 'Unlocking', refresh: false });
+  redrawLocks(ctx);
+  return r;
+}
+
+/** L on a file in Changes: locks it with Git LFS, or unlocks it when it's locked already (by you; someone else's needs /lfs unlock --force). */
+export async function lfsToggleLock(ctx, f) {
+  if (!(await lfsReady(ctx))) return;
+  let locks = null;
+  const read = await ctx.task(
+    `Looking for a lock on ${f.path}`,
+    async (signal) => {
+      locks = parseLfsLocks(await ctx.git(['lfs', 'locks', '--json', `--path=${f.path}`], { signal }));
+      return { stdout: '', stderr: '' };
+    },
+    { label: 'Asking about locks', quiet: true, quietError: true, refresh: false },
+  );
+  if (!read.ok) return read.error?.cancelled ? undefined : ctx.note(`Couldn't ask about locks: ${lfsError(read.error?.message)}`, 'error');
+  const held = locks.find((l) => l.path === f.path);
+  return held ? lfsUnlock(ctx, held) : lfsLock(ctx, f.path);
+}
+
+const lockedSince = (t) => (t === 'now' ? 'just now' : `${t} ago`);
+
+function redrawLocks(ctx) {
+  const o = ctx.overlay();
+  if (o?.lfsLocks) showLfsLocks(ctx, { replace: true, index: o.index });
+}
+
+/** `/lfs locks`: the files locked on the LFS server, whose they are and since when; x unlocks one, X forces it. */
+export function showLfsLocks(ctx, { replace = false, index } = {}) {
+  ctx.showPicker(
+    {
+      title: 'Git LFS locks',
+      hint: 'x unlock · X force someone else\'s open (asks first) · y copy path',
+      empty: 'Nothing is locked. L on a file in Changes locks it (or /lfs lock <path>).',
+      lfsLocks: true,
+      index,
+      load: async () => {
+        let raw;
+        try {
+          // --verify says which are yours; servers that can't answer that still list them.
+          raw = await ctx.git(['lfs', 'locks', '--verify', '--json']).catch(() => ctx.git(['lfs', 'locks', '--json']));
+        } catch (e) {
+          throw new Error(lfsError(e.message).split('\n').join(' '));
+        }
+        const now = Date.now() / 1000;
+        return parseLfsLocks(raw).map((l) => ({
+          ...l,
+          segments: [
+            { text: l.path, strong: true },
+            { text: `  ${l.mine ? 'yours' : l.owner || 'someone'}`, color: l.mine ? theme.add : theme.warn },
+            { text: l.lockedAt ? `  ${lockedSince(relTime(Date.parse(l.lockedAt) / 1000, now))}` : '', color: theme.dim },
+            { text: `  #${l.id}`, color: theme.dim },
+          ],
+        }));
+      },
+      keys: {
+        y: (l) => ctx.copy(l.path),
+        x: (l) => lfsUnlock(ctx, l),
+        X: (l) => lfsUnlock(ctx, l, { force: true }),
+      },
+    },
+    { replace },
+  );
 }
 
 /** Takes one side of a conflicted file and marks it resolved. */

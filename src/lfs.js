@@ -13,6 +13,21 @@ export function lfsMissing(message) {
   return /'lfs' is not a git command|git-lfs: (command )?not found|unknown (sub)?command.*lfs/i.test(String(message ?? ''));
 }
 
+/** git lfs's error as one message: its `hint:` lines left out, and a clear word when LFS isn't installed. */
+export function lfsError(message) {
+  if (lfsMissing(message)) return LFS_MISSING;
+  return withoutHints(message) || 'git lfs failed.';
+}
+
+/** git lfs's output without its `hint:` lines (about file:// remotes, say) and the blank lines around them. */
+export function withoutHints(text) {
+  return String(text ?? '')
+    .split('\n')
+    .map((l) => l.trimEnd())
+    .filter((l) => l && !/^hint:/.test(l))
+    .join('\n');
+}
+
 export const LFS_MISSING = "Git LFS isn't installed, so Splice can't ask it anything. Install it (https://git-lfs.com, or your package manager's git-lfs), then run git lfs install once.";
 
 /**
@@ -26,6 +41,11 @@ export function parseLfsFiles(raw) {
     if (m) out[m[3]] = { oid: m[1], content: m[2] === '*' };
   }
   return out;
+}
+
+/** Whether a file's first bytes are an LFS pointer (the small text file git stores in place of the content). */
+export function isPointer(head) {
+  return String(head ?? '').startsWith('version https://git-lfs.github.com/spec/v1\n');
 }
 
 /** How many files LFS keeps, and how many of them are only pointers here: { total, pointers, paths } (the pointers' paths). */
@@ -64,7 +84,8 @@ const lockOf = (l, mine) => ({
  * mine? }], sorted by path. `mine` is only known from --verify.
  */
 export function parseLfsLocks(raw) {
-  const text = String(raw ?? '').trim();
+  // Only the JSON line: git lfs may print hints around it.
+  const text = String(raw ?? '').split('\n').find((l) => /^\s*[[{]/.test(l))?.trim();
   if (!text) return [];
   const json = JSON.parse(text);
   const list = Array.isArray(json)

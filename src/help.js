@@ -88,6 +88,7 @@ export const HELP = [
       ['O  T', 'On a conflict: take ours · take theirs, for the whole file'],
       ['C', 'On a conflict: Claude proposes the resolved file, shown as a diff; asks before writing it'],
       ['H  B', 'The file\'s history · Blame it (who last changed each line)'],
+      ['L', 'Git LFS: lock the file on the LFS server, or unlock it if it\'s locked by you (/lfs locks lists them); files LFS keeps say LFS, or LFS pointer when only the pointer is here (/lfs pull downloads them)'],
       ['↵  →  l', 'Step into the diff to stage hunks or single lines (on a conflict: into its conflict blocks)'],
       ['w', 'The diff side by side, old and new in two columns, or back in one (a window 156 columns wide or more; remembered)'],
       { heading: 'Submodules', about: 'listed last with their state: not initialised, out of date, changes inside, up to date' },
@@ -129,6 +130,15 @@ export const HELP = [
       ['f', 'Fetch inside it'],
       ['U', 'Move it to the newest commit on its remote branch (git submodule update --remote; asks first)'],
       ['s', 'Sync its URL from .gitmodules (git submodule sync)'],
+      ['y', 'Copy its path'],
+    ],
+  },
+  {
+    title: 'Git LFS locks',
+    about: '/lfs locks: the files locked on the LFS server, by whom and since when',
+    rows: [
+      ['x', 'Unlock it (yours)'],
+      ['X', 'Force someone else\'s lock open (asks first; /lfs unlock <path> --force)'],
       ['y', 'Copy its path'],
     ],
   },

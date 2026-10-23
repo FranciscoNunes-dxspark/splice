@@ -1,9 +1,10 @@
 import { existsSync, realpathSync } from 'node:fs';
-import { readFile, readdir, stat } from 'node:fs/promises';
+import { open, readFile, readdir, stat } from 'node:fs/promises';
 import { basename, join, resolve } from 'node:path';
 import { samePath } from './config.js';
 import { git } from './git.js';
 import { layoutGraph } from './graph.js';
+import { isPointer, lfsMissing, parseLfsFiles, usesLfs } from './lfs.js';
 import {
   COMMIT_FORMAT,
   DECORATE_REFS,
@@ -131,9 +132,51 @@ async function readStashes(repo, refs) {
   );
 }
 
+/**
+ * Git LFS, for a repository that uses it (a .gitattributes line with filter=lfs, or LFS's folder in .git), else
+ * null, at the cost of reading one file: { installed, files } with ls-files's files, each pointer or content.
+ * Not part of the signature: pulling turns pointers into content without git status seeing a change, and
+ * everything that does that reloads afterwards.
+ */
+async function readLfs(repo) {
+  const attributes = await readFile(join(repo.root, '.gitattributes'), 'utf8').catch(() => '');
+  if (!usesLfs(attributes) && !existsSync(join(repo.commonDir, 'lfs'))) return null;
+  try {
+    return { installed: true, files: parseLfsFiles(await git(repo.root, ['lfs', 'ls-files'])) };
+  } catch (e) {
+    // Before the first commit there's nothing to list.
+    return { installed: !lfsMissing(e.message), files: {} };
+  }
+}
+
+/**
+ * ls-files's `files` with `paths` (changed files, which it marks as pointers whatever they hold) looked at
+ * on disk: content unless the file's first bytes are a pointer. A missing file is left as it was.
+ */
+export async function checkPointers(root, files, paths) {
+  const out = { ...files };
+  await Promise.all(
+    paths
+      .filter((p) => out[p])
+      .map(async (p) => {
+        let fh;
+        try {
+          fh = await open(join(root, p), 'r');
+          const { buffer, bytesRead } = await fh.read({ buffer: Buffer.alloc(64), position: 0 });
+          out[p] = { ...out[p], content: !isPointer(buffer.subarray(0, bytesRead).toString('latin1')) };
+        } catch {
+          // Deleted, or not readable: as ls-files said.
+        } finally {
+          await fh?.close();
+        }
+      }),
+  );
+  return out;
+}
+
 /** Loads everything the views show. */
 export async function loadRepo(repo, { graphLimit = 400 } = {}) {
-  const [snap, log, remotes, subs] = await Promise.all([
+  const [snap, log, remotes, subs, lfs] = await Promise.all([
     readState(repo, REF_FORMAT, refsSignature),
     // An empty repository has nothing to log, which git reports as an error.
     git(repo.root, [
@@ -144,6 +187,7 @@ export async function loadRepo(repo, { graphLimit = 400 } = {}) {
     // Only a repository with submodules pays for asking about them. Not part of the signature: what
     // polling needs to notice (a submodule's commit or changes) is in the status already.
     existsSync(join(repo.root, '.gitmodules')) ? git(repo.root, ['submodule', 'status']).catch(() => '') : '',
+    readLfs(repo),
   ]);
   const status = parseStatus(snap.status);
   const refs = parseRefs(snap.refs);
@@ -170,6 +214,7 @@ export async function loadRepo(repo, { graphLimit = 400 } = {}) {
     stashes: await readStashes(repo, snap.refs),
     worktrees,
     submodules: parseSubmodules(subs, status.files),
+    lfs: lfs && { ...lfs, files: await checkPointers(repo.root, lfs.files, status.files.map((f) => f.path)) },
     ...remotes,
   };
 }

@@ -30,6 +30,7 @@ export const COMMANDS = [
   { name: 'stash', args: '[-u | --no-untracked] [message]', desc: 'Stash all changes (untracked files too, unless set off in /settings), with an optional message', run: (ctx, s) => a.stash(ctx, s) },
   { name: 'submodules', desc: 'Every submodule: the commit recorded against the one it has, its branch and its own changes; open, update, fetch or sync one', run: (ctx) => a.showSubmodules(ctx) },
   { name: 'submodule-update', args: '[path]', desc: 'Initialise and check out the recorded commit of every submodule, or one', run: (ctx, s) => a.updateSubmodules(ctx, s) },
+  { name: 'lfs', args: '[pull|fetch|locks|lock <path>|unlock <path> [--force]]', desc: 'Git LFS: alone, its files (downloaded or only pointers) and git lfs status; pull or fetch the files; the locks, or lock or unlock a file', run: (ctx, s) => a.lfs(ctx, s) },
   { name: 'ignore', args: '<pattern>', desc: "Add a pattern to the repository's .gitignore (i on a file in Changes offers some)", run: (ctx, s) => a.ignore(ctx, s) },
   { name: 'discard', desc: 'Discard all uncommitted changes (asks first)', run: (ctx) => a.discardAll(ctx) },
   { name: 'undo', desc: 'Undo the last commit, amend, merge, rebase, reset, switch or discard (asks first)', run: (ctx) => a.undo(ctx) },
