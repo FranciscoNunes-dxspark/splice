@@ -156,7 +156,7 @@ const DOUBLE_CLICK_MS = 400;
 // finished (cli.jsx rings the terminal's bell and raises a desktop notification); without it, as in most
 // tests, nothing is said. `familyHome` is the family's folder for the mascots' moods (family.js's familyDir,
 // from cli.jsx): without it, as in most tests, Twig neither tells the siblings its mood nor reads theirs;
-// `moodEvery` is how often theirs are read.
+// `moodEvery` is how often theirs are read. It's also where Splice logs what it did, for the family's /timeline.
 export function App({ initialPath, reopenLast = false, config: initialConfig, checkUpdate, installUpdate, askClaude, setTitle, makeHost = hostFor, mouse, copy, notify, familyHome = null, moodEvery = 30_000 }) {
   const { exit } = useApp();
   const { columns, rows } = useTerminalSize();
@@ -472,6 +472,9 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
     askClaude,
     // Whether this terminal can report the mouse at all (/settings says so).
     mouseAvailable: Boolean(mouse),
+    // The family's folder (cli.jsx's familyDir(); tests a temp one, or none): what Splice did goes into its
+    // activity log (/timeline) only when there is one.
+    familyHome,
     // /update: asks for the latest release now, whatever the daily check last said, and installs it.
     updateNow: () => {
       if (!checkUpdate) return note(`This Splice (${VERSION}) runs from a checkout: git pull updates it.`);

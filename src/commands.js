@@ -96,6 +96,8 @@ export const COMMANDS = [
   { name: 'notes', args: 'push [remote]', desc: 'Push the notes (refs/notes/*) to the remote', run: (ctx, s) => a.notes(ctx, s) },
   { name: 'hooks', desc: 'The active git hooks (core.hooksPath, husky, .git/hooks) and hook frameworks (lefthook, pre-commit): ↵ shows one, r runs it now', run: (ctx) => a.showHooks(ctx) },
   { name: 'family', desc: 'What this repository offers the other apps (Bosun, Hail, Trawl): ↵ copies the command to paste into one', run: (ctx) => a.family(ctx) },
+  { name: 'timeline', desc: 'What the family\'s apps did (pushes, merges, restarts, writes to a database), newest first: p this repository only or all, ↵ an entry whole', run: (ctx) => a.timeline(ctx) },
+  { name: 'wiring', desc: 'What this repository points at: addresses, hosts, ports and connection strings from appsettings*.json, .env and http-client env files, by file (secrets masked)', run: (ctx) => a.wiring(ctx) },
   { name: 'take', args: '<context>', desc: 'What another app copied for Splice: an exception or a file opens blame at its line, a commit its diff', run: (ctx, s) => a.take(ctx, s) },
   {
     name: 'find',

@@ -21,6 +21,8 @@ export const HELP = [
       ['drop', 'Drop a folder on the terminal to open it (a folder of repositories lists them in Repos)\ndrop a file of the open repository to see its history'],
       ['paste', 'A command line (/…) or what another app copied (family:v1:…), pasted in a view, goes into the prompt to run with ↵'],
       ['/family  /take', 'What this repository offers the other apps (Bosun, Hail, Trawl), ↵ copies the line · /take <what one copied>: an exception, a file or a commit'],
+      ['/timeline', 'What the family\'s apps did, newest first (Splice\'s pushes, merges, rebases, resets, discards, deletions, /ship, /sync; the others\' restarts, writes, deploys): p this repository only, or all again · ↵ an entry whole'],
+      ['/wiring', 'What this repository points at (addresses, hosts, ports, connection strings in appsettings*.json, .env and http-client env files), by file, secrets masked'],
     ],
   },
   {

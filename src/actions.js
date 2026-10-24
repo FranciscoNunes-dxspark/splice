@@ -70,7 +70,7 @@ import { NOTES_REFSPEC, noteArgs, notePrefill, notesArgs, withKeptNote } from '.
 import { COMMIT_HOOKS, PUSH_HOOKS, hookArgs, hookRows, hookRunArgs } from './githooks.js';
 import { CODEOWNERS_PATHS, changedOwnersText, ownersOfFiles, ownersText, reviewerNames } from './codeowners.js';
 import { TAKES, exceptionFrames, framesInRepo, pathAndLine } from './take.js';
-import { APP_NAMES, TAKEN_BY, contextIn, copiedNote, describeContext, matchFrameFile, notMine, projectAt, shareLine, takeLine } from './family.js';
+import { APP_NAMES, FAMILY, TAKEN_BY, contextIn, copiedNote, describeContext, familyDir, logActivity, matchFrameFile, notMine, projectAt, projectWiring, readActivity, shareLine, takeLine } from './family.js';
 import { DEFAULT_ACCENT, applyTheme, isColour, setAccent, theme } from './theme.js';
 import {
   REFLOG_FORMAT,
@@ -103,6 +103,21 @@ function needRepo(ctx) {
 }
 
 const isInitial = (ctx) => !ctx.data.status.branch.oid;
+
+/**
+ * Adds what Splice just did to the family's activity log (family.js), for /timeline here and in the other
+ * apps, when `r` went through (a task's result, or true). Only with App's familyHome (cli.jsx gives it; most
+ * tests don't), and never anything from a diff: names, counts and where.
+ */
+function activity(ctx, r, text, kind = 'info') {
+  if (!ctx.familyHome || !(r === true || r?.ok) || !ctx.data) return r;
+  logActivity('splice', { text: `${text} (${ctx.data.name})`, kind, project: ctx.data.root }, { dir: ctx.familyHome });
+  return r;
+}
+
+// How many commits a push of `range` sends, for the activity log: one git, only when there's a log to write.
+const pushCount = async (ctx, range) => (ctx.familyHome ? count(ctx, range) : 0);
+const commitsText = (n) => (n ? ` (${n} commit${n === 1 ? '' : 's'})` : '');
 
 // After a merge, rebase or pick stops on conflicts, say what to do next.
 function afterConflicts(ctx) {
@@ -210,8 +225,10 @@ export async function push(ctx, args = []) {
     if (!(await beforePush(ctx, range))) return { ok: false };
     const extra = await pushQuestion(ctx, range);
     if (!extra) return { ok: false };
+    const n = await pushCount(ctx, range);
     // Only a branch without an upstream starts tracking the remote it was pushed to.
-    return ctx.exec(['push', ...flags, ...extra, ...(branch.upstream ? [] : ['-u']), named, branch.head], { label: 'Pushing' });
+    const r = await ctx.exec(['push', ...flags, ...extra, ...(branch.upstream ? [] : ['-u']), named, branch.head], { label: 'Pushing' });
+    return activity(ctx, r, `${flags.includes('--force-with-lease') ? 'force-pushed' : 'pushed'} ${branch.head} to ${named}${commitsText(n)}`, 'push');
   }
   if (!branch.upstream) {
     const remote = remotes.includes('origin') ? 'origin' : remotes[0];
@@ -219,7 +236,9 @@ export async function push(ctx, args = []) {
     if (!(await beforePush(ctx, pushRange()))) return { ok: false };
     const extra = await pushQuestion(ctx, pushRange());
     if (!extra) return { ok: false };
-    return ctx.exec(['push', ...flags, ...extra, '-u', remote, branch.head], { label: 'Pushing' });
+    const n = await pushCount(ctx, pushRange());
+    const r = await ctx.exec(['push', ...flags, ...extra, '-u', remote, branch.head], { label: 'Pushing' });
+    return activity(ctx, r, `pushed ${branch.head} to ${remote}, a new branch there${commitsText(n)}`, 'push');
   }
   if (flags.includes('--force-with-lease')) {
     const ok = await ctx.confirm({
@@ -233,7 +252,10 @@ export async function push(ctx, args = []) {
   if (!(await beforePush(ctx, pushRange({ upstream: branch.upstream })))) return { ok: false };
   const extra = await pushQuestion(ctx, pushRange({ upstream: branch.upstream }));
   if (!extra) return { ok: false };
-  return ctx.exec(['push', ...flags, ...extra], { label: 'Pushing' });
+  const force = flags.includes('--force-with-lease');
+  const n = force ? 0 : branch.ahead;
+  const r = await ctx.exec(['push', ...flags, ...extra], { label: 'Pushing' });
+  return activity(ctx, r, `${force ? 'force-pushed' : 'pushed'} ${branch.head} to ${branch.upstream.split('/')[0]}${commitsText(n)}`, 'push');
 }
 
 // The config a commit and a push look at: the signing settings and core.hooksPath, read with one git for
@@ -662,7 +684,7 @@ export async function deleteRef(ctx, name) {
     const r = await ctx.exec(['branch', '-d', name], { label: 'Deleting', quietError: true });
     if (r.ok || !/not fully merged/.test(r.error?.message ?? '')) {
       if (!r.ok) ctx.note(r.error.message, 'error');
-      return r;
+      return activity(ctx, r, `deleted the branch ${name}`, 'delete');
     }
     const force = await ctx.confirm({
       title: `${name} has commits that aren't merged anywhere. Delete it anyway?`,
@@ -670,7 +692,7 @@ export async function deleteRef(ctx, name) {
       options: YES_NO('Yes, force-delete'),
       danger: true,
     });
-    if (force) return ctx.exec(['branch', '-D', name], { label: 'Deleting' });
+    if (force) return activity(ctx, await ctx.exec(['branch', '-D', name], { label: 'Deleting' }), `force-deleted the branch ${name}, unmerged`, 'delete');
     return;
   }
   const rb = remote.find((b) => b.name === name);
@@ -682,7 +704,7 @@ export async function deleteRef(ctx, name) {
       options: YES_NO('Yes, delete it on the remote'),
       danger: true,
     });
-    if (ok) return ctx.exec(['push', rb.remote, '--delete', branch], { label: 'Deleting remote branch' });
+    if (ok) return activity(ctx, await ctx.exec(['push', rb.remote, '--delete', branch], { label: 'Deleting remote branch' }), `deleted the branch ${branch} on ${rb.remote}`, 'delete');
     return;
   }
   if (tags.some((t) => t.name === name)) return deleteTag(ctx, name);
@@ -731,7 +753,7 @@ export function pushTag(ctx, text) {
   if (!ctx.data.refs.tags.some((t) => t.name === name)) return ctx.note(`No tag called ${name}.`, 'error');
   const remote = given ?? mainRemote(ctx);
   if (!remote) return ctx.note('This repository has no remote. Add one with: /remote add origin <url>', 'error');
-  return ctx.exec(['push', remote, `refs/tags/${name}`], { label: 'Pushing tag' });
+  return ctx.exec(['push', remote, `refs/tags/${name}`], { label: 'Pushing tag' }).then((r) => activity(ctx, r, `pushed the tag ${name} to ${remote}`, 'push'));
 }
 
 /**
@@ -799,8 +821,11 @@ export async function merge(ctx, ref, { ask = false } = {}) {
     const ok = await ctx.confirm({ title: `Merge ${ref} into ${currentName(ctx)}?`, ...(detail ? { detail } : {}), options: YES_NO('Yes, merge') });
     if (!ok) return;
   }
-  await ctx.exec(['merge', '--no-edit', ref], { label: 'Merging' });
+  const into = currentName(ctx);
+  const r = await ctx.exec(['merge', '--no-edit', ref], { label: 'Merging' });
+  activity(ctx, r, `merged ${ref} into ${into}`, 'merge');
   afterConflicts(ctx);
+  return r;
 }
 
 export async function rebase(ctx, ref) {
@@ -816,8 +841,12 @@ export async function rebase(ctx, ref) {
   });
   if (!ok) return;
   const was = ctx.data.status.branch.oid;
+  const name = currentName(ctx);
   const r = await ctx.exec(['rebase', ref], { label: 'Rebasing' });
-  if (r.ok && !ctx.data.state) afterRewrite(ctx, was);
+  if (r.ok && !ctx.data.state) {
+    afterRewrite(ctx, was);
+    activity(ctx, r, `rebased ${name} onto ${ref}`, 'rebase');
+  }
   afterConflicts(ctx);
 }
 
@@ -908,6 +937,7 @@ export async function sync(ctx) {
   }
   await ctx.reload();
   const result = { moved, failed };
+  activity(ctx, true, `synced: ${moved.length ? `fast-forwarded ${names(moved)}` : 'nothing to fast-forward'}${failed.length ? `, ${failed.length} couldn't move` : ''}`, 'sync');
   ctx.showText('Sync', syncText(plan, result));
   ctx.note(syncSummary(plan, result), failed.length ? 'error' : 'ok');
   const mine = plan.diverged.find((b) => b.current);
@@ -1042,6 +1072,7 @@ export async function updateBranch(ctx, text) {
     );
     return r;
   }
+  activity(ctx, r, `rebased ${top ? `the stack under ${top}` : head} onto ${base}`, 'rebase');
   // Back on the branch you were on, also when the rebase couldn't start.
   if (top) {
     const back = await ctx.exec(['switch', head], { label: 'Switching back' });
@@ -1059,6 +1090,7 @@ export async function updateBranch(ctx, text) {
     const done = await ctx.exec(p, { label: 'Pushing' });
     if (!done.ok) return done;
   }
+  activity(ctx, true, `force-pushed ${names(pushed.map((p) => p.name))} after rebasing`, 'push');
 }
 
 const OP = { merging: 'merge', rebasing: 'rebase', 'cherry-picking': 'cherry-pick', reverting: 'revert', bisecting: 'bisect' };
@@ -1668,6 +1700,14 @@ async function removeCleanup(ctx, { worktrees, branches, remote }) {
     ...problems,
   ];
   ctx.note([head, ...lines].join('\n'), problems.length || stopped ? 'error' : 'ok');
+  if (done) {
+    const parts = [
+      deleted.length ? `deleted ${deleted.length > 4 ? `${deleted.length} branches` : deleted.join(', ')}` : '',
+      deletedRemote.length ? `deleted on ${deletedRemote[0].remote}: ${deletedRemote.map((b) => b.branch).join(', ')}` : '',
+      removed.size ? `removed ${removed.size} worktree${removed.size === 1 ? '' : 's'}` : '',
+    ].filter(Boolean);
+    activity(ctx, true, `cleaned up: ${parts.join('; ')}`, 'delete');
+  }
   return { deleted, removed: [...removed], problems, stopped };
 }
 
@@ -1851,7 +1891,9 @@ export async function reset(ctx, ref, label = ref) {
       { label: 'Cancel', value: null },
     ],
   });
-  if (mode) return ctx.exec(['reset', `--${mode}`, ref], { label: 'Resetting' });
+  if (!mode) return;
+  const name = currentName(ctx);
+  return activity(ctx, await ctx.exec(['reset', `--${mode}`, ref], { label: 'Resetting' }), `reset ${name} to ${label} (${mode})`, 'reset');
 }
 
 const paths = (f) => ['--', ...(f.orig ? [f.orig] : []), f.path];
@@ -1923,10 +1965,13 @@ export async function discard(ctx, f) {
   if (untracked) {
     await rm(join(ctx.data.root, f.path), { force: true, recursive: true });
     ctx.note(`Deleted ${f.path}`);
+    activity(ctx, true, `discarded the untracked ${f.path}`, 'discard');
     return settleCopy(ctx, copy);
   }
   const args = f.area === 'staged' ? ['restore', '--staged', '--worktree', ...paths(f)] : ['restore', ...paths(f)];
-  return settleCopy(ctx, copy, await ctx.exec(args, { label: 'Discarding', refresh: false }));
+  const r = await ctx.exec(args, { label: 'Discarding', refresh: false });
+  activity(ctx, r, `discarded the changes to ${f.path}`, 'discard');
+  return settleCopy(ctx, copy, r);
 }
 
 /** Puts every file back the way the last commit has it, staged or not. Ignored files stay. */
@@ -1969,6 +2014,7 @@ export async function discardAll(ctx) {
       return r;
     }
   }
+  activity(ctx, r, `discarded the changes to ${gone} file${gone === 1 ? '' : 's'}`, 'discard');
   return settleCopy(ctx, copy, r);
 }
 
@@ -2309,7 +2355,9 @@ export async function applyLines(ctx, f, diffText, picks, { discard = false } = 
     // Applied forwards, the same patch puts back what applying it in reverse takes out.
     const copy = await keepForUndo(ctx, { what: `the discarded ${all ? 'changes' : 'lines'} in ${f.path}`, patch });
     if (copy === false) return;
-    return settleCopy(ctx, copy, await apply(ctx, patch, ['--reverse'], 'Discarding', { refresh: false }));
+    const r = await apply(ctx, patch, ['--reverse'], 'Discarding', { refresh: false });
+    activity(ctx, r, `discarded some ${all ? 'changes' : 'lines'} in ${f.path}`, 'discard');
+    return settleCopy(ctx, copy, r);
   }
   // When every line is picked, the plain file commands also cover what a patch can't (modes, binaries).
   if (f.area === 'staged') return all ? unstage(ctx, f) : apply(ctx, buildPatch(diff, picks, { reverse: true }), ['--cached', '--reverse'], 'Unstaging');
@@ -2365,6 +2413,7 @@ export async function runRebase(ctx, base, rows) {
   if (!ctx.data.state) {
     await cleanup(ctx.data.gitDir);
     if (r.ok) afterRewrite(ctx, was);
+    activity(ctx, r, `rewrote ${rows.length} commit${rows.length === 1 ? '' : 's'} of ${branch.head ?? 'HEAD'} (${planSummary(rows)})`, 'rebase');
   } else if (ctx.data.changes.conflicts.length) afterConflicts(ctx);
   else ctx.note('Stopped for editing. Change what you need, amend (A in Changes), then /continue.');
   return true;
@@ -3291,7 +3340,7 @@ export function notes(ctx, text) {
   const remote = args.remote ?? (status.branch.upstream ? status.branch.upstream.split('/')[0] : remotes.includes('origin') ? 'origin' : remotes[0]);
   if (!remote) return ctx.note('This repository has no remote to push the notes to.', 'error');
   if (!remotes.includes(remote)) return ctx.note(`No remote called ${remote}.`, 'error');
-  return ctx.exec(['push', remote, NOTES_REFSPEC], { label: 'Pushing the notes' });
+  return ctx.exec(['push', remote, NOTES_REFSPEC], { label: 'Pushing the notes' }).then((r) => activity(ctx, r, `pushed the notes to ${remote}`, 'push'));
 }
 
 /** /owners [path]: who owns a path, by CODEOWNERS (and which line says so); alone, the owners of the changed files. */
@@ -3834,6 +3883,7 @@ export async function ship(ctx, text) {
   const opts = { method, deleteBranch: true, auto: true };
   const r = await hostTask(ctx, mergeTitle(host, pr, opts), (signal) => host.merge(pr, opts, signal), { label: 'Setting auto-merge', refresh: false });
   ctx.prsChanged();
+  activity(ctx, r, `shipped ${branch.head}: ${pr.label} into ${pr.target}, merging once its checks and reviews pass`, 'ship');
   if (r.ok) ctx.note(`Shipped ${branch.head}: ${pr.label} merges into ${pr.target} once its checks and reviews pass.\nOnce it has, Splice offers to finish: switch to ${pr.target}, pull it and delete ${branch.head}.`, 'ok');
   // A pull request /ship opened: its code owners, as reviewers.
   if (!open) await suggestOwners(ctx, host, pr, base);
@@ -4032,6 +4082,64 @@ export function family(ctx) {
     items: offers.map((o) => ({ ...o, segments: [{ text: APP_NAMES[o.app].padEnd(appW), color: theme.accent, bold: true }, { text: `  ${o.line}` }, { text: `  ${o.what}`, color: theme.dim }] })),
     onPick: (o) => copyFor(ctx, o.app, o.line),
   });
+}
+
+/**
+ * /timeline: what the family's apps did (family.js's activity log: pushes, writes to a database, restarts),
+ * newest first, from all five. p shows this repository's alone (with what names no project), or everything
+ * again; ↵ shows an entry whole.
+ */
+export function timeline(ctx, { mine = false, replace = false } = {}) {
+  const dir = ctx.familyHome ?? familyDir();
+  const root = ctx.data?.root;
+  const list = readActivity({ dir, project: mine && root ? root : undefined, limit: 500 });
+  const appW = Math.max(...FAMILY.map((a) => APP_NAMES[a].length));
+  const where = (e) => (e.project ? basename(e.project) : '');
+  ctx.showPicker(
+    {
+      title: `Timeline${mine && root ? ` of ${ctx.data.name}` : ': the family'} (${list.length})`,
+      hint: `↵ the whole entry${root ? ` · p ${mine ? 'every project' : `${ctx.data.name} only`}` : ''}`,
+      empty: mine ? `Nothing logged for ${ctx.data?.name} yet. p shows every project.` : 'Nothing logged yet: the apps add what they do (a push, a restart, a write to a database) as they do it.',
+      timeline: true,
+      items: list.map((e) => ({
+        entry: e,
+        segments: [
+          { text: fit(relTime(Math.floor(e.at / 1000)), 4, 'right'), color: theme.dim },
+          { text: `  ${fit(APP_NAMES[e.app] ?? e.app, appW)}`, color: e.app === 'splice' ? theme.accent : theme.hunk, bold: true },
+          { text: `  ${e.text}` },
+          ...(!mine && where(e) ? [{ text: `  ${where(e)}`, color: theme.dim }] : []),
+        ],
+      })),
+      onPick: ({ entry: e }) =>
+        ctx.showText(
+          `${APP_NAMES[e.app] ?? e.app}, ${new Date(e.at).toLocaleString()}`,
+          [e.text, '', `App: ${APP_NAMES[e.app] ?? e.app}`, `When: ${new Date(e.at).toLocaleString()}`, `Kind: ${e.kind ?? 'info'}`, ...(e.project ? [`Project: ${e.project}`] : [])].join('\n'),
+        ),
+      keys: { y: ({ entry: e }) => ctx.copy(e.text, 'the entry') },
+      actions: root ? { p: () => timeline(ctx, { mine: !mine, replace: true }) } : {},
+    },
+    { replace },
+  );
+}
+
+/** /wiring: what this repository points at (family.js's projectWiring: hosts, ports, connection strings, secrets masked), by file. */
+export function wiring(ctx) {
+  if (!needRepo(ctx)) return;
+  const found = projectWiring(ctx.data.root);
+  if (!found.length) return ctx.note(`Nothing in ${ctx.data.name} points anywhere Splice can see: no addresses, hosts, ports or connection strings in appsettings*.json, .env files or http-client.env.json.`);
+  const bySource = new Map();
+  for (const w of found) {
+    if (!bySource.has(w.source)) bySource.set(w.source, []);
+    bySource.get(w.source).push(w);
+  }
+  const lines = [];
+  for (const [source, list] of bySource) {
+    const keyW = Math.min(40, Math.max(...list.map((w) => w.key.length)));
+    if (lines.length) lines.push('');
+    lines.push(source);
+    for (const w of list) lines.push(`  ${fit(w.key, keyW)}  ${w.value}`);
+  }
+  ctx.showText(`What ${ctx.data.name} points at (${found.length})`, lines.join('\n'));
 }
 
 // The siblings that take a kind of context, Splice aside (it takes some itself).
