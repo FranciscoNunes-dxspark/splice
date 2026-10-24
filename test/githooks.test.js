@@ -166,6 +166,8 @@ test('/hooks lists and shows them and runs one; a commit and a push ask whether 
     app.stdin.write('2');
     await until(() => git('log', '-1', '--format=%s') === 'Skip them', 'committed');
     assert.equal(log(), 'pre-commit ran\n', 'the hook skipped');
+    // Wait for the reload after the commit, or the next change's wait passes on the frame from before it.
+    await until(() => /main\s+Skip them/.test(frame()) && !frame().includes('1 change'), 'the commit in the graph');
     writeFileSync(join(dir, 'a.txt'), 'a\nb\nc\n');
     git('add', 'a.txt');
     await until(() => frame().includes('1 change'), 'the next change');
