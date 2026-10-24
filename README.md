@@ -2,6 +2,8 @@
 
 # Splice
 
+> **Splice has moved to [fleet](https://github.com/FranciscoNunes-dxspark/fleet/tree/main/apps/splice)**, the family's one repository. Its releases are there now, tagged `splice-v<version>`; an installed Splice updates itself from them. This repository is kept for its history.
+
 A keyboard-driven git client for the terminal, with an interface modelled on Claude Code: titled rounded panels, a prompt box with slash commands and completion, `!` to run any git command, and a running log of what each command did.
 
 Splice used to be called Tiller. A Tiller that updates itself becomes Splice on its own (the executable keeps its old file name until you rename it), and your recent repositories and settings in `~/.tiller` carry over.
