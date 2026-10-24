@@ -96,7 +96,6 @@ const type = async (stdin, text) => {
     await new Promise((r) => setTimeout(r, 5));
   }
 };
-const pause = (ms = 150) => new Promise((r) => setTimeout(r, ms));
 
 test('/submodules lists recorded and checked-out commits, branch and changes; u, f, U and s act on one', async () => {
   const sub = join(dir, 'lib');
@@ -113,6 +112,9 @@ test('/submodules lists recorded and checked-out commits, branch and changes; u,
   lastApp = render(React.createElement(App, { initialPath: dir, config: { recent: [], roots: [], history: [] } }));
   const app = lastApp;
   const frame = () => app.lastFrame() ?? '';
+  // After each key, the list is read again (even after a no): one pressed while it's loading has no row to
+  // act on, so wait until a frame since `mark` showed it loading and the last one doesn't.
+  const reread = (mark, what) => until(() => app.frames.slice(mark).some((f) => f.includes('Loading…')) && !frame().includes('Loading…') && frame().includes('lib  '), what);
   try {
     await until(() => frame().includes('Add the library'), 'the graph');
     await type(app.stdin, '/submodules');
@@ -127,22 +129,23 @@ test('/submodules lists recorded and checked-out commits, branch and changes; u,
     await until(() => run(sub, 'rev-parse', 'HEAD') === recorded, 'the recorded commit checked out');
     await until(() => new RegExp(`lib\\s+changes inside\\s+detached\\s+at ${recorded.slice(0, 7)}`).test(frame()), 'the list read again');
 
-    // f fetches inside it, then reads the list again: a key pressed while it's loading has no row to act on.
-    const mark = app.frames.length;
+    // f fetches inside it.
+    let mark = app.frames.length;
     app.stdin.write('f');
     await until(() => frame().includes('git -C lib fetch --prune'), 'the fetch inside it');
-    await until(() => app.frames.slice(mark).some((f) => f.includes('Loading…')) && !frame().includes('Loading…') && frame().includes('changes inside'), 'the list read again after the fetch');
+    await reread(mark, 'the list read again after the fetch');
 
     // U moves it to its remote branch's newest commit, after asking.
     writeFileSync(join(lib, 'newer.txt'), 'newer\n');
     run(lib, 'add', '.');
     run(lib, 'commit', '-q', '-m', 'Newer');
     const tip = run(lib, 'rev-parse', 'HEAD');
-    await pause();
     app.stdin.write('U');
     await until(() => frame().includes('Move lib to the newest commit on its remote branch?'), 'the question');
+    mark = app.frames.length;
     app.stdin.write('2');
     await until(() => !frame().includes('Move lib to the newest'), 'the question answered no');
+    await reread(mark, 'the list read again after no');
     assert.equal(run(sub, 'rev-parse', 'HEAD'), recorded);
     app.stdin.write('U');
     await until(() => frame().includes('Move lib to the newest commit on its remote branch?'), 'the question again');
@@ -151,11 +154,12 @@ test('/submodules lists recorded and checked-out commits, branch and changes; u,
     await until(() => new RegExp(`recorded ${recorded.slice(0, 7)} · has ${tip.slice(0, 7)}`).test(frame()), 'the list read again');
 
     // s syncs its URL.
+    mark = app.frames.length;
     app.stdin.write('s');
     await until(() => frame().includes('git submodule sync --recursive -- lib'), 'the sync');
+    await reread(mark, 'the list read again after the sync');
 
     // ↵ opens it as its own repository.
-    await pause();
     app.stdin.write('\r');
     await until(() => frame().includes('│  lib  ⎇ detached'), 'the submodule open as its own repository');
   } finally {
