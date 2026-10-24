@@ -88,6 +88,8 @@ export function parseCommitLines(out) {
 
 /** Where /review-pr checks out pull request `id`: beside the main working tree, as <repo>-pr-<id>. */
 export const reviewPath = (mainRoot, id) => join(dirname(mainRoot), `${basename(mainRoot)}-pr-${id}`);
+/** Where /run-at puts a detached worktree at a commit: <repo>-at-<short hash>, beside the main working tree. */
+export const runAtPath = (mainRoot, hash) => join(dirname(mainRoot), `${basename(mainRoot)}-at-${hash.slice(0, 7)}`);
 /** The branch it's on there. /cleanup knows these by name (cleanup.js's reviewBranchId). */
 export const reviewBranch = (id) => `pr-${id}`;
 

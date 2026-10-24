@@ -1,9 +1,11 @@
-import { existsSync, realpathSync } from 'node:fs';
-import { readFile, readdir, stat } from 'node:fs/promises';
+import { existsSync, realpathSync, statSync } from 'node:fs';
+import { open, readFile, readdir, stat } from 'node:fs/promises';
 import { basename, join, resolve } from 'node:path';
 import { samePath } from './config.js';
 import { git } from './git.js';
 import { layoutGraph } from './graph.js';
+import { theme } from './theme.js';
+import { isPointer, lfsMissing, parseLfsFiles, usesLfs } from './lfs.js';
 import {
   COMMIT_FORMAT,
   DECORATE_REFS,
@@ -78,21 +80,120 @@ function refsSignature(raw) {
 // No worktrees folder means no linked worktrees, and nothing to ask git.
 const hasLinkedWorktrees = (repo) => existsSync(join(repo.commonDir, 'worktrees'));
 
-/** Status, refs (in `refFormat`) and linked worktrees, with the signature polling compares. */
-async function readState(repo, refFormat, toSignature) {
-  const [status, refs, worktrees] = await Promise.all([
+/** Whether a listing's line (its refname first, up to \x1f) is one of REF_PATTERNS's refs, as for-each-ref matches them. */
+const shownRef = (line) => {
+  const ref = line.slice(0, line.indexOf('\x1f'));
+  return REF_PATTERNS.some((p) => ref === p || ref.startsWith(`${p}/`));
+};
+
+/**
+ * Status, refs (in `refFormat`) and linked worktrees, with the signature polling compares. With `allRefs`
+ * (a REF_FORMAT listing) every ref is listed, in `allRefs` of the result, and `refs` keeps REF_PATTERNS's:
+ * what `git log --all` shows depends on all of them, and it's still one git.
+ */
+async function readState(repo, refFormat, toSignature, { allRefs = false, listRefs = null, fresh = false, out } = {}) {
+  const [status, listed, worktrees] = await Promise.all([
     git(repo.root, ['status', '--porcelain=v2', '--branch', '-z', '--untracked-files=all']),
-    git(repo.root, ['for-each-ref', `--format=${refFormat}`, ...REF_PATTERNS]),
-    // -z needs git 2.36; older ones just show no worktrees.
-    hasLinkedWorktrees(repo) ? git(repo.root, ['worktree', 'list', '--porcelain', '-z']).catch(() => '') : '',
+    listRefs ? listRefs() : git(repo.root, ['for-each-ref', `--format=${refFormat}`, ...(allRefs ? [] : REF_PATTERNS)]),
+    hasLinkedWorktrees(repo) ? listWorktrees(repo, { fresh, out }) : '',
   ]);
+  const refs = allRefs ? listed.split('\n').filter((l) => l && shownRef(l)).map((l) => `${l}\n`).join('') : listed;
   const state = repoState(repo.gitDir);
-  return { status, refs, worktrees, state, signature: `${state}\n${status}\n${toSignature(refs)}\n${worktrees}` };
+  return { status, refs, allRefs: allRefs ? listed : null, worktrees, state, signature: `${state}\n${status}\n${toSignature(refs)}\n${worktrees}` };
 }
 
-/** The cheap read polling runs: a different `signature` from the loaded one means something changed outside. */
-export function snapshot(repo) {
-  return readState(repo, SIG_FORMAT, (refs) => refs);
+// Ref listings, polling's by common dir and a load's by worktree, kept while the files git keeps the refs
+// in are as they were (refFilesStamp), and listed again at least every RELIST_MS whatever they say.
+const keptRefs = new Map();
+const RELIST_MS = 30_000;
+
+/**
+ * When packed-refs and each folder under refs/ (the common dir's, and a linked worktree's own) were last
+ * changed: git writes a ref by renaming a lock file over it, which changes its folder, so a ref written,
+ * added or removed changes this. Null for the reftable backend, whose refs aren't files.
+ */
+export async function refFilesStamp(repo) {
+  if (existsSync(join(repo.commonDir, 'reftable'))) return null;
+  const parts = [`packed-refs ${await fileStamp(join(repo.commonDir, 'packed-refs'))}`];
+  const walk = async (dir) => {
+    let entries;
+    try {
+      // The folder's time before its entries: a change in between makes the next stamp differ.
+      parts.push(`${dir} ${(await stat(dir)).mtimeMs}`);
+      entries = await readdir(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    await Promise.all(entries.filter((e) => e.isDirectory()).map((e) => walk(join(dir, e.name))));
+  };
+  await Promise.all([walk(join(repo.commonDir, 'refs')), repo.gitDir !== repo.commonDir && walk(join(repo.gitDir, 'refs'))]);
+  return parts.sort().join('\n');
+}
+
+/**
+ * `list()`'s listing, or the one kept for `key` while `stamp` (a promise, made before listing) is unchanged
+ * and it isn't RELIST_MS old; `fresh` lists anyway. Sets `relisted` on `out` when it listed.
+ */
+async function keptListing(key, stamp, list, { fresh = false, out = {} } = {}) {
+  const now = Date.now();
+  const before = await stamp;
+  const kept = keptRefs.get(key);
+  if (!fresh && before && kept?.stamp === before && now - kept.at < RELIST_MS) return kept.refs;
+  const refs = await list();
+  out.relisted = true;
+  keptRefs.delete(key);
+  keptRefs.set(key, { stamp: before, refs, at: now });
+  if (keptRefs.size > 8) keptRefs.delete(keptRefs.keys().next().value);
+  return refs;
+}
+
+/**
+ * What `git worktree list` reads, besides the refs: each linked worktree's HEAD, where it is (and whether
+ * that's still there: prunable) and its lock, the main one's HEAD, and the config (a bare repository).
+ */
+async function worktreesStamp(repo) {
+  const dir = join(repo.commonDir, 'worktrees');
+  const read = (p) => readFile(p, 'utf8').catch(() => '-');
+  const names = (await readdir(dir).catch(() => [])).sort();
+  const each = await Promise.all(
+    names.map(async (n) => {
+      const [head, gitdir, locked] = await Promise.all([read(join(dir, n, 'HEAD')), read(join(dir, n, 'gitdir')), read(join(dir, n, 'locked'))]);
+      return `${n}\t${head.trim()}\t${gitdir.trim()}\t${existsSync(gitdir.trim())}\t${locked}`;
+    }),
+  );
+  const [refs, head, config] = await Promise.all([refFilesStamp(repo), read(join(repo.commonDir, 'HEAD')), fileStamp(join(repo.commonDir, 'config'))]);
+  return refs && [refs, head.trim(), config, ...each].join('\n');
+}
+
+/** `git worktree list`, kept as the ref listings are. -z needs git 2.36; older ones just show no worktrees. */
+function listWorktrees(repo, { fresh = false, out } = {}) {
+  return keptListing(`worktrees:${repo.commonDir}`, worktreesStamp(repo), () => git(repo.root, ['worktree', 'list', '--porcelain', '-z']).catch(() => ''), { fresh, out });
+}
+
+/**
+ * The cheap read polling runs/**
+ * The cheap read polling runs: a different `signature` from the loaded one means something changed outside.
+ * The status is read every time; the refs only when the files they're kept in changed (or a while has
+ * passed), and then `relisted` says so.
+ */
+export async function snapshot(repo) {
+  const out = { relisted: false };
+  const listRefs = () =>
+    keptListing(`poll:${repo.commonDir}`, refFilesStamp(repo), () => git(repo.root, ['for-each-ref', `--format=${SIG_FORMAT}`, ...REF_PATTERNS]), { out });
+  return { ...(await readState(repo, SIG_FORMAT, (refs) => refs, { listRefs, out })), relisted: out.relisted };
+}
+
+/**
+ * A load's listing of every ref (REF_FORMAT), kept as polling's is: what it shows besides the refs is which
+ * one is HEAD (the HEAD file) and how far branches are from their upstreams (the config names those).
+ */
+function loadRefs(repo, fresh) {
+  const stamp = Promise.all([
+    refFilesStamp(repo),
+    readFile(join(repo.gitDir, 'HEAD'), 'utf8').catch(() => ''),
+    fileStamp(join(repo.commonDir, 'config')),
+  ]).then(([refs, head, config]) => refs && `${refs}\n${head}\n${config}`);
+  return keptListing(`load:${repo.root}`, stamp, () => git(repo.root, ['for-each-ref', `--format=${REF_FORMAT}`]), { fresh });
 }
 
 const reused = new Map();
@@ -131,26 +232,206 @@ async function readStashes(repo, refs) {
   );
 }
 
-/** Loads everything the views show. */
-export async function loadRepo(repo, { graphLimit = 400 } = {}) {
-  const [snap, log, remotes, subs] = await Promise.all([
-    readState(repo, REF_FORMAT, refsSignature),
-    // An empty repository has nothing to log, which git reports as an error.
-    git(repo.root, [
-      'log', '--date-order', '--decorate=full', ...DECORATE_REFS, `-n${graphLimit}`,
-      `--format=${LOG_FORMAT}`, '--exclude=refs/stash', '--all',
-    ]).catch(() => ''),
+// `git lfs ls-files` starts a dozen gits of its own, so its answer is kept with what it depends on: HEAD's
+// commit, the index (what it lists), and the size of each file it listed (how it tells content from a
+// pointer). Only answers, not failures, are kept: installing git lfs is noticed at the next load.
+const lfsLists = new Map();
+
+async function lfsStamp(repo, snap, files) {
+  const head = snap.status.split('\0').find((p) => p.startsWith('# branch.oid ')) ?? '';
+  const sizes = await Promise.all(
+    Object.keys(files).map((p) => stat(join(repo.root, p)).then((s) => `${s.size}:${s.mtimeMs}`, () => '-')),
+  );
+  return [head, await fileStamp(join(repo.gitDir, 'index')), ...sizes].join('\n');
+}
+
+/**
+ * Git LFS, for a repository that uses it (a .gitattributes line with filter=lfs, or LFS's folder in .git), else
+ * null, at the cost of reading one file: { installed, files } with ls-files's files, each pointer or content.
+ * Not part of the signature: pulling turns pointers into content without git status seeing a change, and
+ * everything that does that reloads afterwards. `state` is the load's readState, which the kept answer is
+ * checked against; the first load in a repository asks ls-files alongside it.
+ */
+async function readLfs(repo, state) {
+  const attributes = await readFile(join(repo.root, '.gitattributes'), 'utf8').catch(() => '');
+  if (!usesLfs(attributes) && !existsSync(join(repo.commonDir, 'lfs'))) return null;
+  const kept = lfsLists.get(repo.root);
+  const stamp = kept ? await lfsStamp(repo, await state, kept.value.files) : null;
+  if (kept && kept.stamp === stamp) return kept.value;
+  try {
+    const value = { installed: true, files: parseLfsFiles(await git(repo.root, ['lfs', 'ls-files'])) };
+    lfsLists.delete(repo.root);
+    lfsLists.set(repo.root, { stamp, value });
+    if (lfsLists.size > 4) lfsLists.delete(lfsLists.keys().next().value);
+    return value;
+  } catch (e) {
+    // Before the first commit there's nothing to list.
+    return { installed: !lfsMissing(e.message), files: {} };
+  }
+}
+
+/**
+ * ls-files's `files` with `paths` (changed files, which it marks as pointers whatever they hold) looked at
+ * on disk: content unless the file's first bytes are a pointer. A missing file is left as it was.
+ */
+export async function checkPointers(root, files, paths) {
+  const out = { ...files };
+  await Promise.all(
+    paths
+      .filter((p) => out[p])
+      .map(async (p) => {
+        let fh;
+        try {
+          fh = await open(join(root, p), 'r');
+          const { buffer, bytesRead } = await fh.read({ buffer: Buffer.alloc(64), position: 0 });
+          out[p] = { ...out[p], content: !isPointer(buffer.subarray(0, bytesRead).toString('latin1')) };
+        } catch {
+          // Deleted, or not readable: as ls-files said.
+        } finally {
+          await fh?.close();
+        }
+      }),
+  );
+  return out;
+}
+
+// The graph's log, by worktree: `git log --all` is the slowest git a load runs (it walks the history to
+// order it), and most loads (staging, an editor saving) change nothing it shows. What it shows depends on
+// every ref, HEAD (each worktree's), the shallow boundary and how many commits are asked for: its `stamp`.
+const logs = new Map();
+
+const logStamp = (repo, snap, graphLimit) =>
+  [
+    graphLimit,
+    snap.allRefs,
+    // HEAD: its commit and branch, from the status's header lines.
+    snap.status.split('\0').filter((p) => p.startsWith('# branch.oid ') || p.startsWith('# branch.head ')).join('\n'),
+    snap.worktrees,
+    shallowStamp(repo),
+  ].join('\0');
+
+function shallowStamp(repo) {
+  try {
+    const s = statSync(join(repo.commonDir, 'shallow'));
+    return `${s.mtimeMs}:${s.size}`;
+  } catch {
+    return '';
+  }
+}
+
+// A few repositories' worth: opening one after another from Repos shouldn't keep every graph.
+function keepLog(repo, entry) {
+  logs.delete(repo.root);
+  logs.set(repo.root, entry);
+  if (logs.size > 4) logs.delete(logs.keys().next().value);
+  return entry;
+}
+
+function readLog(repo, graphLimit) {
+  // An empty repository has nothing to log, which git reports as an error.
+  return git(repo.root, [
+    'log', '--date-order', '--decorate=full', ...DECORATE_REFS, `-n${graphLimit}`,
+    `--format=${LOG_FORMAT}`, '--exclude=refs/stash', '--all',
+  ]).catch(() => '');
+}
+
+/**
+ * The state and the log. Once a log has been read for this worktree and limit, the state is read first
+ * and the log only when its stamp changed; otherwise both at once, and nothing kept, since a ref that
+ * moved while they ran could leave the log older than the stamp. Read in turn, the log is never older.
+ */
+async function readStateAndLog(repo, graphLimit, state) {
+  const kept = logs.get(repo.root);
+  if (kept?.limit !== graphLimit) {
+    const [snap, log] = await Promise.all([state, readLog(repo, graphLimit)]);
+    keepLog(repo, { limit: graphLimit, stamp: null, log });
+    return { snap, log, kept: null };
+  }
+  const snap = await state;
+  const stamp = logStamp(repo, snap, graphLimit);
+  if (kept.stamp === stamp) return { snap, log: kept.log, kept };
+  const log = await readLog(repo, graphLimit);
+  const entry = keepLog(repo, { limit: graphLimit, stamp, log });
+  return { snap, log, kept: entry };
+}
+
+// `git submodule status` starts a few gits, and two `git describe`s in each submodule, so its answer is kept
+// with what it depends on: .gitmodules, HEAD's commit and the index (the commits recorded), the status's
+// lines about submodules, and in each submodule whether it's checked out, its HEAD and its refs (the commit
+// it has out and what describes it).
+const subLists = new Map();
+
+/** A submodule's git folder: its .git, or the folder a .git file names. Null when it isn't checked out. */
+async function subGitDir(path) {
+  try {
+    if ((await stat(join(path, '.git'))).isDirectory()) return join(path, '.git');
+    const m = /^gitdir: (.+)$/m.exec(await readFile(join(path, '.git'), 'utf8'));
+    return m ? resolve(path, m[1].trim()) : null;
+  } catch {
+    return null;
+  }
+}
+
+async function subStamp(repo, path) {
+  const dir = await subGitDir(join(repo.root, path));
+  if (!dir) return `${path}\t-`;
+  const head = (await readFile(join(dir, 'HEAD'), 'utf8').catch(() => '')).trim();
+  const ref = /^ref: (.+)$/.exec(head)?.[1];
+  const refs = await Promise.all([ref ? fileStamp(join(dir, ref)) : '', fileStamp(join(dir, 'packed-refs')), fileStamp(join(dir, 'refs', 'tags'))]);
+  return `${path}\t${head}\t${refs.join('\t')}`;
+}
+
+async function readSubmodules(repo, state) {
+  const kept = subLists.get(repo.root);
+  let stamp = null;
+  if (kept) {
+    const snap = await state;
+    const lines = snap.status.split('\0').filter((p) => p.startsWith('# branch.oid ') || /^[12u] \S+ S/.test(p));
+    const [modules, index, ...subs] = await Promise.all([
+      fileStamp(join(repo.root, '.gitmodules')),
+      fileStamp(join(repo.gitDir, 'index')),
+      ...parseSubmodules(kept.raw).map((sub) => subStamp(repo, sub.path)),
+    ]);
+    stamp = [modules, index, ...lines, ...subs].join('\n');
+    if (kept.stamp === stamp) return kept.raw;
+  }
+  let raw;
+  try {
+    raw = await git(repo.root, ['submodule', 'status']);
+  } catch {
+    return '';
+  }
+  subLists.delete(repo.root);
+  subLists.set(repo.root, { stamp, raw });
+  if (subLists.size > 4) subLists.delete(subLists.keys().next().value);
+  return raw;
+}
+
+/**
+ * Loads everything the views show. `freshRefs` lists the refs even when their files look as they were: polling
+ * listed them again and found a change.
+ */
+export async function loadRepo(repo, { graphLimit = 400, freshRefs = false } = {}) {
+  const state = readState(repo, REF_FORMAT, refsSignature, { allRefs: true, listRefs: () => loadRefs(repo, freshRefs), fresh: freshRefs });
+  const [{ snap, log, kept }, remotes, subs, lfs] = await Promise.all([
+    readStateAndLog(repo, graphLimit, state),
     readRemotes(repo),
     // Only a repository with submodules pays for asking about them. Not part of the signature: what
     // polling needs to notice (a submodule's commit or changes) is in the status already.
-    existsSync(join(repo.root, '.gitmodules')) ? git(repo.root, ['submodule', 'status']).catch(() => '') : '',
+    existsSync(join(repo.root, '.gitmodules')) ? readSubmodules(repo, state) : '',
+    readLfs(repo, state),
   ]);
   const status = parseStatus(snap.status);
   const refs = parseRefs(snap.refs);
-  const graph = layoutGraph(parseLog(log), {
-    wip: status.files.length ? status.branch.oid : null,
-    main: defaultBranch(refs, remotes.remotes)?.name,
-  });
+  const wip = status.files.length ? status.branch.oid : null;
+  const main = defaultBranch(refs, remotes.remotes)?.name;
+  // The same log laid out the same way, in the same colours, is the same graph: kept with the log.
+  const colours = `${theme.lanes.join()} ${theme.accent}`;
+  const graph =
+    kept?.graph && kept.wip === wip && kept.main === main && kept.colours === colours
+      ? kept.graph
+      : layoutGraph(parseLog(log), { wip, main });
+  if (kept) Object.assign(kept, { graph, wip, main, colours });
   // Without linked worktrees, the main one is the open one, and status already says what it has out.
   const worktrees = snap.worktrees
     ? parseWorktrees(snap.worktrees).map((w) => ({ ...w, path: resolve(w.path), current: samePath(w.path, repo.root) }))
@@ -170,6 +451,7 @@ export async function loadRepo(repo, { graphLimit = 400 } = {}) {
     stashes: await readStashes(repo, snap.refs),
     worktrees,
     submodules: parseSubmodules(subs, status.files),
+    lfs: lfs && { ...lfs, files: await checkPointers(repo.root, lfs.files, status.files.map((f) => f.path)) },
     ...remotes,
   };
 }

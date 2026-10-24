@@ -9,7 +9,7 @@ export const HELP = [
       ['1-7 / tab', 'Graph, Changes, Branches, Worktrees, Stash, PRs, Repos (shift+tab goes back)'],
       ['/ or :', 'Command prompt (slash commands, with completion)'],
       ['!', 'Run any git command, e.g.  !log --stat -5'],
-      ['f  p  P', 'Fetch all · Pull · Push (sets the upstream the first time; asks first if the commits have a file over 50 MB or what looks like a secret)'],
+      ['f  p  P', 'Fetch all · Pull · Push (sets the upstream the first time; asks first if the commits have a file over 50 MB or what looks like a secret, or their risk scores high: /risk)'],
       ['r', 'Refresh'],
       ['z', 'Undo the last commit, amend, merge, rebase, reset, switch or discard (asks first)'],
       ['esc', 'Cancel the running command, or clear the activity lines'],
@@ -19,6 +19,8 @@ export const HELP = [
       ['q / ctrl+c', 'Quit'],
       ['mouse', 'Click a tab, a row or the prompt · double-click does ↵ · the wheel scrolls\ndrag to select text, copied when you let go'],
       ['drop', 'Drop a folder on the terminal to open it (a folder of repositories lists them in Repos)\ndrop a file of the open repository to see its history'],
+      ['paste', 'A command line (/…) or what another app copied (family:v1:…), pasted in a view, goes into the prompt to run with ↵'],
+      ['/family  /take', 'What this repository offers the other apps (Bosun, Hail, Trawl), ↵ copies the line · /take <what one copied>: an exception, a file or a commit'],
     ],
   },
   {
@@ -45,6 +47,8 @@ export const HELP = [
       ['X', 'Reset the current branch to it (soft, mixed or hard)'],
       ['i', 'Interactive rebase from it (included) up to HEAD'],
       ['B', 'Bisect: mark it bad or good (or skip); git checks out the commit halfway, to try\nWith both marked, /bisect run <command> tests each commit for you: exit 0 good, 125 skip, 1-127 bad'],
+      ['Y', 'Copy /take commit for Sonar, which finds the deployments that carry it'],
+      ['w', 'Run it: a worktree of its own at the commit (../<repo>-at-<hash>, /run-at [commit]), and Bosun\'s /move to it copied, to paste there; /cleanup removes it'],
       ['e  R', 'Claude explains it · Claude reviews it (R on the working tree: your changes)'],
     ],
   },
@@ -88,11 +92,13 @@ export const HELP = [
       ['O  T', 'On a conflict: take ours · take theirs, for the whole file'],
       ['C', 'On a conflict: Claude proposes the resolved file, shown as a diff; asks before writing it'],
       ['H  B', 'The file\'s history · Blame it (who last changed each line)'],
+      ['L', 'Git LFS: lock the file on the LFS server, or unlock it if it\'s locked by you (/lfs locks lists them); files LFS keeps say LFS, or LFS pointer when only the pointer is here (/lfs pull downloads them)'],
       ['↵  →  l', 'Step into the diff to stage hunks or single lines (on a conflict: into its conflict blocks)'],
       ['w', 'The diff side by side, old and new in two columns, or back in one (a window 156 columns wide or more; remembered)'],
       { heading: 'Submodules', about: 'listed last with their state: not initialised, out of date, changes inside, up to date' },
       ['I', 'Initialise it and check out the commit recorded here (/submodule-update [path])'],
       ['o  ↵', 'Open it in Splice as its own repository'],
+      '/submodules lists them all, with their branches and the commits recorded and checked out.',
     ],
   },
   {
@@ -119,6 +125,28 @@ export const HELP = [
     ],
   },
   {
+    title: 'Submodules',
+    about: '/submodules: each one\'s state, branch, the commit recorded here and the one it has, and its own changes',
+    rows: [
+      ['↵', 'Open it in Splice as its own repository'],
+      ['I', 'Initialise it (clone it if need be) and check out the commit recorded here'],
+      ['u', 'Check out the commit recorded here, in one already initialised (asks first when it moves it)'],
+      ['f', 'Fetch inside it'],
+      ['U', 'Move it to the newest commit on its remote branch (git submodule update --remote; asks first)'],
+      ['s', 'Sync its URL from .gitmodules (git submodule sync)'],
+      ['y', 'Copy its path'],
+    ],
+  },
+  {
+    title: 'Git LFS locks',
+    about: '/lfs locks: the files locked on the LFS server, by whom and since when',
+    rows: [
+      ['x', 'Unlock it (yours)'],
+      ['X', 'Force someone else\'s lock open (asks first; /lfs unlock <path> --force)'],
+      ['y', 'Copy its path'],
+    ],
+  },
+  {
     title: 'File history',
     about: 'H, /history <path>: the commits that touched it, following renames',
     rows: [
@@ -128,12 +156,14 @@ export const HELP = [
   },
   {
     title: 'Blame',
-    about: 'B, /blame <path>: the working-tree file, so new lines show as not committed yet',
+    about: 'B, /blame <path>[:<line>]: the working-tree file, so new lines show as not committed yet',
     rows: [
       ['↵', 'Diff of the commit that last changed the line (esc comes back here)'],
       ['H', 'The file\'s history'],
       ['v  L', 'Select lines (v, move, v) · Every commit that changed them, and how (git log -L)'],
       ['e', 'Claude explains why the line, or the selected lines, are the way they are, from the file and the commits that changed them'],
+      ['Y', 'Copy /take file with the line, for the other apps'],
+      ['F', 'Blame of the future: the open pull requests whose changes touch the line, each with its hunk; ↵ its diff (/future <path>:<line>, or /future alone for the last blame\'s line)'],
     ],
   },
   {

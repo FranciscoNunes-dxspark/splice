@@ -1,6 +1,9 @@
 // The pure parts of file history and blame: parsing git's output, the rows drawn, path completion.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { isoDate, parseBlame, parseFileHistory } from '../src/parse.js';
 import { blameItems, repoPath } from '../src/history.js';
 import { completionKind, suggestionsFor } from '../src/commands.js';
@@ -130,6 +133,22 @@ test('typed paths become relative to the repository root', () => {
   assert.equal(repoPath(root, '"my file.txt"'), 'my file.txt');
   assert.equal(repoPath(root, process.platform === 'win32' ? 'C:\\repo\\docs\\x.md' : '/repo/docs/x.md'), 'docs/x.md');
   assert.equal(repoPath(root, ''), '');
+});
+
+test('an absolute path to the repository by another name (a link, a short name) is still inside it', () => {
+  const base = realpathSync.native(mkdtempSync(join(tmpdir(), 'splice-repopath-')));
+  try {
+    const root = join(base, 'repo');
+    mkdirSync(join(root, 'src'), { recursive: true });
+    writeFileSync(join(root, 'src', 'a.js'), 'a\n');
+    // A junction needs no privileges on Windows; elsewhere the type is ignored.
+    symlinkSync(root, join(base, 'other'), 'junction');
+    assert.equal(repoPath(root, join(base, 'other', 'src', 'a.js')), 'src/a.js');
+    assert.equal(repoPath(root, join(base, 'other', 'src', 'gone.js')), 'src/gone.js', 'a file that is not there any more');
+    assert.equal(repoPath(root, join(base, 'elsewhere', 'b.js')), '../elsewhere/b.js', 'outside it stays outside');
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
 });
 
 test('/history and /blame complete tracked files', () => {

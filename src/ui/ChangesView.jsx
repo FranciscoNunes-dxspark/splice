@@ -14,7 +14,8 @@ import { Lines, Panel, Row } from './parts.jsx';
 import { diffSegments } from './diffstyle.js';
 import { ConflictPane, useConflicts } from './ConflictPane.jsx';
 
-function fileSegments(f) {
+// `lfs`: the files Git LFS keeps (data.lfs.files), marked with whether the working tree has the content or only its pointer.
+function fileSegments(f, lfs) {
   const dir = dirname(f.path);
   const segs = [
     { text: `${f.code} `, color: codeColor(f.code), bold: true },
@@ -22,6 +23,8 @@ function fileSegments(f) {
     { text: basename(f.path), strong: true },
   ];
   if (f.orig && f.area === 'staged') segs.push({ text: `  ← ${f.orig}`, color: theme.dim });
+  const kept = lfs?.[f.path];
+  if (kept) segs.push(kept.content ? { text: '  LFS', color: theme.dim } : { text: '  LFS pointer', color: theme.warn });
   return segs;
 }
 
@@ -58,7 +61,7 @@ function subLines(s) {
     '',
     [{ text: what ?? '' }],
     '',
-    [{ text: 'I init/update · o open it as a repository', color: theme.dim }],
+    [{ text: 'I init/update · o open it as a repository · /submodules lists them all', color: theme.dim }],
   ];
 }
 
@@ -128,7 +131,8 @@ export function ChangesView({ data, ctx, width, height, active }) {
   }
 
   const diffKey = target === 'diff' && (split || pane === 'diff') ? `change:${data.root}:${fileKey}:${data.loadedAt}` : null;
-  const diff = useAsync(diffKey, () => changeDiff(data.root, f));
+  // A diff read for an older load is never asked for again, so once this one is on screen those go.
+  const diff = useAsync(diffKey, () => changeDiff(data.root, f), 60, { stale: (k) => k.startsWith('change:') && !k.endsWith(`:${data.loadedAt}`) });
   const raw = diff.error ? diff.error.message : (diff.value ?? '');
   const parsed = useMemo(() => parseDiff(raw), [raw]);
   const dRows = useMemo(() => diffRows(parsed, raw), [parsed, raw]);
@@ -203,6 +207,7 @@ export function ChangesView({ data, ctx, width, height, active }) {
     if (input === 'B') return a.blame(ctx, f.path);
     if (input === 's') return a.stashFile(ctx, f);
     if (input === 'i') return a.ignoreFile(ctx, f);
+    if (input === 'L') return a.lfsToggleLock(ctx, f);
     if (input === 'O' && f.area === 'conflict') return a.resolveWith(ctx, f, 'ours');
     if (input === 'T' && f.area === 'conflict') return a.resolveWith(ctx, f, 'theirs');
     if (input === 'C' && f.area === 'conflict') return a.claudeResolve(ctx, f);
@@ -328,7 +333,7 @@ export function ChangesView({ data, ctx, width, height, active }) {
                 selected={idx === nav.index}
                 marked={fileSpan && idx >= fileSpan[0] && idx <= fileSpan[1]}
                 focused={active && pane === 'files'}
-                segments={fileSegments(row.file)}
+                segments={fileSegments(row.file, data.lfs?.files)}
               />
             );
           })}

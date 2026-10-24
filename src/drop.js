@@ -38,3 +38,5 @@ export function insideRepo(root, path, { windows = process.platform === 'win32' 
   if (!rel || rel === '..' || rel.startsWith(`..${p.sep}`) || p.isAbsolute(rel)) return null;
   return rel.replace(/\\/g, '/');
 }
+
+export { pathArg } from './family.js';

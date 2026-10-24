@@ -89,3 +89,112 @@ test('Changes lists submodules with their state; I initialises one and o opens i
     app.unmount();
   }
 });
+
+const type = async (stdin, text) => {
+  for (const ch of text) {
+    stdin.write(ch);
+    await new Promise((r) => setTimeout(r, 5));
+  }
+};
+
+test('/submodules lists recorded and checked-out commits, branch and changes; u, f, U and s act on one', async () => {
+  const sub = join(dir, 'lib');
+  // Left by the test before: initialised, with a commit of its own on top of the recorded one.
+  if (!/^[+ ]/.test(git('submodule', 'status'))) git('submodule', 'update', '--init', '-q');
+  const recorded = git('ls-files', '--stage', '--', 'lib').split(' ')[1];
+  run(sub, 'checkout', '-q', '-B', 'work');
+  writeFileSync(join(sub, 'extra.txt'), 'extra\n');
+  run(sub, 'add', '.');
+  run(sub, '-c', 'user.name=T', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', 'commit', '-q', '-m', 'Extra');
+  writeFileSync(join(sub, 'scratch.txt'), 'scratch\n');
+  const has = run(sub, 'rev-parse', 'HEAD');
+
+  lastApp = render(React.createElement(App, { initialPath: dir, config: { recent: [], roots: [], history: [] } }));
+  const app = lastApp;
+  const frame = () => app.lastFrame() ?? '';
+  // After each key, the list is read again (even after a no): one pressed while it's loading has no row to
+  // act on, so wait until a frame since `mark` showed it loading and the last one doesn't.
+  const reread = (mark, what) => until(() => app.frames.slice(mark).some((f) => f.includes('Loading…')) && !frame().includes('Loading…') && frame().includes('lib  '), what);
+  try {
+    await until(() => frame().includes('Add the library'), 'the graph');
+    await type(app.stdin, '/submodules');
+    app.stdin.write('\r');
+    const row = new RegExp(`lib\\s+out of date\\s+⎇ work\\s+recorded ${recorded.slice(0, 7)} · has ${has.slice(0, 7)}\\s+1 untracked`);
+    await until(() => frame().includes('Submodules') && row.test(frame()), 'the submodule with both commits, its branch and its untracked file');
+
+    // u checks out the recorded commit, after asking.
+    app.stdin.write('u');
+    await until(() => frame().includes('Check out the recorded commit in lib?'), 'the question');
+    app.stdin.write('1');
+    await until(() => run(sub, 'rev-parse', 'HEAD') === recorded, 'the recorded commit checked out');
+    await until(() => new RegExp(`lib\\s+changes inside\\s+detached\\s+at ${recorded.slice(0, 7)}`).test(frame()), 'the list read again');
+
+    // f fetches inside it.
+    let mark = app.frames.length;
+    app.stdin.write('f');
+    await until(() => frame().includes('git -C lib fetch --prune'), 'the fetch inside it');
+    await reread(mark, 'the list read again after the fetch');
+
+    // U moves it to its remote branch's newest commit, after asking.
+    writeFileSync(join(lib, 'newer.txt'), 'newer\n');
+    run(lib, 'add', '.');
+    run(lib, 'commit', '-q', '-m', 'Newer');
+    const tip = run(lib, 'rev-parse', 'HEAD');
+    app.stdin.write('U');
+    await until(() => frame().includes('Move lib to the newest commit on its remote branch?'), 'the question');
+    mark = app.frames.length;
+    app.stdin.write('2');
+    await until(() => !frame().includes('Move lib to the newest'), 'the question answered no');
+    await reread(mark, 'the list read again after no');
+    assert.equal(run(sub, 'rev-parse', 'HEAD'), recorded);
+    app.stdin.write('U');
+    await until(() => frame().includes('Move lib to the newest commit on its remote branch?'), 'the question again');
+    app.stdin.write('1');
+    await until(() => run(sub, 'rev-parse', 'HEAD') === tip, 'the remote branch checked out');
+    await until(() => new RegExp(`recorded ${recorded.slice(0, 7)} · has ${tip.slice(0, 7)}`).test(frame()), 'the list read again');
+
+    // s syncs its URL.
+    mark = app.frames.length;
+    app.stdin.write('s');
+    await until(() => frame().includes('git submodule sync --recursive -- lib'), 'the sync');
+    await reread(mark, 'the list read again after the sync');
+
+    // ↵ opens it as its own repository.
+    app.stdin.write('\r');
+    await until(() => frame().includes('│  lib  ⎇ detached'), 'the submodule open as its own repository');
+  } finally {
+    app.unmount();
+  }
+});
+
+test('a load keeps git submodule status\'s answer until a submodule or what records it changes', async () => {
+  const { findRepo, loadRepo } = await import('../src/repo.js');
+  const path = join(base, 'kept');
+  init(path);
+  writeFileSync(join(path, 'a.txt'), 'a\n');
+  run(path, 'add', '.');
+  run(path, 'commit', '-q', '-m', 'First');
+  run(path, '-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', lib, 'lib');
+  run(path, 'commit', '-q', '-m', 'Add the library');
+  const repo = await findRepo(path);
+  const subs = async () => (await loadRepo(repo)).submodules.map((s) => [s.path, s.state, s.sha.slice(0, 7), s.describe]);
+  const head = (cwd) => run(cwd, 'rev-parse', 'HEAD').slice(0, 7);
+  const sub = join(path, 'lib');
+  for (let i = 0; i < 3; i++) assert.deepEqual(await subs(), [['lib', 'ok', head(sub), 'heads/main']]);
+  // A tag in the submodule describes it.
+  run(sub, 'tag', 'v1');
+  assert.deepEqual(await subs(), [['lib', 'ok', head(sub), 'v1']]);
+  // Another commit checked out in it (the clone has no identity of its own, and CI's git none globally).
+  run(sub, 'config', 'user.name', 'Test');
+  run(sub, 'config', 'user.email', 'test@example.com');
+  run(sub, 'config', 'commit.gpgsign', 'false');
+  writeFileSync(join(sub, 'more.txt'), 'more\n');
+  run(sub, 'add', '.');
+  run(sub, 'commit', '-q', '-m', 'More');
+  assert.deepEqual((await subs())[0].slice(0, 3), ['lib', 'out of date', head(sub)]);
+  run(sub, 'checkout', '-q', 'HEAD~1');
+  assert.deepEqual(await subs(), [['lib', 'ok', head(sub), 'v1']]);
+  // Taken out of the working tree.
+  run(path, 'submodule', 'deinit', '-q', '-f', 'lib');
+  assert.deepEqual((await subs()).map((s) => s.slice(0, 2)), [['lib', 'uninitialised']]);
+});

@@ -152,7 +152,10 @@ export function GraphView({ data, ctx, width, height, active, filter, jump }) {
   // Newest first, as drawn.
   const picked = span ? rows.slice(span[0], span[1] + 1).filter((r) => r.commit).map((r) => r.commit) : [];
 
-  const graphW = filter ? 0 : Math.min(Math.floor(innerW * 0.35), Math.max(1, ...data.graph.map((r) => r.graph.length)));
+  // The widest graph and the commits among the rows: passes over every loaded row, done when they change rather than on every key.
+  const widest = useMemo(() => data.graph.reduce((w, r) => Math.max(w, r.graph.length), 1), [data.graph]);
+  const commits = useMemo(() => rows.reduce((n, r) => n + (r.commit ? 1 : 0), 0), [rows]);
+  const graphW = filter ? 0 : Math.min(Math.floor(innerW * 0.35), widest);
   const metaOn = innerW >= 70;
   const budget = innerW - 2 - (metaOn ? META_W : 0);
 
@@ -190,6 +193,8 @@ export function GraphView({ data, ctx, width, height, active, filter, jump }) {
     else if (input === 'v') a.revert(ctx, c);
     else if (input === 'X') a.reset(ctx, c.hash, short);
     else if (input === 'B') a.bisectMark(ctx, c);
+    else if (input === 'w') a.runAt(ctx, c.hash);
+    else if (input === 'Y') a.shareCommit(ctx, c);
     // From this commit (included) up to HEAD.
     else if (input === 'i') a.openRebase(ctx, c.parents[0] ?? null, short);
     else if (input === 'e' || input === 'R') a.claudeLook(ctx, input === 'e' ? 'explain' : 'review', { kind: 'commit', hash: c.hash, subject: c.subject });
@@ -207,7 +212,6 @@ export function GraphView({ data, ctx, width, height, active, filter, jump }) {
   });
 
   const visible = rows.slice(nav.offset, nav.offset + innerH);
-  const commits = rows.filter((r) => r.commit).length;
   const filtered = filter ? filterTitle(filter, commits) : { title: 'Commits', empty: 'No commits yet.' };
   const hint = span
     ? `${picked.length} selected · C cherry-pick · esc`

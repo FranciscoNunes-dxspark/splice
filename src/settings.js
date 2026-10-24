@@ -80,6 +80,20 @@ export function settingRows(config, { file = '', mouse = true } = {}) {
       action: 'toggle',
     },
     {
+      id: 'riskBeforePush',
+      label: 'Risk check before push',
+      value: isOn(config.riskBeforePush) ? 'on' : 'off',
+      note: isOn(config.riskBeforePush) ? 'asks first when the commits score high (/risk says why)' : 'push without scoring the commits',
+      action: 'toggle',
+    },
+    {
+      id: 'familyMoods',
+      label: 'Family moods',
+      value: isOn(config.familyMoods) ? 'on' : 'off',
+      note: isOn(config.familyMoods) ? 'Twig tells the other apps how it feels, and says when theirs are worried, sad or happy' : 'keep to itself',
+      action: 'toggle',
+    },
+    {
       id: 'cleanupKeep',
       label: 'Keep on the remote',
       value: keep.length ? keep.join(', ') : 'none',

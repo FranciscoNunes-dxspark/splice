@@ -22,6 +22,9 @@ const PIECES = {
   [U]: '│', [D]: '│', [L]: '─', [R]: '─',
 };
 
+// An empty cell.
+const BLANK = Object.freeze({ ch: ' ' });
+
 /**
  * Lays out the graph for `rows` (one commit each, children before their parents, as `git log
  * --date-order` lists them). Returns `rows`: those rows, each with a `graph` (one `{ ch, color, node }`
@@ -125,16 +128,28 @@ export function layoutGraph(rows, { wip, main } = {}) {
 
   // A cell keeps the colour of what runs down it and of what runs across it apart: a line down that
   // goes on through it shows its own, otherwise the line across does, so a merge's line is one colour
-  // all the way to its arrow.
-  const grid = Array.from({ length: height }, () => []);
+  // all the way to its arrow. A row's cells are kept in arrays of numbers, not an object each (a long
+  // graph has millions): the sides each cell reaches, and the tracks (by index) running down and across it.
+  tracks.forEach((t, i) => {
+    t.id = i;
+    // Its cells' looks, by the sides they reach (see below).
+    t.looks = [];
+  });
+  const sidesOf = Array.from({ length: height }, () => []);
+  const downOf = Array.from({ length: height }, () => []);
+  const acrossOf = Array.from({ length: height }, () => []);
+  // The column of each row's commit, and the arrows into merges ({ ch, color } by row, then column).
+  const nodeAt = new Array(height);
+  const rowAt = new Array(height);
+  at.forEach((y, i) => (rowAt[y] = i));
+  const arrows = new Map();
   const mark = (y, x, sides, t) => {
-    const cell = (grid[y][x] ??= { sides: 0 });
-    if (cell.node) return;
-    cell.sides |= sides;
-    const way = sides & (U | D) ? 'v' : 'h';
-    if (cell[way] === undefined || t.rank < cell[way].rank) cell[way] = t;
+    if (nodeAt[y] === x) return;
+    sidesOf[y][x] |= sides;
+    const way = sides & (U | D) ? downOf[y] : acrossOf[y];
+    const was = way[x];
+    if (was === undefined || (was >= 0 && t.rank < tracks[was].rank)) way[x] = t.id;
   };
-  const colorOf = (cell) => ((cell.sides & (U | D)) === (U | D) || !cell.h ? cell.v : cell.h).color;
   const down = (col, from, to, t) => {
     for (let y = from; y <= to; y++) mark(y, 2 * col, U | D, t);
   };
@@ -145,7 +160,7 @@ export function layoutGraph(rows, { wip, main } = {}) {
   rows.forEach((r, i) => {
     const t = owner[i];
     const y = at[i];
-    grid[y][2 * t.column] = { node: r.commit.parents.length > 1 ? '○' : '●', color: t.color };
+    nodeAt[y] = 2 * t.column;
     r.commit.parents.forEach((p, k) => {
       const j = index.get(p);
       if (j === undefined) {
@@ -162,12 +177,15 @@ export function layoutGraph(rows, { wip, main } = {}) {
         across(bend, t.column, to.column, t);
         mark(bend, 2 * to.column, D, to);
       } else {
-        // A merge: across to the merged branch's column, then down it, with an arrow into the merge.
+        // A merge: across to the merged branch's column, then down it, with an arrow into the merge,
+        // in the merged branch's colour, which nothing across the cell then takes over (-1).
         across(y, t.column, to.column, to);
         mark(y, 2 * to.column, D, to);
         down(to.column, y + 1, at[j] - 1, to);
-        const arrow = grid[y][to.column > t.column ? 2 * t.column + 1 : 2 * t.column - 1];
-        Object.assign(arrow, { arrow: to.column > t.column ? '<' : '>', h: { color: to.color, rank: -1 } });
+        const x = to.column > t.column ? 2 * t.column + 1 : 2 * t.column - 1;
+        if (!arrows.has(y)) arrows.set(y, new Map());
+        arrows.get(y).set(x, { ch: to.column > t.column ? '<' : '>', color: to.color });
+        acrossOf[y][x] = -1;
       }
     });
   });
@@ -175,14 +193,46 @@ export function layoutGraph(rows, { wip, main } = {}) {
   // A line from the working-tree row down to HEAD, when nothing comes down that column above it.
   const k = wip ? index.get(wip) : undefined;
   const head = k === undefined ? null : owner[k];
-  if (head && grid.slice(0, at[k]).every((cells) => !cells[2 * head.column]?.node && !(cells[2 * head.column]?.sides & U))) {
+  if (head && sidesOf.slice(0, at[k]).every((sides, y) => nodeAt[y] !== 2 * head.column && !(sides[2 * head.column] & U))) {
     down(head.column, 0, at[k] - 1, head);
   }
 
-  const out = grid.map((cells) => {
-    const graph = Array.from(cells, (cell) =>
-      !cell ? { ch: ' ' } : cell.node ? { ch: cell.node, color: cell.color, node: true } : { ch: cell.arrow ?? PIECES[cell.sides] ?? ' ', color: colorOf(cell) },
-    );
+  // Cells are only read once laid out, so each look (character and colour) is one object, shared.
+  const looks = new Map();
+  const look = (ch, color, node) => {
+    let byCh = looks.get(color);
+    if (!byCh) looks.set(color, (byCh = new Map()));
+    const key = node ? `${ch}*` : ch;
+    let c = byCh.get(key);
+    if (!c) byCh.set(key, (c = node ? { ch, color, node: true } : { ch, color }));
+    return c;
+  };
+  const out = sidesOf.map((sides, y) => {
+    const graph = [];
+    const node = nodeAt[y];
+    const arrowsHere = arrows.get(y);
+    const width = Math.max(sides.length, node === undefined ? 0 : node + 1);
+    for (let x = 0; x < width; x++) {
+      if (x === node) {
+        const t = owner[rowAt[y]];
+        graph.push(look(rows[rowAt[y]].commit.parents.length > 1 ? '○' : '●', t.color, true));
+        continue;
+      }
+      const s = sides[x];
+      if (s === undefined) {
+        graph.push(BLANK);
+        continue;
+      }
+      const v = downOf[y][x];
+      const h = acrossOf[y][x];
+      if (h < 0) {
+        const arrow = arrowsHere.get(x);
+        graph.push(look(arrow.ch, (s & (U | D)) === (U | D) ? tracks[v].color : arrow.color, false));
+        continue;
+      }
+      const t = tracks[(s & (U | D)) === (U | D) || h === undefined ? v : h];
+      graph.push((t.looks[s] ??= { ch: PIECES[s] ?? ' ', color: t.color }));
+    }
     while (graph.length && graph.at(-1).ch === ' ') graph.pop();
     return { graph };
   });

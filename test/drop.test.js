@@ -9,8 +9,15 @@ import { join } from 'node:path';
 import React from 'react';
 import { render } from 'ink-testing-library';
 import { removeTemp } from './temp.js';
-import { droppedPaths, insideRepo } from '../src/drop.js';
+import { droppedPaths, insideRepo, pathArg } from '../src/drop.js';
+import { quoteArg } from '../src/family.js';
 import { App } from '../src/ui/App.jsx';
+
+test("a path as a sibling's /open line quotes it, or as typed", () => {
+  for (const p of ['/w/my shop', 'C:\\work\\my shop', 'C:\\a"b', '/plain']) assert.equal(pathArg(quoteArg(p)), p);
+  assert.equal(pathArg('"C:\\work\\shop"'), 'C:\\work\\shop', 'typed in quotes, backslashes kept');
+  assert.equal(pathArg(' /w/shop '), '/w/shop');
+});
 
 test('dropped paths: absolute, quoted, escaped or as file:// URLs; anything else is typing', () => {
   const win = { windows: true };

@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useInput } from 'ink';
 import * as a from '../actions.js';
 import { renderMarkdown } from '../markdown.js';
@@ -121,6 +121,13 @@ export function TextViewer({ title, text, loading, diff, rangeDiff, markdown, th
   // Kept in refs as well as state: keys typed faster than renders each see the one before.
   const [search, setSearchState] = useState({ query: '', typing: false, from: 0 });
   const searchRef = useRef(search);
+  // While a search is being typed, a paste is the search's, not the prompt's (App's paste rule asks).
+  useEffect(() => {
+    ctx.viewerTyping = () => searchRef.current.typing;
+    return () => {
+      ctx.viewerTyping = null;
+    };
+  }, []);
   const setSearch = (next) => {
     searchRef.current = typeof next === 'function' ? next(searchRef.current) : next;
     setSearchState(searchRef.current);

@@ -1,7 +1,7 @@
 // /cleanup: local branches and linked worktrees with nothing of yours on them, and branches on the PR
 // host's remote whose pull request was merged. `readCleanup` asks git for the facts in a handful of
 // processes; `planCleanup` (pure) decides what can go and why.
-import { relative, resolve } from 'node:path';
+import { basename, dirname, relative, resolve } from 'node:path';
 import { samePath } from './config.js';
 import { git } from './git.js';
 import { prSource } from './hosting.js';
@@ -15,6 +15,18 @@ export const reviewBranchId = (name) => {
   return m ? Number(m[1]) : null;
 };
 const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+
+/**
+ * Whether worktree `w` is one /run-at made beside the main working tree `main` (prflow.js's runAtPath):
+ * named <repo>-at-<short hash>, with HEAD detached at that commit. The short hash, else null.
+ */
+export function runAtHash(w, main) {
+  if (!main || w.branch || !w.head) return null;
+  const name = basename(w.path);
+  const prefix = `${basename(main)}-at-`;
+  const hash = name.startsWith(prefix) ? name.slice(prefix.length) : '';
+  return /^[0-9a-f]{7,}$/.test(hash) && w.head.startsWith(hash) && samePath(dirname(w.path), dirname(main)) ? hash : null;
+}
 
 /**
  * The pattern of the "Keep on the remote" setting that `branch` (its name there) matches, else null. A
@@ -130,15 +142,18 @@ export function planCleanup({
   const goBranches = [];
   const kept = [];
   const keepWorktree = (w, why) => kept.push({ name: w.path, worktree: true, why });
+  const main = worktrees.find((w) => w.main)?.path;
   for (const w of worktrees) {
     if (w.main || w.bare || w.current) continue;
     const n = changes[w.path];
+    // One /run-at made, to run an old commit: said as such, so it's clear what it was for.
+    const runAt = runAtHash(w, main);
     if (w.locked) keepWorktree(w, 'locked');
     else if (w.prunable) goWorktrees.push({ path: w.path, branch: w.branch, prune: true, why: "its folder is gone: prune git's record of it" });
     else if (n == null) keepWorktree(w, "couldn't read its status");
-    else if (n > 0) keepWorktree(w, plural(n, 'uncommitted change'));
+    else if (n > 0) keepWorktree(w, runAt ? `made by /run-at for ${runAt}, but has ${plural(n, 'uncommitted change')} (x in Worktrees removes it)` : plural(n, 'uncommitted change'));
     else if (!w.branch && lostHeads.has(w.head)) keepWorktree(w, 'detached, with commits no branch has');
-    else goWorktrees.push({ path: w.path, branch: w.branch, prune: false, why: 'no changes' });
+    else goWorktrees.push({ path: w.path, branch: w.branch, prune: false, why: runAt ? `made by /run-at for ${runAt}, no changes` : 'no changes' });
   }
   const leaving = new Set(goWorktrees.map((w) => w.path));
   const checkedOut = new Map(worktrees.filter((w) => w.branch).map((w) => [w.branch, w]));

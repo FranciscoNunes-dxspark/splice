@@ -1,5 +1,6 @@
 import * as a from './actions.js';
 import { splitArgs } from './parse.js';
+import { pathArg } from './drop.js';
 
 // Slash commands. `args` in square brackets are optional, so picking the command runs it straight away.
 // `complete` names the list offered while typing the first argument.
@@ -25,10 +26,13 @@ export const COMMANDS = [
   { name: 'update-branch', args: '[base] [--stack]', desc: 'Rebase the current branch onto the latest default branch (or base); --stack moves the branches stacked with it too', complete: 'refs', run: (ctx, s) => a.updateBranch(ctx, s) },
   { name: 'pull', args: '[--rebase]', desc: 'Pull the current branch', run: (ctx, s) => a.pull(ctx, splitArgs(s)) },
   { name: 'push', args: '[--force] [remote]', desc: 'Push the current branch (sets the upstream the first time; asks first if its commits have big files or secrets); to another remote if named', run: (ctx, s) => a.push(ctx, splitArgs(s)) },
+  { name: 'risk', desc: 'How risky the commits a push would send look (churn, whose files, size, tests), and why', run: (ctx) => a.risk(ctx) },
   { name: 'remote', args: '[add|rename|remove|set-url] [...]', desc: 'The remotes: list them, or add <name> <url>, rename <old> <new>, remove <name>, set-url <name> <url>', run: (ctx, s) => a.remote(ctx, s) },
   { name: 'upstream', args: '[branch] <remote/branch>', desc: 'Set the branch a local branch tracks (--unset to stop)', complete: 'refs', run: (ctx, s) => a.upstream(ctx, s) },
   { name: 'stash', args: '[-u | --no-untracked] [message]', desc: 'Stash all changes (untracked files too, unless set off in /settings), with an optional message', run: (ctx, s) => a.stash(ctx, s) },
+  { name: 'submodules', desc: 'Every submodule: the commit recorded against the one it has, its branch and its own changes; open, update, fetch or sync one', run: (ctx) => a.showSubmodules(ctx) },
   { name: 'submodule-update', args: '[path]', desc: 'Initialise and check out the recorded commit of every submodule, or one', run: (ctx, s) => a.updateSubmodules(ctx, s) },
+  { name: 'lfs', args: '[pull|fetch|locks|lock <path>|unlock <path> [--force]]', desc: 'Git LFS: alone, its files (downloaded or only pointers) and git lfs status; pull or fetch the files; the locks, or lock or unlock a file', run: (ctx, s) => a.lfs(ctx, s) },
   { name: 'ignore', args: '<pattern>', desc: "Add a pattern to the repository's .gitignore (i on a file in Changes offers some)", run: (ctx, s) => a.ignore(ctx, s) },
   { name: 'discard', desc: 'Discard all uncommitted changes (asks first)', run: (ctx) => a.discardAll(ctx) },
   { name: 'undo', desc: 'Undo the last commit, amend, merge, rebase, reset, switch or discard (asks first)', run: (ctx) => a.undo(ctx) },
@@ -58,6 +62,7 @@ export const COMMANDS = [
   { name: 'split', desc: 'Claude splits your uncommitted changes into logical commits, each reviewed before it is made', run: (ctx) => a.claudeSplit(ctx) },
   { name: 'ship', args: '[--into <branch>]', desc: 'Push the branch, open its pull request (Claude drafts it) and turn on auto-merge, in one go; once merged, switch to the default branch, pull and delete it', run: (ctx, s) => a.ship(ctx, s) },
   { name: 'unlock-worktree', args: '[path]', desc: 'Unlock a locked worktree (the only locked one, or the one at a path; u in Worktrees)', run: (ctx, s) => a.unlockWorktree(ctx, s) },
+  { name: 'run-at', args: '[commit]', desc: 'Check a commit (HEAD if none given) out in a worktree of its own (../<repo>-at-<hash>) and copy the line that runs it in Bosun (w in Graph)', complete: 'refs', run: (ctx, s) => a.runAt(ctx, s) },
   { name: 'review-pr', args: '<number>', desc: 'Check a pull request out in a worktree of its own (../<repo>-pr-<n>) and open it, or bring that one up to date (w in PRs)', run: (ctx, s) => a.reviewPr(ctx, s) },
   { name: 'backport', args: '<pr-number> <branch>', desc: 'Cherry-pick a merged pull request onto a release branch, as backport/<n>-to-<branch>, push it and open its pull request (asks first)', run: (ctx, s) => a.backport(ctx, s) },
   { name: 'changelog', args: '[since-tag] [--into-release <tag>]', desc: 'Claude writes release notes from the commits and merged PRs since a tag (the latest by default); --into-release: the notes of that release', complete: 'refs', run: (ctx, s) => a.changelog(ctx, s) },
@@ -82,7 +87,10 @@ export const COMMANDS = [
   { name: 'continue', desc: 'Continue the merge, rebase, cherry-pick or revert', run: (ctx) => a.continueOp(ctx) },
   { name: 'abort', desc: 'Abort the merge, rebase, cherry-pick or revert', run: (ctx) => a.abortOp(ctx) },
   { name: 'history', args: '<path>', desc: "A file's commits, following renames (deleted files too)", complete: 'files', run: (ctx, s) => a.fileHistory(ctx, s) },
-  { name: 'blame', args: '<path>', desc: 'Who last changed each line of a file', complete: 'files', run: (ctx, s) => a.blame(ctx, s) },
+  { name: 'blame', args: '<path>[:<line>]', desc: 'Who last changed each line of a file (from that line, given one)', complete: 'files', run: (ctx, s) => a.blame(ctx, s) },
+  { name: 'future', args: '[<path>:<line>]', desc: "The open pull requests whose changes touch a line (none given: the line under the cursor of the blame open, or the last one shown; F in blame)", complete: 'files', run: (ctx, s) => a.future(ctx, s) },
+  { name: 'family', desc: 'What this repository offers the other apps (Bosun, Hail, Trawl): ↵ copies the command to paste into one', run: (ctx) => a.family(ctx) },
+  { name: 'take', args: '<context>', desc: 'What another app copied for Splice: an exception or a file opens blame at its line, a commit its diff', run: (ctx, s) => a.take(ctx, s) },
   {
     name: 'find',
     args: '<text>',
@@ -107,7 +115,7 @@ export const COMMANDS = [
     ],
     run: (ctx, s) => a.filter(ctx, s),
   },
-  { name: 'open', args: '<path>', desc: 'Open a repository', complete: 'repos', run: (ctx, s) => (s ? ctx.openRepo(s) : ctx.prefill('/open ')) },
+  { name: 'open', args: '<path>', desc: 'Open a repository', complete: 'repos', run: (ctx, s) => (s ? ctx.openRepo(pathArg(s)) : ctx.prefill('/open ')) },
   { name: 'clone', args: '<url> [folder]', desc: 'Clone a repository next to the open one (or into the folder Splice started in), then open it', run: (ctx, s) => a.clone(ctx, s) },
   { name: 'scan', args: '<folder>', desc: 'Add a folder to scan for repositories', run: (ctx, s) => ctx.addRoot(s) },
   { name: 'last', desc: 'Show the full output of the last command', run: (ctx) => ctx.showLast() },

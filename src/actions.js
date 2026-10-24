@@ -30,6 +30,7 @@ import {
   prNumber,
   reviewBranch,
   reviewPath,
+  runAtPath,
   shipArgs,
   shipSteps,
   shippedEntry,
@@ -37,7 +38,7 @@ import {
   withShipped,
   withoutShipped,
 } from './prflow.js';
-import { cloneFolder, defaultBranch, filterArgs, parseBlame, filterLabel, filterLogArgs, findArgs, firstBadCommit, parseLog, parseNameStatus, parseStatus, relTime, remoteArgs, searchArgs, splitArgs, stashArgs, upstreamArgs } from './parse.js';
+import { cloneFolder, defaultBranch, filterArgs, parseBlame, filterLabel, filterLogArgs, findArgs, firstBadCommit, parseLog, parseNameStatus, parseStatus, relTime, remoteArgs, searchArgs, splitArgs, stashArgs, parseSubmodules, upstreamArgs } from './parse.js';
 import { buildPatch, coversAll, parseDiff, picksBySignature, splitUnits } from './patch.js';
 import {
   COMMIT_LIST_FORMAT,
@@ -53,10 +54,19 @@ import {
 } from './rebase.js';
 import { blobIds, checkCommits, foundCount, foundSummary, parseBatchCheck, parsePushLog, pushCheckText, pushLogArgs, pushRange } from './pushcheck.js';
 import { eachLimited, fetchRepo } from './repos.js';
+import { checkPointers } from './repo.js';
 import { nextTheme, settingRows, settingSegments } from './settings.js';
 import { forcePushes, forwardInput, planSync, rebasingElsewhere, syncSummary, syncText, updateBranchArgs } from './sync.js';
 import { SIGNING_KEYS, checkGpgKey, explainSigning, needsPinentryCheck, signingConfig } from './signing.js';
+import { LFS_MISSING, lfsCommand, lfsError, lfsText, parseLfsFiles, parseLfsLocks, withoutHints } from './lfs.js';
+import { run as runGit } from './git.js';
+import { commitsLine, insideSummary, parseGitlinks, parseInside, submoduleInfo } from './submodules.js';
 import { fit } from './text.js';
+import { futureItems, futureRefspecs, lineInBase, nameList, touchingHunks } from './future.js';
+import { historyArgs, outgoingArgs, parseRiskLog, riskBlobs, riskFiles, riskSummary, riskText, scoreRisk } from './risk.js';
+import { familyOffers } from './siblings.js';
+import { TAKES, exceptionFrames, framesInRepo, pathAndLine } from './take.js';
+import { APP_NAMES, TAKEN_BY, contextIn, copiedNote, describeContext, matchFrameFile, notMine, projectAt, shareLine, takeLine } from './family.js';
 import { DEFAULT_ACCENT, applyTheme, isColour, setAccent, theme } from './theme.js';
 import {
   REFLOG_FORMAT,
@@ -192,14 +202,14 @@ export async function push(ctx, args = []) {
       });
       if (!ok) return;
     }
-    if (!(await checkBeforePush(ctx, pushRange({ upstream: branch.upstream, remote: named })))) return { ok: false };
+    if (!(await beforePush(ctx, pushRange({ upstream: branch.upstream, remote: named })))) return { ok: false };
     // Only a branch without an upstream starts tracking the remote it was pushed to.
     return ctx.exec(['push', ...flags, ...(branch.upstream ? [] : ['-u']), named, branch.head], { label: 'Pushing' });
   }
   if (!branch.upstream) {
     const remote = remotes.includes('origin') ? 'origin' : remotes[0];
     if (!remote) return ctx.note('This repository has no remote. Add one with: !remote add origin <url>', 'error');
-    if (!(await checkBeforePush(ctx, pushRange()))) return { ok: false };
+    if (!(await beforePush(ctx, pushRange()))) return { ok: false };
     return ctx.exec(['push', ...flags, '-u', remote, branch.head], { label: 'Pushing' });
   }
   if (flags.includes('--force-with-lease')) {
@@ -211,8 +221,74 @@ export async function push(ctx, args = []) {
     });
     if (!ok) return;
   }
-  if (!(await checkBeforePush(ctx, pushRange({ upstream: branch.upstream })))) return { ok: false };
+  if (!(await beforePush(ctx, pushRange({ upstream: branch.upstream })))) return { ok: false };
   return ctx.exec(['push', ...flags], { label: 'Pushing' });
+}
+
+/** Both checks before a push: big files and secrets, then the risk score. True to push. */
+const beforePush = async (ctx, range) => (await checkBeforePush(ctx, range)) && (await riskBeforePush(ctx, range));
+
+/** The risk of pushing the commits in `range` (risk.js): three gits, whatever the size of the push. Null when there's nothing to push. */
+async function readRisk(ctx, range, signal) {
+  const outgoing = parseRiskLog(await ctx.git(outgoingArgs(range), { signal }));
+  if (!outgoing.length) return null;
+  const blobs = riskBlobs(outgoing);
+  const [sizes, history] = await Promise.all([
+    blobs.length ? ctx.git(['cat-file', '--batch-check'], { signal, input: `${blobs.join('\n')}\n` }).then(parseBatchCheck) : new Map(),
+    riskFiles(outgoing).length ? ctx.git(historyArgs(riskFiles(outgoing)), { signal }).then(parseRiskLog) : [],
+  ]);
+  return scoreRisk({ outgoing, history, sizes });
+}
+
+/** The range a plain push of the current branch would send. */
+function currentPushRange(ctx) {
+  const { branch } = ctx.data.status;
+  return pushRange(branch.upstream ? { upstream: branch.upstream } : {});
+}
+
+/** /risk: how risky the commits a push would send look, and why, in the viewer. */
+export async function risk(ctx) {
+  if (!needRepo(ctx)) return;
+  let found = null;
+  const r = await ctx.task(
+    'Scoring the commits to push',
+    async (signal) => {
+      found = await readRisk(ctx, currentPushRange(ctx), signal);
+      return { stdout: '', stderr: '' };
+    },
+    { label: 'Scoring the commits to push', refresh: false, quiet: true },
+  );
+  if (!r.ok) return r;
+  if (!found) return ctx.note('Nothing to push, so nothing to score.');
+  ctx.showText(`Risk before push: ${found.level}`, riskText(found));
+}
+
+/**
+ * Before a push, when the "Risk check before push" setting is on (it is unless set off): a high score shows
+ * its reasons and asks first. True to push; a check that can't run doesn't hold the push up.
+ */
+async function riskBeforePush(ctx, range) {
+  if (ctx.config.riskBeforePush === false) return true;
+  let found = null;
+  const r = await ctx.task(
+    'Scoring the commits to push',
+    async (signal) => {
+      found = await readRisk(ctx, range, signal);
+      return { stdout: '', stderr: '' };
+    },
+    { label: 'Scoring the commits to push', refresh: false, quiet: true, quietError: true },
+  );
+  if (!r.ok) return !r.error?.cancelled && r.error?.message !== 'busy';
+  if (found?.level !== 'high') return true;
+  ctx.showText(`Before pushing: the risk is ${found.level}`, riskText(found));
+  const ok = await ctx.confirm({
+    title: `Push anyway? The risk is ${riskSummary(found)}.`,
+    detail: 'Why, above. No leaves the commits here, to split them up or add tests first. (Risk check before push, in /settings.)',
+    options: YES_NO('Yes, push anyway'),
+    danger: true,
+  });
+  ctx.closeOverlay();
+  return Boolean(ok);
 }
 
 /**
@@ -1785,17 +1861,19 @@ export async function discardAll(ctx) {
 }
 
 /**
- * I on a submodule in Changes, /submodule-update [path]: clones what isn't yet and checks out the commit this
- * repository records, in one submodule or all of them (and theirs, recursively). Asks first when that moves
- * one off another commit it has checked out.
+ * I on a submodule in Changes or /submodules, /submodule-update [path]: clones what isn't yet and checks out
+ * the commit this repository records, in one submodule or all of them (and theirs, recursively). Asks first
+ * when that moves one off another commit it has checked out. With `init: false` (u in /submodules) only
+ * ones already initialised are updated.
  */
-export async function updateSubmodules(ctx, text) {
+export async function updateSubmodules(ctx, text, { init = true } = {}) {
   if (!needRepo(ctx)) return;
   const subs = ctx.data.submodules ?? [];
   if (!subs.length) return ctx.note('This repository has no submodules.', 'error');
   const path = (text ?? '').trim().replace(/[\\/]+$/, '');
   const target = path ? subs.find((s) => s.path === path) : null;
   if (path && !target) return ctx.note(`No submodule at ${path}.`, 'error');
+  if (!init && target?.state === 'uninitialised') return ctx.note(`${target.path} isn't initialised yet: I clones and checks it out.`, 'error');
   const moving = (target ? [target] : subs).filter((s) => s.state === 'out of date');
   if (moving.length) {
     const ok = await ctx.confirm({
@@ -1805,13 +1883,256 @@ export async function updateSubmodules(ctx, text) {
     });
     if (!ok) return;
   }
-  return ctx.exec(['submodule', 'update', '--init', '--recursive', ...(target ? ['--', target.path] : [])], { label: 'Updating submodules' });
+  const args = ['submodule', 'update', ...(init ? ['--init', '--recursive'] : []), ...(target ? ['--', target.path] : [])];
+  return ctx.exec(args, { label: 'Updating submodules' });
 }
 
-/** o or ↵ on a submodule in Changes: opens it in Splice as the repository it is. */
+/** o or ↵ on a submodule in Changes or /submodules: opens it in Splice as the repository it is. */
 export function openSubmodule(ctx, sub) {
   if (sub.state === 'uninitialised') return ctx.note(`${sub.path} isn't initialised yet: I clones and checks it out.`, 'error');
   return ctx.openRepo(join(ctx.data.root, sub.path));
+}
+
+/**
+ * The submodules with what each records and has, its branch and its own changes, read when the list opens
+ * (never in a poll): `git submodule status` and `git ls-files --stage` for them all, then one status in each
+ * checked-out one.
+ */
+export async function readSubmodules(ctx) {
+  const root = ctx.data.root;
+  const status = await ctx.git(['submodule', 'status']);
+  const subs = parseSubmodules(status, ctx.data.status.files);
+  if (!subs.length) return [];
+  const links = await ctx.git(['ls-files', '--stage', '--', ...subs.map((s) => s.path)]).catch(() => '');
+  const recorded = parseGitlinks(links);
+  return Promise.all(
+    subs.map(async (s) => {
+      const inside =
+        s.state === 'uninitialised'
+          ? null
+          : await ctx.git(['-C', join(root, s.path), 'status', '--porcelain=v2', '--branch', '-z', '--untracked-files=normal']).then(parseInside, () => null);
+      return submoduleInfo(s, recorded[s.path], inside);
+    }),
+  );
+}
+
+const SUB_ICONS = {
+  uninitialised: ['○', 'not initialised', 'warn'],
+  'out of date': ['↻', 'out of date', 'warn'],
+  conflict: ['!', 'conflict', 'del'],
+  modified: ['●', 'changes inside', 'warn'],
+  ok: ['✓', 'up to date', 'dim'],
+};
+
+function submoduleSegments(info) {
+  const [icon, text, tone] = SUB_ICONS[info.state] ?? SUB_ICONS.ok;
+  const inside = insideSummary(info);
+  return [
+    { text: `${icon} `, color: theme[tone], bold: true },
+    { text: info.path, strong: true },
+    { text: `  ${text}`, color: theme[tone] },
+    { text: info.current ? `  ${info.branch ? `⎇ ${info.branch}` : 'detached'}` : '', color: theme.hunk },
+    { text: `  ${commitsLine(info)}`, color: theme.dim },
+    { text: inside ? `  ${inside}` : '', color: theme.warn },
+  ];
+}
+
+/**
+ * `/submodules`: every submodule, with the commit recorded here against the one it has out, its branch and
+ * whether it has changes of its own. ↵ opens one, I initialises and updates it, u updates it to the recorded
+ * commit, f fetches in it, U moves it to its remote branch's newest commit (asks first), s syncs its URL.
+ */
+export function showSubmodules(ctx, { replace = false, index } = {}) {
+  if (!needRepo(ctx)) return;
+  if (!ctx.data.submodules?.length && !replace) return ctx.note('This repository has no submodules.', 'error');
+  // After a change, the list is read again (if it's still on screen: ↵ opened the submodule).
+  const again = () => {
+    const o = ctx.overlay();
+    if (o?.submodules) showSubmodules(ctx, { replace: true, index: o.index });
+  };
+  const initialised = (s) => {
+    if (s.state !== 'uninitialised') return true;
+    ctx.note(`${s.path} isn't initialised yet: I clones and checks it out.`, 'error');
+    return false;
+  };
+  ctx.showPicker(
+    {
+      title: 'Submodules',
+      hint: '↵ open · I init/update · u update · f fetch · U to its remote branch · s sync URL',
+      empty: 'This repository has no submodules.',
+      submodules: true,
+      index,
+      load: async () => (await readSubmodules(ctx)).map((s) => ({ ...s, segments: submoduleSegments(s) })),
+      onPick: (s) => openSubmodule(ctx, s),
+      keys: {
+        y: (s) => ctx.copy(s.path),
+        I: async (s) => (await updateSubmodules(ctx, s.path), again()),
+        u: async (s) => (await updateSubmodules(ctx, s.path, { init: false }), again()),
+        f: async (s) => initialised(s) && (await ctx.exec(['-C', s.path, 'fetch', '--prune'], { label: `Fetching in ${s.path}` }), again()),
+        U: async (s) => (await updateRemote(ctx, s), again()),
+        s: async (s) => (await ctx.exec(['submodule', 'sync', '--recursive', '--', s.path], { label: 'Syncing submodule URLs' }), again()),
+      },
+    },
+    { replace },
+  );
+}
+
+/** U in /submodules: `git submodule update --remote` for one, which checks out its remote branch's newest commit. Asks first. */
+async function updateRemote(ctx, s) {
+  const ok = await ctx.confirm({
+    title: `Move ${s.path} to the newest commit on its remote branch?`,
+    detail:
+      'git submodule update --remote fetches it and checks out the tip of the branch .gitmodules names (its default branch otherwise), detached. This repository then shows it as changed, to commit if you want to keep it.',
+    options: YES_NO('Yes, move it'),
+  });
+  if (!ok) return null;
+  return ctx.exec(['submodule', 'update', '--init', '--remote', '--', s.path], { label: `Updating ${s.path} from its remote` });
+}
+
+/**
+ * Whether Git LFS can be asked about this repository: it uses LFS and git lfs is installed. Says why not
+ * otherwise, checking `git lfs version` for a repository that doesn't use it, so the answer is the right one.
+ */
+async function lfsReady(ctx) {
+  if (!needRepo(ctx)) return false;
+  const lfs = ctx.data.lfs;
+  if (lfs && !lfs.installed) {
+    ctx.note(LFS_MISSING, 'error');
+    return false;
+  }
+  if (lfs) return true;
+  const installed = await ctx.git(['lfs', 'version']).then(() => true, () => false);
+  ctx.note(installed ? "This repository doesn't use Git LFS: no line of its .gitattributes has filter=lfs (git lfs track <pattern> adds one)." : LFS_MISSING, 'error');
+  return false;
+}
+
+/**
+ * `/lfs [pull | fetch | locks | lock <path> | unlock <path> [--force]]`: alone, how many files LFS keeps and
+ * which are only pointers here, with `git lfs status`; pull and fetch download them; the rest are locks.
+ */
+export async function lfs(ctx, text) {
+  const cmd = lfsCommand(text);
+  if (cmd.error) return ctx.note(cmd.error, 'error');
+  if (!(await lfsReady(ctx))) return;
+  if (cmd.action === 'status') {
+    return ctx.showAsync('Git LFS', async () => {
+      try {
+        const [files, status] = await Promise.all([ctx.git(['lfs', 'ls-files']), ctx.git(['lfs', 'status'])]);
+        const changed = ctx.data.status.files.map((f) => f.path);
+        return lfsText(await checkPointers(ctx.data.root, parseLfsFiles(files), changed), status);
+      } catch (e) {
+        return lfsError(e.message);
+      }
+    });
+  }
+  if (cmd.action === 'pull') return lfsExec(ctx, ['pull', ...cmd.args], { label: 'Downloading LFS files' });
+  if (cmd.action === 'fetch') return lfsExec(ctx, ['fetch', ...cmd.args], { label: 'Fetching LFS files' });
+  if (cmd.action === 'locks') return showLfsLocks(ctx);
+  if (cmd.action === 'lock') return lfsLock(ctx, cmd.path);
+  return lfsUnlock(ctx, { path: cmd.path }, { force: cmd.force });
+}
+
+/** `git lfs <args>` as ctx.exec runs git, visible and cancellable, with git lfs's hints left out of what it says. */
+function lfsExec(ctx, args, { label, refresh = true } = {}) {
+  const root = ctx.data.root;
+  const shown = args.map((a) => (/\s/.test(a) ? JSON.stringify(a) : a)).join(' ');
+  return ctx.task(
+    `git lfs ${shown}`,
+    async (signal) => {
+      try {
+        const r = await runGit(root, ['lfs', ...args], { signal });
+        return { stdout: r.stdout, stderr: withoutHints(r.stderr) };
+      } catch (e) {
+        if (!e.cancelled) e.message = lfsError(e.message);
+        throw e;
+      }
+    },
+    { label, refresh },
+  );
+}
+
+async function lfsLock(ctx, path) {
+  const r = await lfsExec(ctx, ['lock', path], { label: 'Locking', refresh: false });
+  redrawLocks(ctx);
+  return r;
+}
+
+/** Unlocks `lock` ({ path } or { id, path }). Forcing it (someone else's lock) asks first. */
+async function lfsUnlock(ctx, lock, { force = false } = {}) {
+  if (force) {
+    const ok = await ctx.confirm({
+      title: `Force the lock on ${lock.path} open${lock.owner ? `, held by ${lock.owner}` : ''}?`,
+      detail: 'Whoever holds it is no longer protected from someone else changing the file at the same time; their changes may then conflict with yours.',
+      options: YES_NO('Yes, unlock it'),
+      danger: true,
+    });
+    if (!ok) return null;
+  }
+  const r = await lfsExec(ctx, ['unlock', ...(force ? ['--force'] : []), ...(lock.id ? [`--id=${lock.id}`] : [lock.path])], { label: 'Unlocking', refresh: false });
+  redrawLocks(ctx);
+  return r;
+}
+
+/** L on a file in Changes: locks it with Git LFS, or unlocks it when it's locked already (by you; someone else's needs /lfs unlock --force). */
+export async function lfsToggleLock(ctx, f) {
+  if (!(await lfsReady(ctx))) return;
+  let locks = null;
+  const read = await ctx.task(
+    `Looking for a lock on ${f.path}`,
+    async (signal) => {
+      locks = parseLfsLocks(await ctx.git(['lfs', 'locks', '--json', `--path=${f.path}`], { signal }));
+      return { stdout: '', stderr: '' };
+    },
+    { label: 'Asking about locks', quiet: true, quietError: true, refresh: false },
+  );
+  if (!read.ok) return read.error?.cancelled ? undefined : ctx.note(`Couldn't ask about locks: ${lfsError(read.error?.message)}`, 'error');
+  const held = locks.find((l) => l.path === f.path);
+  return held ? lfsUnlock(ctx, held) : lfsLock(ctx, f.path);
+}
+
+const lockedSince = (t) => (t === 'now' ? 'just now' : `${t} ago`);
+
+function redrawLocks(ctx) {
+  const o = ctx.overlay();
+  if (o?.lfsLocks) showLfsLocks(ctx, { replace: true, index: o.index });
+}
+
+/** `/lfs locks`: the files locked on the LFS server, whose they are and since when; x unlocks one, X forces it. */
+export function showLfsLocks(ctx, { replace = false, index } = {}) {
+  ctx.showPicker(
+    {
+      title: 'Git LFS locks',
+      hint: 'x unlock · X force someone else\'s open (asks first) · y copy path',
+      empty: 'Nothing is locked. L on a file in Changes locks it (or /lfs lock <path>).',
+      lfsLocks: true,
+      index,
+      load: async () => {
+        let raw;
+        try {
+          // --verify says which are yours; servers that can't answer that still list them.
+          raw = await ctx.git(['lfs', 'locks', '--verify', '--json']).catch(() => ctx.git(['lfs', 'locks', '--json']));
+        } catch (e) {
+          throw new Error(lfsError(e.message).split('\n').join(' '));
+        }
+        const now = Date.now() / 1000;
+        return parseLfsLocks(raw).map((l) => ({
+          ...l,
+          segments: [
+            { text: l.path, strong: true },
+            { text: `  ${l.mine ? 'yours' : l.owner || 'someone'}`, color: l.mine ? theme.add : theme.warn },
+            { text: l.lockedAt ? `  ${lockedSince(relTime(Date.parse(l.lockedAt) / 1000, now))}` : '', color: theme.dim },
+            { text: `  #${l.id}`, color: theme.dim },
+          ],
+        }));
+      },
+      keys: {
+        y: (l) => ctx.copy(l.path),
+        x: (l) => lfsUnlock(ctx, l),
+        X: (l) => lfsUnlock(ctx, l, { force: true }),
+      },
+    },
+    { replace },
+  );
 }
 
 /** Takes one side of a conflicted file and marks it resolved. */
@@ -3279,6 +3600,75 @@ export async function reviewPr(ctx, text, given = null) {
   ctx.note(`Reviewing ${pr.label} "${pr.title}" in ${path}, on ${name}.\n/open ${main} goes back to your own work. /cleanup removes this worktree, and ${name} once ${pr.label} is merged.`, 'ok');
 }
 
+/** Copies `line`, a command for a sibling app or apps (family.js), saying which and how to use it. */
+export function copyFor(ctx, apps, line) {
+  const names = [].concat(apps).map((a) => APP_NAMES[a]);
+  ctx.copy(line, `a command for ${names.join(' or ')}`);
+  ctx.note(copiedNote(apps, line), 'ok');
+}
+
+/**
+ * /family: what this repository offers the sibling apps (siblings.js's familyOffers): Bosun's /move when it
+ * has something to run, Hail's /open for each .http file, Trawl's /azure-sql or /add for each database its
+ * settings name (never a password). ↵ copies the line, to paste into that app.
+ */
+export function family(ctx) {
+  if (!needRepo(ctx)) return;
+  const offers = familyOffers(projectAt(ctx.data.root), ctx.data.name);
+  const appW = Math.max(0, ...offers.map((o) => APP_NAMES[o.app].length));
+  ctx.showPicker({
+    title: `What ${ctx.data.name} offers the other apps`,
+    hint: '↵ copy the line, to paste into that app',
+    empty: `Nothing in ${ctx.data.name} for the other apps: no bosun.json, Procfile, compose file or dev script for Bosun, no .http files for Hail, no connection strings (appsettings*.json, .env) for Trawl.`,
+    items: offers.map((o) => ({ ...o, segments: [{ text: APP_NAMES[o.app].padEnd(appW), color: theme.accent, bold: true }, { text: `  ${o.line}` }, { text: `  ${o.what}`, color: theme.dim }] })),
+    onPick: (o) => copyFor(ctx, o.app, o.line),
+  });
+}
+
+// The siblings that take a kind of context, Splice aside (it takes some itself).
+const othersTaking = (kind) => TAKEN_BY[kind].filter((a) => a !== 'splice');
+
+/** Y on a commit in the graph: `/take commit` for Sonar, which finds the deployments that carry it. */
+export function shareCommit(ctx, c) {
+  const data = { repo: ctx.data.name, hash: c.hash, subject: c.subject };
+  copyFor(ctx, othersTaking('commit'), takeLine('commit', data));
+}
+
+/** Y on a line in blame: `/take file` with the line, for whichever app takes one (another Splice, on another checkout). */
+export function shareFileLine(ctx, path, line) {
+  const data = { path, ...(line ? { line } : {}) };
+  copyFor(ctx, TAKEN_BY.file, takeLine('file', data));
+}
+
+/**
+ * /run-at [commit], w in the graph: a detached worktree at the commit (HEAD when none is given) beside the
+ * main working tree, <repo>-at-<short hash> (as /review-pr makes its own), then Bosun's /move to that folder
+ * copied, to run the project as it was then. Again for the same commit, the worktree that's there is used.
+ * /cleanup offers to remove these once nothing in them has changed.
+ */
+export async function runAt(ctx, ref) {
+  if (!needRepo(ctx)) return;
+  const want = String(ref ?? '').trim() || 'HEAD';
+  const hash = await ctx.git(['rev-parse', '--verify', '--quiet', `${want}^{commit}`]).then((s) => s.trim(), () => '');
+  if (!hash) return ctx.note(`${want} isn't a commit of ${ctx.data.name}.`, 'error');
+  const main = ctx.data.worktrees.find((w) => w.main)?.path ?? ctx.data.root;
+  const path = runAtPath(main, hash);
+  let at = ctx.data.worktrees.find((w) => samePath(w.path, path));
+  if (at?.prunable) {
+    if (!(await ctx.exec(['worktree', 'prune'], { label: 'Pruning worktrees', refresh: false })).ok) return;
+    at = null;
+  }
+  if (at && at.head !== hash) return ctx.note(`The worktree at ${path} has ${at.branch ?? short(at.head ?? '')} out, not ${short(hash)}. Move it away first.`, 'error');
+  if (!at) {
+    if (existsSync(path)) return ctx.note(`${path} is there already, and isn't a worktree of this repository. Move it away first.`, 'error');
+    const r = await ctx.exec(['worktree', 'add', '--detach', path, hash], { label: 'Adding worktree' });
+    if (!r.ok) return r;
+  }
+  copyFor(ctx, 'bosun', shareLine('move', [path]));
+  const crew = projectAt(path).crew;
+  ctx.note(`${short(hash)} is checked out in ${path}${at ? ' (from before)' : ''}.${crew ? '' : " Bosun may find nothing to run there: it has no bosun.json, Procfile, compose file or dev script."} /cleanup removes it when you're done.`);
+}
+
 // A /backport waiting for /continue after a conflict: { id, label, title, url, branch, name, remote }.
 const backportFile = (ctx) => join(ctx.data.gitDir, 'splice-backport.json');
 async function readBackport(ctx) {
@@ -3471,12 +3861,184 @@ export function openDropped(ctx, text) {
   return true;
 }
 
-/** B on a file, or /blame <path>: who last changed each line of the working-tree version. */
+/**
+ * B on a file, or /blame <path>[:<line>]: who last changed each line of the working-tree version, with
+ * the cursor on that line. A file whose name really ends in :<digits> is taken whole.
+ */
 export function blame(ctx, typed) {
   if (!needRepo(ctx)) return;
-  const path = repoPath(ctx.data.root, typed);
-  if (!path) return ctx.prefill('/blame ');
-  ctx.showPicker(blamePicker(ctx, path));
+  const whole = repoPath(ctx.data.root, typed);
+  if (!whole) return ctx.prefill('/blame ');
+  const at = pathAndLine(typed);
+  const split = at.line && !existsSync(join(ctx.data.root, whole)) ? { path: repoPath(ctx.data.root, at.path), line: at.line } : { path: whole, line: null };
+  ctx.showPicker(blamePicker(ctx, split.path, { line: split.line }));
+}
+
+// /future's answers that don't change: a pull request's files against its target, by both commits' hashes.
+const futureFiles = new Map();
+
+/**
+ * F in blame, /future [<path>:<line>]: the open pull requests whose changes touch a line (the one under
+ * blame's cursor when none is typed). One fetch brings every pull request's head and the branches they go
+ * into; each is then asked which files it changes (once per head, cached), and the ones changing this file
+ * for their hunks, compared in their merge base (future.js says how lines are carried back there).
+ * ↵ on one opens its diff.
+ */
+export async function future(ctx, target) {
+  if (!needRepo(ctx)) return;
+  let at = target && typeof target === 'object' ? target : null;
+  if (!at) {
+    const typed = String(target ?? '').trim();
+    if (typed) {
+      const p = pathAndLine(typed);
+      at = { path: repoPath(ctx.data.root, p.path), line: p.line, rev: null };
+    } else {
+      // The line under the cursor of the blame that's open, else of the last one shown.
+      const open = ctx.overlay();
+      const blame = open?.kind === 'picker' && open.blame ? open : ctx.lastBlame?.();
+      const row = blame?.items?.[blame.index ?? 0];
+      if (!row) return ctx.note('No blame to take a line from: /future <path>:<line>, or F on a line in blame (/blame <path>).', 'error');
+      at = { ...blame.blame, line: row.line };
+    }
+  }
+  if (!at.path || !at.line) return ctx.note('Say which line: /future <path>:<line>, or F on a line in blame.', 'error');
+  const host = needHost(ctx);
+  if (!host) return;
+  if (!host.headRef) return ctx.note(`Splice can't fetch pull requests from ${host.name}.`, 'error');
+  const where = `line ${at.line} of ${at.path}`;
+  const remote = host.remoteName;
+  let found = [];
+  let asked = 0;
+  const r = await ctx.task(
+    `Open pull requests changing ${where}`,
+    async (signal) => {
+      const read = (args) => ctx.git(args, { signal });
+      const prs = (ctx.prSeen?.get(`${ctx.data.root}\n${remote}`) ?? (await host.list())).filter((p) => p.state == null || p.state === 'open');
+      asked = prs.length;
+      if (!prs.length) return { stdout: '', stderr: '' };
+      await read(['fetch', '--quiet', '--no-tags', remote, ...futureRefspecs(prs, host.headRef, remote)]);
+      try {
+        const refs = new Map(
+          (await read(['for-each-ref', '--format=%(objectname) %(refname)', 'refs/splice/future', `refs/remotes/${remote}`]))
+            .split('\n')
+            .filter(Boolean)
+            .map((l) => [l.slice(l.indexOf(' ') + 1), l.slice(0, l.indexOf(' '))]),
+        );
+        // The file as of the commit blamed, or on disk, carried back to each merge base (once per base).
+        const bases = new Map();
+        for (const pr of prs) {
+          const head = refs.get(`refs/splice/future/${pr.id}`);
+          const base = refs.get(`refs/remotes/${remote}/${pr.target}`);
+          if (!head || !base) continue;
+          const key = `${base} ${head}`;
+          if (!futureFiles.has(key)) futureFiles.set(key, nameList(await read(['diff', '--name-only', '--no-renames', `${base}...${head}`, '--'])));
+          if (!futureFiles.get(key).includes(at.path)) continue;
+          const mb = (await read(['merge-base', base, head])).trim();
+          if (!bases.has(mb)) bases.set(mb, lineInBase(await read(['diff', '--no-color', '--no-ext-diff', '-U0', mb, ...(at.rev ? [at.rev] : []), '--', at.path]), at.line));
+          const hunks = touchingHunks(await read(['diff', '--no-color', '--no-ext-diff', '-U0', mb, head, '--', at.path]), bases.get(mb).line);
+          if (hunks.length) found.push({ pr, hunks });
+        }
+      } finally {
+        await ctx.git(['for-each-ref', '--format=delete %(refname)', 'refs/splice/future']).then((del) => del && ctx.git(['update-ref', '--stdin'], { input: del }), () => {}).catch(() => {});
+      }
+      return { stdout: '', stderr: '' };
+    },
+    { label: 'Looking at the open pull requests', refresh: false, quiet: true },
+  );
+  if (!r.ok) return r;
+  if (!found.length) return ctx.note(asked ? `None of the ${asked} open pull request${asked === 1 ? '' : 's'} changes ${where}.` : `There are no open pull requests on ${host.name}.`);
+  ctx.showPicker({
+    title: `${found.length} open pull request${found.length === 1 ? '' : 's'} changing ${where}`,
+    hint: '↵ its diff',
+    items: futureItems(found),
+    onPick: (it) => ctx.showPrDiff(it.pr),
+  });
+}
+
+/** The tracked files, relative to the root with / between folders: one git, for matching paths from elsewhere. */
+const trackedFiles = async (ctx) => (await ctx.git(['ls-files', '-z'])).split('\0').filter(Boolean);
+
+/**
+ * /take <context>: what a sibling app copied for Splice (family.js). An exception opens blame at the first
+ * of its frames that's a file of this repository (a list of them when several are, top frame first); a
+ * file, blame at its line (its history without one); a commit, its diff (offering to fetch it when it isn't
+ * here). Other kinds say which app they're for.
+ */
+export async function take(ctx, text) {
+  const raw = String(text ?? '').trim();
+  if (!raw) return ctx.prefill('/take ');
+  const got = contextIn(raw);
+  if (!got) return ctx.note("That isn't something another app copied: paste the whole /take family:v1:… line.", 'error');
+  if (!TAKES.includes(got.kind)) return ctx.note(notMine('splice', got), 'error');
+  if (!needRepo(ctx)) return;
+  const { kind, data } = got;
+  ctx.note(`Taking ${describeContext(got)}`);
+  if (kind === 'commit') return takeCommit(ctx, data);
+  let files;
+  try {
+    files = await trackedFiles(ctx);
+  } catch (e) {
+    return ctx.note(`Couldn't list the files of ${ctx.data.name}: ${firstLine(e.message)}`, 'error');
+  }
+  if (kind === 'file') {
+    const typed = repoPath(ctx.data.root, String(data.path ?? ''));
+    const path = files.includes(typed) || existsSync(join(ctx.data.root, typed)) ? typed : matchFrameFile(String(data.path ?? ''), files);
+    if (!path) return ctx.note(`${data.path} isn't a file of ${ctx.data.name}.`, 'error');
+    const line = Number(data.line) || null;
+    return line ? ctx.showPicker(blamePicker(ctx, path, { line })) : fileHistory(ctx, path);
+  }
+  const frames = exceptionFrames(data);
+  const found = framesInRepo(frames, files);
+  if (!found.length) {
+    return ctx.note(
+      frames.length
+        ? `None of the exception's ${frames.length === 1 ? 'frame is a file' : `${frames.length} frames are files`} of ${ctx.data.name}: ${frames.slice(0, 3).map((f) => basename(String(f.file).replace(/\\/g, '/'))).join(', ')}.`
+        : 'The exception has no stack frames to look for.',
+      'error',
+    );
+  }
+  const open = (f) => ctx.showPicker(blamePicker(ctx, f.path, { line: f.line }));
+  if (found.length === 1) return open(found[0]);
+  ctx.showPicker({
+    title: `${data.type ?? 'Exception'}${data.message ? `: ${data.message}` : ''}`,
+    hint: '↵ blame at the line',
+    items: found.map((f, i) => ({
+      ...f,
+      segments: [
+        { text: `${String(i + 1).padStart(2)} `, color: theme.dim },
+        { text: `${f.path}${f.line ? `:${f.line}` : ''}`, color: theme.local },
+        ...(f.method ? [{ text: `  ${f.method}`, color: theme.dim }] : []),
+      ],
+    })),
+    onPick: open,
+  });
+}
+
+/** /take commit: its diff when the repository has it; otherwise offers to fetch, then looks again. */
+async function takeCommit(ctx, data) {
+  const hash = String(data.hash ?? '').trim();
+  if (!/^[0-9a-f]{4,64}$/i.test(hash)) return ctx.note(`${hash || 'That'} isn't a commit hash.`, 'error');
+  const find = () => ctx.git(['rev-parse', '--verify', '--quiet', `${hash}^{commit}`]).then((s) => s.trim() || null, () => null);
+  const show = (full) => ctx.showPatch({ hash: full, subject: data.subject ?? '' });
+  let full = await find();
+  if (full) return show(full);
+  const from = data.repo ? ` (it came from ${data.repo})` : '';
+  if (!ctx.data.remotes.length) return ctx.note(`${short(hash)} isn't in ${ctx.data.name}${from}, and it has no remote to fetch it from.`, 'error');
+  const ok = await ctx.confirm({
+    title: `${short(hash)} isn't in ${ctx.data.name}${from}. Fetch and look again?`,
+    detail: `git fetch --all, then, if it's still missing, the commit itself from ${ctx.data.remotes.includes('origin') ? 'origin' : ctx.data.remotes[0]}.`,
+    options: YES_NO('Yes, fetch'),
+  });
+  if (!ok) return;
+  await ctx.exec(['fetch', '--all', '--prune'], { label: 'Fetching' });
+  full = await find();
+  if (!full && /^[0-9a-f]{40,64}$/i.test(hash)) {
+    // Servers hand over a commit by its full hash when a branch or a pull request has it.
+    await ctx.exec(['fetch', ctx.data.remotes.includes('origin') ? 'origin' : ctx.data.remotes[0], hash], { label: 'Fetching the commit', quietError: true });
+    full = await find();
+  }
+  if (full) return show(full);
+  ctx.note(`${short(hash)} isn't on ${ctx.data.remotes.join(' or ')} either: it may be on a branch that was never pushed.`, 'error');
 }
 
 /** `!<args>`: any git command. Output longer than a few lines opens in the viewer. */

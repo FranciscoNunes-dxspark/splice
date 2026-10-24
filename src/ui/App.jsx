@@ -34,6 +34,9 @@ import { RebaseEditor } from './RebaseEditor.jsx';
 import { WELCOME_HEIGHT, Welcome } from './Pet.jsx';
 import { FACES, moodFor } from '../pet.js';
 import { worthNotifying } from '../notify.js';
+import { decodeContext, pastedLine, readMoods, writeMood } from '../family.js';
+import { droppedPaths } from '../drop.js';
+import { familyMood, moodsToShow, reactionText } from '../siblings.js';
 
 const VIEWS = [
   { id: 'graph', label: 'Graph' },
@@ -55,8 +58,8 @@ const CTRL_P = '\x10';
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
 const HINTS = {
-  graph: '↵ diff · c checkout · b branch · m merge · i rebase from here · C cherry-pick · V select several · v revert · X reset · B bisect · e/R Claude explains/reviews',
-  changes: 'space stage · ↵ hunks/lines · a all · u unstage all · d discard · i ignore · s stash file · v select files · c commit · A amend · M message in your editor · F fix up · H history · B blame · W Claude writes it · S splits it · R review · on a submodule: I init/update · o open',
+  graph: '↵ diff · c checkout · b branch · m merge · i rebase from here · C cherry-pick · V select several · v revert · X reset · B bisect · w run it (Bosun) · Y for Sonar · e/R Claude explains/reviews',
+  changes: 'space stage · ↵ hunks/lines · a all · u unstage all · d discard · i ignore · s stash file · v select files · c commit · A amend · M message in your editor · F fix up · H history · B blame · L LFS lock · W Claude writes it · S splits it · R review · on a submodule: I init/update · o open',
   branches: '↵ checkout · n new · m merge · e rebase · d delete · D diff vs default · o open PR · S sync · B update branch · C clean up · U upstream · M remotes · on a tag: u push · R release',
   stash: '↵ diff · s stash · S with a message · a apply · o pop · x drop · F files, to restore one',
   prs: '↵ diff · c checkout · w review in a worktree · a approve · m merge · s checks · A reviewers · D draft/ready · E title · B description · C comment · o open in browser · n new PR · W Claude drafts one · e/R explain/review',
@@ -148,8 +151,10 @@ const DOUBLE_CLICK_MS = 400;
 // mouse.js's terminalMouse() from cli.jsx (missing where the terminal can't report it); tests pass their own.
 // `copy` puts text on the clipboard (cli.jsx's; tests pass a stub). `notify(title, body)` says something
 // finished (cli.jsx rings the terminal's bell and raises a desktop notification); without it, as in most
-// tests, nothing is said.
-export function App({ initialPath, reopenLast = false, config: initialConfig, checkUpdate, installUpdate, askClaude, setTitle, makeHost = hostFor, mouse, copy, notify }) {
+// tests, nothing is said. `familyHome` is the family's folder for the mascots' moods (family.js's familyDir,
+// from cli.jsx): without it, as in most tests, Twig neither tells the siblings its mood nor reads theirs;
+// `moodEvery` is how often theirs are read.
+export function App({ initialPath, reopenLast = false, config: initialConfig, checkUpdate, installUpdate, askClaude, setTitle, makeHost = hostFor, mouse, copy, notify, familyHome = null, moodEvery = 30_000 }) {
   const { exit } = useApp();
   const { columns, rows } = useTerminalSize();
   const [config, setConfigState] = useState(initialConfig);
@@ -178,6 +183,8 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
     return () => clearTimeout(t);
   }, [entries]);
   const [prVersion, setPrVersion] = useState(0);
+  // A sibling's mood worth a word ("Ping says: …"), until esc puts it away.
+  const [reaction, setReaction] = useState(null);
   // Counts ctx.showInGraph calls, so the graph looks for the commit asked for (ctx.pendingJump).
   const [jump, setJump] = useState(0);
   // A word in the bottom line for a moment ("Copied 3 lines"), where it moves nothing on screen.
@@ -251,8 +258,11 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
     // An overlay opened from a picker (a diff of the picked commit) goes back to the picker when closed.
     if (o && o !== cur && !o.back && cur?.kind === 'picker' && typeof next !== 'function') o = { ...o, back: cur };
     overlayRef.current = o;
+    // The last blame shown, for /future without a line (Picker.jsx keeps its cursor on it as `index`).
+    if (o?.kind === 'picker' && o.blame) lastBlame.current = { picker: o, root: ctx.data?.root };
     setOverlayState(o);
   };
+  const lastBlame = useRef(null);
   const pickerIds = useRef(0);
 
   const setPrompt = (value, cursor = value.length) => {
@@ -277,13 +287,13 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
     addEntry({ title, status, lines });
   };
 
-  const reload = async ({ graphLimit } = {}) => {
+  const reload = async ({ graphLimit, freshRefs = false } = {}) => {
     const repo = repoRef.current;
     if (!repo) return;
     const mine = ++seq.current;
     const load = (async () => {
       try {
-        const d = await loadRepo(repo, { graphLimit: graphLimit ?? dataRef.current?.graphLimit ?? 400 });
+        const d = await loadRepo(repo, { graphLimit: graphLimit ?? dataRef.current?.graphLimit ?? 400, freshRefs });
         if (repoRef.current !== repo) return;
         // A newer load wins over this one. It started later, so whoever awaits this one waits for it
         // too: a command reading ctx.data after `await reload()` (the poller's reload having started
@@ -568,6 +578,8 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
       else setOverlay(next);
     },
     overlay: () => overlayRef.current,
+    // The blame picker last on screen in this repository (open or not), or null.
+    lastBlame: () => (lastBlame.current && lastBlame.current.root === ctx.data?.root ? lastBlame.current.picker : null),
     // Settings change through App's copy, the only one written to disk (ctx.config reads it).
     setConfig,
     closeOverlay: () => {
@@ -626,7 +638,9 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
     const [errors, declined] = [errorCount.current, declines.current];
     try {
       let r;
-      if (text.startsWith('!')) r = await a.raw(ctx, text.slice(1));
+      // A context another app copied (family.js), pasted without its /take (after the prompt's / or not).
+      if (decodeContext(text.replace(/^\//, ''))) r = await a.take(ctx, text.replace(/^\//, ''));
+      else if (text.startsWith('!')) r = await a.raw(ctx, text.slice(1));
       else if (/^git(\s|$)/.test(text)) r = await a.raw(ctx, text);
       else {
         const [, name, rest] = text.replace(/^\//, '').match(/^(\S+)\s*([\s\S]*)$/);
@@ -696,6 +710,20 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
   // over an overlay), a key you mapped becomes the key it stands for, for the view and App alike, or
   // runs its command line. Then ctrl+p opens the palette, from a view or the prompt.
   const sendKey = useKeyTranslation((input) => {
+    // A paste in a view (or over a list or the viewer, but not into a search being typed there) that is a
+    // command line or a context another app copied: into the prompt, to look at before running it. A
+    // dropped path is a drop (globalKeys), not this, and a path that isn't there just typing, as before.
+    const o = overlayRef.current;
+    if (focusRef.current === 'view' && !confirmRef.current && (!o || o.kind === 'picker' || (!o.kind && !ctx.viewerTyping?.()))) {
+      // (A terminal ends a pasted line with \r, which the family's rule takes as a \n.)
+      const line = pastedLine(input);
+      // An absolute path (Linux and macOS ones start with /) is a drop, or typing, unless it names a command.
+      const command = /^\/([^\s/]+)(\s|$)/.exec(line ?? '')?.[1];
+      if (line && !(droppedPaths(line) && !(command && findCommand(command, customRef.current.commands)))) {
+        prefill(line);
+        return null;
+      }
+    }
     let out = input;
     if (focusRef.current === 'view' && !overlayRef.current && !confirmRef.current) {
       const b = translateKey(customRef.current.keymap, viewRef.current, input);
@@ -815,7 +843,7 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
       polling.current = true;
       try {
         const snap = await snapshot(repo);
-        if (repoRef.current === repo && dataRef.current && snap.signature !== dataRef.current.signature) await reload();
+        if (repoRef.current === repo && dataRef.current && snap.signature !== dataRef.current.signature) await reload({ freshRefs: snap.relisted });
       } catch {
         // The repo may be mid-operation or gone; the next tick tries again.
       } finally {
@@ -875,6 +903,7 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
   const globalKeys = (input, key) => {
     if (key.escape) {
       if (busyRef.current) busyRef.current.abort();
+      else if (reaction) setReaction(null);
       else if (!filter || view !== 'graph') {
         setEntries([]);
         setWelcome(false);
@@ -1000,14 +1029,36 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
   const act = activityRows(entries);
   const bottom = confirmReq ? confirmHeight(confirmReq) : 3 + suggestions.length;
   const mood = moodFor({ data, busy, lastEntry: entries.at(-1) });
+  // Twig's mood for the family (family.js), written whenever it changes, and the others' read every half
+  // a minute: a worried, sad or happy one from the last 15 minutes gets a line, once. "Family moods" in
+  // /settings turns both off.
+  const moodsOn = Boolean(familyHome) && config.familyMoods !== false;
+  const shared = familyMood(mood, { data, lastEntry: entries.at(-1), busy });
+  useEffect(() => {
+    if (moodsOn) writeMood('splice', shared, { dir: familyHome });
+  }, [moodsOn, shared.mood, shared.reason]);
+  const seenMoods = useRef(new Set());
+  useEffect(() => {
+    if (!moodsOn) return void setReaction(null);
+    const look = () => {
+      const fresh = moodsToShow(readMoods('splice', { dir: familyHome }), seenMoods.current);
+      for (const m of fresh) seenMoods.current.add(`${m.app}:${m.at}`);
+      if (fresh[0]) setReaction({ text: reactionText(fresh[0]), mood: fresh[0].mood });
+    };
+    look();
+    const t = setInterval(look, moodEvery);
+    t.unref?.();
+    return () => clearInterval(t);
+  }, [moodsOn, familyHome, moodEvery]);
+  const reactionH = reaction ? 1 : 0;
   // The welcome box only appears when the terminal has room for it next to a useful view.
   const showWelcome = welcome && H >= 28;
-  const mainH = Math.max(6, H - 2 - act.length - (busy ? 1 : 0) - bottom - 1 - (showWelcome ? WELCOME_HEIGHT : 0));
+  const mainH = Math.max(6, H - 2 - reactionH - act.length - (busy ? 1 : 0) - bottom - 1 - (showWelcome ? WELCOME_HEIGHT : 0));
   const viewActive = focus === 'view' && !overlay && !confirmReq;
   layout.current = {
     mainTop: 2,
     mainH,
-    promptTop: 2 + mainH + (showWelcome ? WELCOME_HEIGHT : 0) + act.length + (busy ? 1 : 0),
+    promptTop: 2 + mainH + (showWelcome ? WELCOME_HEIGHT : 0) + reactionH + act.length + (busy ? 1 : 0),
     sugCount: suggestions.length,
     tabs: tabLabels(data),
   };
@@ -1068,6 +1119,13 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
         {main}
       </Box>
       {showWelcome ? <Welcome mood={mood} data={data} width={W} update={update} /> : null}
+      {reaction ? (
+        <Row
+          pointer={false}
+          width={W}
+          segments={[{ text: `${FACES[reaction.mood === 'happy' ? 'happy' : 'worried']} `, color: theme.accent, bold: true }, { text: reaction.text }, { text: '  · esc puts it away', color: theme.dim }]}
+        />
+      ) : null}
       {act.map((segs, i) => (
         <Row key={i} pointer={false} width={W} segments={segs} />
       ))}
