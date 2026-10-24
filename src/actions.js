@@ -1,7 +1,7 @@
 // Every git operation the UI offers, written once. Keys and slash commands both call these.
 // `ctx` is the app's handle: data, exec, confirm, note, prefill, and so on (see App.jsx).
 import { existsSync, realpathSync, statSync } from 'node:fs';
-import { readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { READ_ONLY, blameInput, blamePrompt, changelogPrompt, clip, commitPrompt, lookPrompt, parseCommitMessage, parsePrDraft, parseResolution, parseSplit, prPrompt, resolveInput, resolvePrompt, splitInput, splitPrompt } from './claude.js';
 import { absorbFiles, absorbSummary, absorbText, blameMap, blameTargets, groupPatch, lineRanges, planAbsorb } from './absorb.js';
@@ -66,6 +66,7 @@ import { futureItems, futureRefspecs, lineInBase, nameList, touchingHunks } from
 import { historyArgs, outgoingArgs, parseRiskLog, riskBlobs, riskFiles, riskSummary, riskText, scoreRisk } from './risk.js';
 import { familyOffers } from './siblings.js';
 import { changedOutside, leavingFolders, sparseText } from './sparse.js';
+import { NOTES_REFSPEC, noteArgs, notePrefill, notesArgs, withKeptNote } from './notes.js';
 import { COMMIT_HOOKS, PUSH_HOOKS, hookArgs, hookRows, hookRunArgs } from './githooks.js';
 import { CODEOWNERS_PATHS, changedOwnersText, ownersOfFiles, ownersText, reviewerNames } from './codeowners.js';
 import { TAKES, exceptionFrames, framesInRepo, pathAndLine } from './take.js';
@@ -3213,6 +3214,84 @@ export async function runHook(ctx, hook) {
   if (!r.ok && !failed) return r;
   ctx.showText(`${hook.name}: ${failed ? 'failed' : 'passed'}`, `${output || '(no output)'}\n\n${failed ? 'It exited with an error' : 'It passed'}: git hook run ${hook.name}${args.length ? ` -- ${args.join(' ')}` : ''}`);
   return failed ? { ok: false, error: failed } : r;
+}
+
+// Old notes /note replaced or removed, newest last, so /note --undo can put the latest back.
+const keptNotesFile = (ctx) => join(ctx.data.gitDir, 'splice-undo', 'notes.json');
+async function readKeptNotes(ctx) {
+  try {
+    const list = JSON.parse(await readFile(keptNotesFile(ctx), 'utf8'));
+    return Array.isArray(list) ? list : [];
+  } catch {
+    return [];
+  }
+}
+async function writeKeptNotes(ctx, list) {
+  await mkdir(dirname(keptNotesFile(ctx)), { recursive: true });
+  await writeFile(keptNotesFile(ctx), JSON.stringify(list));
+}
+
+/**
+ * /note [text] on the commit under the graph's cursor (HEAD when the graph isn't on screen): with text, adds
+ * its note or replaces it (\n for a line break); alone, puts the note it has in the prompt to edit; -d
+ * removes it, after asking. A note replaced or removed is kept first (in .git/splice-undo), and
+ * /note --undo puts the last one back.
+ */
+export async function note(ctx, text) {
+  if (!needRepo(ctx)) return;
+  const args = noteArgs(text);
+  if (args.undo) return undoNote(ctx);
+  const c = ctx.selectedCommit;
+  const hash = c?.hash ?? (await ctx.git(['rev-parse', '--verify', '-q', 'HEAD']).catch(() => '')).trim();
+  if (!hash) return ctx.note('There are no commits yet to put a note on.', 'error');
+  const label = `${short(hash)}${c?.subject ? ` ${c.subject}` : ''}`;
+  const old = (await ctx.git(['notes', 'show', hash]).catch(() => '')).trimEnd();
+  if (!args.text && !args.remove) return ctx.prefill(old ? notePrefill(old) : '/note ');
+  if (args.remove) {
+    if (!old) return ctx.note(`${label} has no note.`, 'error');
+    const ok = await ctx.confirm({
+      title: `Remove the note on ${label}?`,
+      detail: `"${firstLine(old).slice(0, 80)}"${old.includes('\n') ? ' …' : ''}. Splice keeps a copy: /note --undo puts it back.`,
+      options: YES_NO('Yes, remove it'),
+      danger: true,
+    });
+    if (!ok) return;
+  }
+  if (old) await writeKeptNotes(ctx, withKeptNote(await readKeptNotes(ctx), { hash, note: old, at: Date.now() }));
+  const r = args.remove
+    ? await ctx.exec(['notes', 'remove', hash], { label: 'Removing the note' })
+    : await ctx.exec(['notes', 'add', '-f', '-m', args.text, hash], { label: old ? 'Changing the note' : 'Adding a note' });
+  if (r.ok && old) ctx.note(`The old note on ${short(hash)} is kept: /note --undo puts it back.`);
+  return r;
+}
+
+/** /note --undo: the note /note last replaced or removed, back on its commit. */
+async function undoNote(ctx) {
+  const list = await readKeptNotes(ctx);
+  const last = list.at(-1);
+  if (!last) return ctx.note('No note to put back: /note keeps one when it replaces or removes it.', 'error');
+  const now = (await ctx.git(['notes', 'show', last.hash]).catch(() => '')).trimEnd();
+  const ok = await ctx.confirm({
+    title: `Put back the note on ${short(last.hash)}?`,
+    detail: `"${firstLine(last.note).slice(0, 80)}"${now ? `, in place of "${firstLine(now).slice(0, 40)}"` : ''}`,
+    options: YES_NO('Yes, put it back'),
+  });
+  if (!ok) return;
+  const r = await ctx.exec(['notes', 'add', '-f', '-m', last.note, last.hash], { label: 'Putting the note back' });
+  if (r.ok) await writeKeptNotes(ctx, list.slice(0, -1));
+  return r;
+}
+
+/** /notes push [remote]: pushes every notes ref (refs/notes/*) to the remote (the upstream's, else origin). */
+export function notes(ctx, text) {
+  if (!needRepo(ctx)) return;
+  const args = notesArgs(text);
+  if (args.error) return ctx.note(args.error, 'error');
+  const { remotes, status } = ctx.data;
+  const remote = args.remote ?? (status.branch.upstream ? status.branch.upstream.split('/')[0] : remotes.includes('origin') ? 'origin' : remotes[0]);
+  if (!remote) return ctx.note('This repository has no remote to push the notes to.', 'error');
+  if (!remotes.includes(remote)) return ctx.note(`No remote called ${remote}.`, 'error');
+  return ctx.exec(['push', remote, NOTES_REFSPEC], { label: 'Pushing the notes' });
 }
 
 /** /owners [path]: who owns a path, by CODEOWNERS (and which line says so); alone, the owners of the changed files. */

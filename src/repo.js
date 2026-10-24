@@ -336,7 +336,8 @@ function readLog(repo, graphLimit) {
   // An empty repository has nothing to log, which git reports as an error.
   return git(repo.root, [
     'log', '--date-order', '--decorate=full', ...DECORATE_REFS, `-n${graphLimit}`,
-    `--format=${LOG_FORMAT}`, '--exclude=refs/stash', '--all',
+    // Not the stash, nor the notes' own history of commits (refs/notes/*), which are no branch's.
+    `--format=${LOG_FORMAT}`, '--exclude=refs/stash', '--exclude=refs/notes/*', '--all',
   ]).catch(() => '');
 }
 
@@ -552,11 +553,20 @@ export async function loadRepo(repo, { graphLimit = 400, freshRefs = false } = {
     lfs: lfs && { ...lfs, files: await checkPointers(repo.root, lfs.files, status.files.map((f) => f.path)) },
     // Not part of the signature either: editing CODEOWNERS shows in the status, which reloads.
     codeowners,
+    // The notes' ref (refs/notes/commits), from the listing of every ref: a commit's note is read with its
+    // detail, again only when this moves.
+    notesRef: notesRef(snap.allRefs),
     // The sparse checkout, which the header shows. Not part of the signature (polling reads nothing new):
     // /sparse reloads after it, and a change made outside shows at the next load.
     sparse,
     ...remotes,
   };
+}
+
+/** refs/notes/commits's commit in a REF_FORMAT listing of every ref, or null when there are no notes. */
+export function notesRef(listing) {
+  const line = (listing ?? '').split('\n').find((l) => l.startsWith('refs/notes/commits\x1f'));
+  return line ? line.split('\x1f')[1] : null;
 }
 
 /** `git remote -v` → the remote names, and each one's fetch URL. */
@@ -573,11 +583,16 @@ export function parseRemotes(raw) {
 export async function commitDetail(root, hash) {
   // One git: the header ends at \x1e, and the file list follows it. Not its signature: %G? has git check
   // it, running gpg or ssh-keygen, which commitSignature does only when asked to (Show signatures).
-  const out = await git(root, ['show', '--format=%H%x1f%an%x1f%ae%x1f%at%x1f%cn%x1f%P%x1f%B%x1e', '--name-status', '-M', '--diff-merges=first-parent', hash]);
+  // Its note (refs/notes/commits) comes with it, at no cost: %N, ended by \x1d.
+  const out = await git(root, ['show', '--format=%H%x1f%an%x1f%ae%x1f%at%x1f%cn%x1f%P%x1f%N%x1d%B%x1e', '--name-status', '-M', '--diff-merges=first-parent', hash]);
   const end = out.indexOf('\x1e');
   const files = out.slice(end + 1);
-  const [full, author, email, time, committer, parents, ...body] = out.slice(0, end).split('\x1f');
+  const [full, author, email, time, committer, parents, ...rest] = out.slice(0, end).split('\x1f');
+  const text = rest.join('\x1f');
+  const cut = text.indexOf('\x1d');
+  const body = [cut < 0 ? text : text.slice(cut + 1)];
   return {
+    note: cut < 0 ? '' : text.slice(0, cut).trim(),
     hash: full,
     author,
     email,

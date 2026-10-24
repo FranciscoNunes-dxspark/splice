@@ -69,6 +69,10 @@ function detailLines(c, d, width, sig) {
     lines.push('');
     for (const l of wrap(body.join('\n'), width)) lines.push(l);
   }
+  if (d?.note) {
+    lines.push('', [{ text: 'Note', bold: true, color: theme.hunk }, { text: '  /note edits it', color: theme.dim }]);
+    for (const l of wrap(d.note, width)) lines.push([{ text: l, color: theme.hunk }]);
+  }
   lines.push('');
   if (!d) lines.push([{ text: 'Loading…', color: theme.dim }]);
   else {
@@ -128,7 +132,11 @@ export function GraphView({ data, ctx, width, height, active, filter, jump }) {
     setDetailFor(c?.hash ?? null);
     setDetailOffset(0);
   }
-  const detail = useAsync(c && split ? `detail:${data.root}:${c.hash}` : null, () => commitDetail(data.root, c.hash));
+  // With the notes' ref in the key, a note added or changed (/note) is read again; nothing else is.
+  const detail = useAsync(c && split ? `detail:${data.root}:${c.hash}:${data.notesRef ?? ''}` : null, () => commitDetail(data.root, c.hash));
+  // What /note works on: the commit under the cursor, while the graph is on screen.
+  ctx.selectedCommit = c ?? null;
+  useEffect(() => () => void (ctx.selectedCommit = null), []);
   // Show signatures (off unless set): %G? has git check the signature, so only the commit under the cursor's.
   const signatures = ctx.config?.showSignatures === true;
   const sigKey = c && split && signatures ? `sig:${data.root}:${c.hash}` : null;
