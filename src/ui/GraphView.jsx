@@ -2,8 +2,8 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Box, useInput } from 'ink';
 import * as a from '../actions.js';
 import { relTime } from '../parse.js';
-import { commitDetail } from '../repo.js';
-import { signatureText } from '../signing.js';
+import { commitDetail, commitSignature } from '../repo.js';
+import { signatureLine } from '../signing.js';
 import { codeColor, theme } from '../theme.js';
 import { fit, fitSegments, wrap } from '../text.js';
 import { useAsync, useListNav, useMouse } from './hooks.js';
@@ -44,7 +44,8 @@ const META_W = 26;
 // Getters, so the colours are the theme's as it is now (light or dark).
 const SIG_TONE = { get good() { return theme.add; }, get wait() { return theme.warn; }, get bad() { return theme.del; }, get none() { return theme.dim; } };
 
-function detailLines(c, d, width) {
+// `sig`: the commit's signature, read only with Show signatures on (undefined when off, null while it's read).
+function detailLines(c, d, width, sig) {
   const lines = [
     [
       { text: c.hash.slice(0, 10), color: theme.warn, bold: true },
@@ -52,10 +53,12 @@ function detailLines(c, d, width) {
     ],
     [{ text: c.author, bold: true }, { text: d?.email ? ` <${d.email}>` : '', color: theme.dim }],
   ];
-  if (d?.signature && d.signature !== 'N') {
-    const sig = signatureText(d.signature, d.signer);
-    lines.push([{ text: sig.tone === 'bad' ? '✗ ' : '✓ ', color: SIG_TONE[sig.tone], bold: true }, { text: sig.text, color: SIG_TONE[sig.tone] }]);
-  } else if (d) lines.push([{ text: 'Not signed', color: theme.dim }]);
+  if (sig === null) lines.push([{ text: 'Checking the signature…', color: theme.dim }]);
+  else if (sig) {
+    const l = signatureLine(sig);
+    const icon = { Good: '✓ ', Bad: '✗ ', None: '', Unknown: '? ', Expired: '! ' }[l.word];
+    lines.push([{ text: `${icon}${l.word}: `, color: SIG_TONE[l.tone], bold: true }, { text: l.text, color: SIG_TONE[l.tone] }]);
+  }
   if (c.parents.length > 1) lines.push([{ text: `Merge of ${c.parents.map((p) => p.slice(0, 7)).join(' + ')}`, color: theme.dim }]);
   if (c.refs.length) lines.push(refPills(c.refs));
   lines.push('');
@@ -126,6 +129,12 @@ export function GraphView({ data, ctx, width, height, active, filter, jump }) {
     setDetailOffset(0);
   }
   const detail = useAsync(c && split ? `detail:${data.root}:${c.hash}` : null, () => commitDetail(data.root, c.hash));
+  // Show signatures (off unless set): %G? has git check the signature, so only the commit under the cursor's.
+  const signatures = ctx.config?.showSignatures === true;
+  const sigKey = c && split && signatures ? `sig:${data.root}:${c.hash}` : null;
+  const sig = useAsync(sigKey, () => commitSignature(data.root, c.hash));
+  // A signature that couldn't be read (no gpg) is one that can't be checked here.
+  const sigShown = !sigKey ? undefined : sig.key !== sigKey ? null : (sig.value ?? (sig.error ? { code: 'E', signer: '', key: '' } : null));
 
   // While bisecting, the cursor follows HEAD: the commit git just checked out to try.
   const head = data.status.branch.oid;
@@ -279,7 +288,7 @@ export function GraphView({ data, ctx, width, height, active, filter, jump }) {
       {split ? (
         <Panel title={sel?.wip ? 'Working tree' : 'Commit'} hint={c ? 'J/K scroll' : ''} width={detailW} height={height}>
           {c ? (
-            <Lines lines={detailLines(c, detail.value?.hash === c.hash ? detail.value : null, detailW - 4)} width={detailW - 2} height={innerH} offset={detailOffset} />
+            <Lines lines={detailLines(c, detail.value?.hash === c.hash ? detail.value : null, detailW - 4, sigShown)} width={detailW - 2} height={innerH} offset={detailOffset} />
           ) : sel?.wip ? (
             <Lines
               width={detailW - 2}

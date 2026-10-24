@@ -7,6 +7,7 @@ import { layoutGraph } from './graph.js';
 import { theme } from './theme.js';
 import { isPointer, lfsMissing, parseLfsFiles, usesLfs } from './lfs.js';
 import { CODEOWNERS_PATHS, parseCodeowners } from './codeowners.js';
+import { SIGNATURE_FORMAT, parseSignature } from './signing.js';
 import {
   COMMIT_FORMAT,
   DECORATE_REFS,
@@ -500,12 +501,12 @@ export function parseRemotes(raw) {
 
 /** Full message, author and changed files of one commit. */
 export async function commitDetail(root, hash) {
-  // One git: the header ends at \x1e, and the file list follows it.
-  // %G? and %GS: whether it's signed, and by whom (checking a signature never asks for a passphrase).
-  const out = await git(root, ['show', '--format=%H%x1f%an%x1f%ae%x1f%at%x1f%cn%x1f%P%x1f%G?%x1f%GS%x1f%B%x1e', '--name-status', '-M', '--diff-merges=first-parent', hash]);
+  // One git: the header ends at \x1e, and the file list follows it. Not its signature: %G? has git check
+  // it, running gpg or ssh-keygen, which commitSignature does only when asked to (Show signatures).
+  const out = await git(root, ['show', '--format=%H%x1f%an%x1f%ae%x1f%at%x1f%cn%x1f%P%x1f%B%x1e', '--name-status', '-M', '--diff-merges=first-parent', hash]);
   const end = out.indexOf('\x1e');
   const files = out.slice(end + 1);
-  const [full, author, email, time, committer, parents, signature, signer, ...body] = out.slice(0, end).split('\x1f');
+  const [full, author, email, time, committer, parents, ...body] = out.slice(0, end).split('\x1f');
   return {
     hash: full,
     author,
@@ -513,11 +514,21 @@ export async function commitDetail(root, hash) {
     time: Number(time),
     committer,
     parents: parents ? parents.split(' ') : [],
-    signature: signature || 'N',
-    signer: signer ?? '',
     message: body.join('\x1f').trimEnd(),
     files: parseNameStatus(files),
   };
+}
+
+// Signatures checked, by commit: a commit's never changes (only the keys you have to check it with).
+const signatures = new Map();
+
+/** One commit's signature ({ code, signer, key }, signing.js's parseSignature): one git, kept by hash. */
+export async function commitSignature(root, hash) {
+  if (signatures.has(hash)) return signatures.get(hash);
+  const sig = parseSignature(await git(root, ['log', '-1', `--format=${SIGNATURE_FORMAT}`, hash, '--']));
+  signatures.set(hash, sig);
+  if (signatures.size > 500) signatures.delete(signatures.keys().next().value);
+  return sig;
 }
 
 /** The patch a commit introduces (first parent for merges), with its header; only to `paths`, if given. */

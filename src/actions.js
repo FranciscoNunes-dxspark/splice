@@ -57,7 +57,7 @@ import { eachLimited, fetchRepo } from './repos.js';
 import { checkPointers } from './repo.js';
 import { nextTheme, settingRows, settingSegments } from './settings.js';
 import { forcePushes, forwardInput, planSync, rebasingElsewhere, syncSummary, syncText, updateBranchArgs } from './sync.js';
-import { SIGNING_KEYS, checkGpgKey, explainSigning, needsPinentryCheck, signingConfig } from './signing.js';
+import { SIGNING_KEYS, checkGpgKey, explainSigning, needsPinentryCheck, parseVerify, signingConfig, unsignedOf, verifyArgs, verifyText } from './signing.js';
 import { LFS_MISSING, lfsCommand, lfsError, lfsText, parseLfsFiles, parseLfsLocks, withoutHints } from './lfs.js';
 import { run as runGit } from './git.js';
 import { commitsLine, insideSummary, parseGitlinks, parseInside, submoduleInfo } from './submodules.js';
@@ -203,15 +203,20 @@ export async function push(ctx, args = []) {
       });
       if (!ok) return;
     }
-    if (!(await beforePush(ctx, pushRange({ upstream: branch.upstream, remote: named })))) return { ok: false };
+    const range = pushRange({ upstream: branch.upstream, remote: named });
+    if (!(await beforePush(ctx, range))) return { ok: false };
+    const extra = await pushQuestion(ctx, range);
+    if (!extra) return { ok: false };
     // Only a branch without an upstream starts tracking the remote it was pushed to.
-    return ctx.exec(['push', ...flags, ...(branch.upstream ? [] : ['-u']), named, branch.head], { label: 'Pushing' });
+    return ctx.exec(['push', ...flags, ...extra, ...(branch.upstream ? [] : ['-u']), named, branch.head], { label: 'Pushing' });
   }
   if (!branch.upstream) {
     const remote = remotes.includes('origin') ? 'origin' : remotes[0];
     if (!remote) return ctx.note('This repository has no remote. Add one with: !remote add origin <url>', 'error');
     if (!(await beforePush(ctx, pushRange()))) return { ok: false };
-    return ctx.exec(['push', ...flags, '-u', remote, branch.head], { label: 'Pushing' });
+    const extra = await pushQuestion(ctx, pushRange());
+    if (!extra) return { ok: false };
+    return ctx.exec(['push', ...flags, ...extra, '-u', remote, branch.head], { label: 'Pushing' });
   }
   if (flags.includes('--force-with-lease')) {
     const ok = await ctx.confirm({
@@ -223,7 +228,71 @@ export async function push(ctx, args = []) {
     if (!ok) return;
   }
   if (!(await beforePush(ctx, pushRange({ upstream: branch.upstream })))) return { ok: false };
-  return ctx.exec(['push', ...flags], { label: 'Pushing' });
+  const extra = await pushQuestion(ctx, pushRange({ upstream: branch.upstream }));
+  if (!extra) return { ok: false };
+  return ctx.exec(['push', ...flags, ...extra], { label: 'Pushing' });
+}
+
+// The signing settings (signing.js's signingConfig), read with one git for each load of the repository.
+const signingRead = new WeakMap();
+function signingFor(ctx) {
+  const d = ctx.data;
+  if (!signingRead.has(d)) signingRead.set(d, ctx.git(['config', '--get-regexp', SIGNING_KEYS]).catch(() => '').then(signingConfig));
+  return signingRead.get(d);
+}
+
+/**
+ * The last question before a push, when there's something to say: with commit.gpgsign or tag.gpgsign on,
+ * which of the commits in `range` aren't signed (or have a bad signature). Resolves to the extra flags for
+ * git push ([] for none), or null when you'd rather not push.
+ */
+async function pushQuestion(ctx, range) {
+  const signing = await signingFor(ctx);
+  if (!signing.commits && !signing.tags) return [];
+  let unsigned = [];
+  let total = 0;
+  const r = await ctx.task(
+    'Checking the signatures of the commits to push',
+    async (signal) => {
+      const list = parseVerify(await ctx.git(verifyArgs(range), { signal }));
+      total = list.length;
+      unsigned = unsignedOf(list);
+      return { stdout: '', stderr: '' };
+    },
+    { label: 'Checking signatures', refresh: false, quiet: true, quietError: true },
+  );
+  if (r.error?.cancelled) return null;
+  if (!r.ok || !unsigned.length) return [];
+  const setting = signing.commits ? 'commit.gpgsign' : 'tag.gpgsign';
+  const list = unsigned.slice(0, 3).map((c) => `${short(c.hash)} ${c.subject}`).join(' · ');
+  const ok = await ctx.confirm({
+    title: `Push ${unsigned.length === total ? (total === 1 ? 'a commit' : `${total} commits`) : `${unsigned.length} of ${total} commits`} that ${unsigned.length === 1 ? "isn't" : "aren't"} signed?`,
+    detail: `${setting} is on here, but ${list}${unsigned.length > 3 ? ` and ${unsigned.length - 3} more` : ''} ${unsigned.length === 1 ? 'has' : 'have'} no good signature (/verify lists them).`,
+    options: YES_NO('Yes, push anyway'),
+    danger: true,
+  });
+  return ok ? [] : null;
+}
+
+/** /verify [range]: each commit's signature in the outgoing commits (those a push would send), or in a range. */
+export async function verify(ctx, text) {
+  if (!needRepo(ctx)) return;
+  const typed = splitArgs(text ?? '');
+  const range = typed.length ? typed : currentPushRange(ctx);
+  const what = typed.length ? typed.join(' ') : 'the commits to push';
+  let list = [];
+  const r = await ctx.task(
+    `git log --format=%G? ${typed.join(' ')}`.trim(),
+    async (signal) => {
+      list = parseVerify(await ctx.git(verifyArgs(range, 1000), { signal }));
+      return { stdout: '', stderr: '' };
+    },
+    { label: 'Checking signatures', refresh: false, quiet: true },
+  );
+  if (!r.ok) return r;
+  if (!list.length) return ctx.note(typed.length ? `No commits in ${what}.` : 'Nothing to push, so nothing to verify. /verify <range> checks any commits (main..feature, HEAD~5..).');
+  const bad = unsignedOf(list).length;
+  ctx.showText(`Signatures: ${bad ? `${bad} not signed or bad` : 'all signed'} (${list.length})`, verifyText(list, what));
 }
 
 /** Both checks before a push: big files and secrets, then the risk score. True to push. */
@@ -497,7 +566,7 @@ export async function editMessage(ctx, { amend = false, message = '' } = {}) {
  * can't be used without typing its passphrase into a terminal, which git doesn't have here (said in a note).
  */
 async function readySigning(ctx) {
-  const cfg = signingConfig(await ctx.git(['config', '--get-regexp', SIGNING_KEYS]).catch(() => ''));
+  const cfg = await signingFor(ctx);
   if (!cfg.commits) return null;
   if (!needsPinentryCheck(cfg)) return cfg;
   try {

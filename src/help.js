@@ -9,7 +9,7 @@ export const HELP = [
       ['1-7 / tab', 'Graph, Changes, Branches, Worktrees, Stash, PRs, Repos (shift+tab goes back)'],
       ['/ or :', 'Command prompt (slash commands, with completion)'],
       ['!', 'Run any git command, e.g.  !log --stat -5'],
-      ['f  p  P', 'Fetch all · Pull · Push (sets the upstream the first time; asks first if the commits have a file over 50 MB or what looks like a secret, or their risk scores high: /risk)'],
+      ['f  p  P', 'Fetch all · Pull · Push (sets the upstream the first time; asks first if the commits have a file over 50 MB or what looks like a secret, or their risk scores high: /risk; with commit.gpgsign or tag.gpgsign on, if some aren\'t signed)'],
       ['r', 'Refresh'],
       ['z', 'Undo the last commit, amend, merge, rebase, reset, switch or discard (asks first)'],
       ['esc', 'Cancel the running command, or clear the activity lines'],
@@ -35,7 +35,7 @@ export const HELP = [
   },
   {
     title: 'Graph',
-    about: '● a commit · ○ a merge, < or > pointing into it from the branch it brings in · ◌ your uncommitted changes; the commit pane says whether the commit is signed, and if the signature is good',
+    about: '● a commit · ○ a merge, < or > pointing into it from the branch it brings in · ◌ your uncommitted changes; with Show signatures on (/settings), the commit pane says whether the commit is signed: Good, Bad, Unknown, None or Expired, with the signer',
     views: ['graph'],
     rows: [
       ['↵', 'Full diff of the commit'],
@@ -47,6 +47,7 @@ export const HELP = [
       ['X', 'Reset the current branch to it (soft, mixed or hard)'],
       ['i', 'Interactive rebase from it (included) up to HEAD'],
       ['B', 'Bisect: mark it bad or good (or skip); git checks out the commit halfway, to try\nWith both marked, /bisect run <command> tests each commit for you: exit 0 good, 125 skip, 1-127 bad'],
+      ['/verify [range]', 'The signatures of the commits a push would send (or of a range, main..feature): the unsigned and bad ones first'],
       ['Y', 'Copy /take commit for Sonar, which finds the deployments that carry it'],
       ['w', 'Run it: a worktree of its own at the commit (../<repo>-at-<hash>, /run-at [commit]), and Bosun\'s /move to it copied, to paste there; /cleanup removes it'],
       ['e  R', 'Claude explains it · Claude reviews it (R on the working tree: your changes)'],

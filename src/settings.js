@@ -73,6 +73,14 @@ export function settingRows(config, { file = '', mouse = true } = {}) {
       off: true,
     },
     {
+      id: 'showSignatures',
+      label: 'Show signatures',
+      value: config.showSignatures === true ? 'on' : 'off',
+      note: config.showSignatures === true ? 'stop checking them (each check runs gpg or ssh-keygen)' : "check the signature of the graph's commit under the cursor",
+      action: 'toggle',
+      off: true,
+    },
+    {
       id: 'checkBeforePush',
       label: 'Check before pushing',
       value: isOn(config.checkBeforePush) ? 'on' : 'off',

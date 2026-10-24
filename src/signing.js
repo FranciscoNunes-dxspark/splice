@@ -89,3 +89,67 @@ export function checkGpgKey(cfg, { cwd } = {}) {
     child.stdin.end('splice\n');
   });
 }
+
+// ---------------------------------------------------------------------------------------------------
+// Reading signatures. %G? makes git check each commit's signature (running gpg or ssh-keygen), so the
+// graph only asks for the commit under the cursor, and only with the "Show signatures" setting on.
+
+/** The format `git log -1` reads one commit's signature with: %G?, the signer and the key, NUL apart. */
+export const SIGNATURE_FORMAT = '%G?%x00%GS%x00%GK';
+
+/** `git log -1 --format=SIGNATURE_FORMAT`'s answer: { code, signer, key }. */
+export function parseSignature(out) {
+  const [code, signer = '', key = ''] = String(out ?? '').replace(/\r?\n$/, '').split('\0');
+  return { code: code?.trim() || 'N', signer: signer.trim(), key: key.trim() };
+}
+
+/** What a %G? code comes to, in a word: Good, Bad, Unknown, None or Expired. */
+export function signatureWord(code) {
+  if (code === 'G' || code === 'U') return 'Good';
+  if (code === 'X' || code === 'Y') return 'Expired';
+  if (code === 'B' || code === 'R') return 'Bad';
+  if (code === 'E') return 'Unknown';
+  return 'None';
+}
+
+/** The commit pane's line for a signature: { word, text, tone }, with the key when git names one. */
+export function signatureLine({ code, signer, key }) {
+  const sig = signatureText(code, signer);
+  return { word: signatureWord(code), text: `${sig.text}${key ? ` (key ${key})` : ''}`, tone: sig.tone };
+}
+
+/** `git log` arguments for every commit in `range` with its signature (/verify, and before a push). */
+export const verifyArgs = (range, max = 300) => ['log', `--max-count=${max}`, `--format=%H%x00%G?%x00%GS%x00%GK%x00%s%x1e`, ...range, '--'];
+
+/** verifyArgs's output: [{ hash, code, signer, key, subject }], newest first. */
+export function parseVerify(out) {
+  return String(out ?? '')
+    .split('\x1e')
+    .map((rec) => rec.replace(/^\s+/, ''))
+    .filter((rec) => rec.includes('\0'))
+    .map((rec) => {
+      const [hash, code, signer, key, subject = ''] = rec.split('\0');
+      return { hash, code: code || 'N', signer, key, subject: subject.trimEnd() };
+    });
+}
+
+/** The commits to warn about: not signed at all, or with a bad or revoked signature. */
+export const unsignedOf = (list) => list.filter((c) => signatureWord(c.code) === 'None' || signatureWord(c.code) === 'Bad');
+
+/** /verify's report: the bad and unsigned commits first, then the rest by what their signature says. */
+export function verifyText(list, what) {
+  if (!list.length) return `No commits in ${what}.`;
+  const groups = ['Bad', 'None', 'Unknown', 'Expired', 'Good'];
+  const titles = { Bad: 'Bad signatures', None: 'Not signed', Unknown: "Signed, but the signature can't be checked here", Expired: 'Signed with an expired key', Good: 'Good signatures' };
+  const warn = unsignedOf(list).length;
+  const lines = [
+    warn ? `${warn} of the ${list.length} commit${list.length === 1 ? '' : 's'} in ${what} ${warn === 1 ? "isn't" : "aren't"} signed, or ${warn === 1 ? 'has' : 'have'} a bad signature.` : `Every commit in ${what} is signed (${list.length}).`,
+  ];
+  for (const g of groups) {
+    const these = list.filter((c) => signatureWord(c.code) === g);
+    if (!these.length) continue;
+    lines.push('', `${titles[g]} (${these.length})`);
+    for (const c of these) lines.push(`  ${c.hash.slice(0, 7)}  ${c.subject}${c.signer ? `  · ${c.signer}` : ''}${g === 'Bad' || g === 'Unknown' ? `  · ${signatureText(c.code, c.signer).text}` : ''}`);
+  }
+  return lines.join('\n');
+}
