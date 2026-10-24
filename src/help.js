@@ -140,6 +140,16 @@ export const HELP = [
     ],
   },
   {
+    title: 'Sparse checkout',
+    about: 'only some folders in the working tree; the header says sparse while it\'s on',
+    rows: [
+      ['/sparse', 'Whether it\'s on, in cone mode or with patterns, and the folders checked out'],
+      ['/sparse set <folder…>', 'Check out only those folders (and the files at the top); asks first, and refuses while a file that would leave has uncommitted changes'],
+      ['/sparse add [folder…]', 'Bring folders back; alone, pick one from the commit\'s folders'],
+      ['/sparse off', 'Check out every file again'],
+    ],
+  },
+  {
     title: 'Git LFS locks',
     about: '/lfs locks: the files locked on the LFS server, by whom and since when',
     rows: [

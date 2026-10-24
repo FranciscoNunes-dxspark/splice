@@ -65,6 +65,7 @@ import { fit } from './text.js';
 import { futureItems, futureRefspecs, lineInBase, nameList, touchingHunks } from './future.js';
 import { historyArgs, outgoingArgs, parseRiskLog, riskBlobs, riskFiles, riskSummary, riskText, scoreRisk } from './risk.js';
 import { familyOffers } from './siblings.js';
+import { changedOutside, leavingFolders, sparseText } from './sparse.js';
 import { CODEOWNERS_PATHS, changedOwnersText, ownersOfFiles, ownersText, reviewerNames } from './codeowners.js';
 import { TAKES, exceptionFrames, framesInRepo, pathAndLine } from './take.js';
 import { APP_NAMES, TAKEN_BY, contextIn, copiedNote, describeContext, matchFrameFile, notMine, projectAt, shareLine, takeLine } from './family.js';
@@ -3025,6 +3026,77 @@ async function suggestOwners(ctx, host, pr, base) {
       { replace },
     );
   show(false);
+}
+
+/**
+ * /sparse: alone, whether the working tree is a sparse checkout, in cone mode or not, and its folders.
+ * `set <folder…>` checks out only those folders (asking first, and refusing while a file that would leave
+ * the working tree has uncommitted changes); `add <folder…>` brings folders back (alone: a picker of HEAD's
+ * folders, listed only then); `off` checks out everything again.
+ */
+export async function sparse(ctx, text) {
+  if (!needRepo(ctx)) return;
+  const [how, ...rest] = splitArgs(text ?? '');
+  const state = ctx.data.sparse ?? { on: false, cone: false, folders: [], patterns: [] };
+  if (!how) return ctx.showText(`Sparse checkout: ${state.on ? (state.cone ? 'on, cone mode' : 'on, patterns') : 'off'}`, sparseText(state));
+  const dirs = rest.map((d) => repoPath(ctx.data.root, d)).filter(Boolean);
+  if (dirs.some((d) => d.startsWith('-'))) return ctx.note('Name the folders: /sparse set <folder…>', 'error');
+  if (how === 'off' || how === 'disable') {
+    if (!state.on) return ctx.note('Sparse checkout is off already: every file is checked out.');
+    return ctx.exec(['sparse-checkout', 'disable'], { label: 'Checking out every file' });
+  }
+  if (how === 'add') {
+    if (!state.on) return ctx.note('Sparse checkout is off, so every folder is here already. /sparse set <folder…> turns it on.', 'error');
+    if (!dirs.length) return pickSparseFolder(ctx, state);
+    return ctx.exec(['sparse-checkout', 'add', ...dirs], { label: 'Adding to the sparse checkout' });
+  }
+  if (how !== 'set') return ctx.note('Use: /sparse, /sparse set <folder…>, /sparse add [folder…], /sparse off', 'error');
+  if (!dirs.length) return ctx.prefill('/sparse set ');
+  const cone = !state.on || state.cone;
+  // Files with uncommitted changes that would leave the working tree: git would leave them behind, half
+  // out of the checkout, so Splice refuses first. (Pattern mode can't be worked out here; git warns.)
+  if (cone) {
+    const outside = changedOutside(ctx.data.status.files, dirs);
+    if (outside.length) {
+      const list = outside.slice(0, 5).map((f) => f.path).join(', ');
+      return ctx.note(`Not now: ${outside.length === 1 ? 'a file' : `${outside.length} files`} that would leave the working tree ${outside.length === 1 ? 'has' : 'have'} uncommitted changes (${list}${outside.length > 5 ? ', …' : ''}). Commit, stash or discard ${outside.length === 1 ? 'it' : 'them'} first.`, 'error');
+    }
+  }
+  const leaving = !state.on ? null : cone ? leavingFolders(state.folders, dirs) : state.patterns.filter((p) => !dirs.includes(p));
+  if (!state.on || leaving.length) {
+    const ok = await ctx.confirm({
+      title: state.on ? `Take ${leaving.join(', ')} out of the working tree?` : `Check out only ${dirs.join(', ')}?`,
+      detail: state.on
+        ? `Their files leave the working tree (they stay in git: /sparse add or /sparse off brings them back). Then: ${dirs.join(', ')}.`
+        : 'Every other folder\'s files leave the working tree (they stay in git: /sparse off brings them all back). The files at the top stay.',
+      options: YES_NO('Yes, check out less'),
+      danger: true,
+    });
+    if (!ok) return;
+  }
+  return ctx.exec(['sparse-checkout', 'set', ...dirs], { label: 'Changing the sparse checkout' });
+}
+
+// /sparse add alone: HEAD's folders (git ls-tree -d, read when the picker opens), less those checked out already.
+function pickSparseFolder(ctx, state) {
+  ctx.showPicker({
+    title: 'Add a folder to the sparse checkout',
+    hint: '↵ check it out',
+    empty: 'Every folder is checked out already.',
+    load: async () => {
+      const out = await ctx.git(['ls-tree', '-d', '-r', '-z', '--name-only', 'HEAD']);
+      const have = (d) => state.folders.some((f) => d === f || d.startsWith(`${f}/`));
+      return out
+        .split('\0')
+        .filter((d) => d && !have(d))
+        .map((d) => ({ dir: d, segments: [{ text: `${d}/`, strong: true }] }));
+    },
+    onPick: (it) => {
+      ctx.closeOverlay();
+      return ctx.exec(['sparse-checkout', 'add', it.dir], { label: 'Adding to the sparse checkout' });
+    },
+    keys: { y: (it) => ctx.copy(it.dir) },
+  });
 }
 
 /** /owners [path]: who owns a path, by CODEOWNERS (and which line says so); alone, the owners of the changed files. */

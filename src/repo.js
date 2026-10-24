@@ -8,6 +8,7 @@ import { theme } from './theme.js';
 import { isPointer, lfsMissing, parseLfsFiles, usesLfs } from './lfs.js';
 import { CODEOWNERS_PATHS, parseCodeowners } from './codeowners.js';
 import { SIGNATURE_FORMAT, parseSignature } from './signing.js';
+import { sparseState } from './sparse.js';
 import {
   COMMIT_FORMAT,
   DECORATE_REFS,
@@ -438,12 +439,26 @@ export async function readCodeowners(root) {
 }
 
 /**
+ * The sparse checkout (sparse.js's sparseState), from the files git keeps it in: the config, the worktree's
+ * own config.worktree, and info/sparse-checkout. Three small reads, no git.
+ */
+export async function readSparse(repo) {
+  const read = (p) => readFile(p, 'utf8').catch(() => '');
+  const [config, worktreeConfig, file] = await Promise.all([
+    read(join(repo.commonDir, 'config')),
+    read(join(repo.gitDir, 'config.worktree')),
+    read(join(repo.gitDir, 'info', 'sparse-checkout')),
+  ]);
+  return sparseState({ config, worktreeConfig, file });
+}
+
+/**
  * Loads everything the views show. `freshRefs` lists the refs even when their files look as they were: polling
  * listed them again and found a change.
  */
 export async function loadRepo(repo, { graphLimit = 400, freshRefs = false } = {}) {
   const state = readState(repo, REF_FORMAT, refsSignature, { allRefs: true, listRefs: () => loadRefs(repo, freshRefs), fresh: freshRefs });
-  const [{ snap, log, kept }, remotes, subs, lfs, codeowners] = await Promise.all([
+  const [{ snap, log, kept }, remotes, subs, lfs, codeowners, sparse] = await Promise.all([
     readStateAndLog(repo, graphLimit, state),
     readRemotes(repo),
     // Only a repository with submodules pays for asking about them. Not part of the signature: what
@@ -451,6 +466,7 @@ export async function loadRepo(repo, { graphLimit = 400, freshRefs = false } = {
     existsSync(join(repo.root, '.gitmodules')) ? readSubmodules(repo, state) : '',
     readLfs(repo, state),
     readCodeowners(repo.root),
+    readSparse(repo),
   ]);
   const status = parseStatus(snap.status);
   const refs = parseRefs(snap.refs);
@@ -485,6 +501,9 @@ export async function loadRepo(repo, { graphLimit = 400, freshRefs = false } = {
     lfs: lfs && { ...lfs, files: await checkPointers(repo.root, lfs.files, status.files.map((f) => f.path)) },
     // Not part of the signature either: editing CODEOWNERS shows in the status, which reloads.
     codeowners,
+    // The sparse checkout, which the header shows. Not part of the signature (polling reads nothing new):
+    // /sparse reloads after it, and a change made outside shows at the next load.
+    sparse,
     ...remotes,
   };
 }

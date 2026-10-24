@@ -86,6 +86,8 @@ function Header({ data, width, loading, mood }) {
     if (b.behind) segs.push({ text: ` ↓${b.behind}`, color: theme.warn, bold: true });
     const n = data.status.files.length;
     segs.push({ text: n ? `  ● ${n} change${n === 1 ? '' : 's'}` : '  ✓ clean', color: n ? theme.warn : theme.dim });
+    // Only part of the repository is checked out (/sparse says which).
+    if (data.sparse?.on) segs.push({ text: '  sparse', color: theme.hunk, bold: true });
     if (data.state) segs.push({ text: '  ' }, { text: ` ${data.state.toUpperCase()} `, bg: data.state === 'bisecting' ? theme.hunk : theme.del, color: theme.ink, bold: true });
   } else if (loading) {
     segs.push({ text: '  loading…', color: theme.dim });

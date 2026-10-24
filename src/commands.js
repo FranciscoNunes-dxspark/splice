@@ -31,6 +31,7 @@ export const COMMANDS = [
   { name: 'remote', args: '[add|rename|remove|set-url] [...]', desc: 'The remotes: list them, or add <name> <url>, rename <old> <new>, remove <name>, set-url <name> <url>', run: (ctx, s) => a.remote(ctx, s) },
   { name: 'upstream', args: '[branch] <remote/branch>', desc: 'Set the branch a local branch tracks (--unset to stop)', complete: 'refs', run: (ctx, s) => a.upstream(ctx, s) },
   { name: 'stash', args: '[-u | --no-untracked] [message]', desc: 'Stash all changes (untracked files too, unless set off in /settings), with an optional message', run: (ctx, s) => a.stash(ctx, s) },
+  { name: 'sparse', args: '[set|add|off] [folder…]', desc: 'Sparse checkout: alone, whether it is on (cone mode or not) and its folders; set <folder…> checks out only those (asks first), add brings more back (alone: pick one), off everything', run: (ctx, s) => a.sparse(ctx, s) },
   { name: 'submodules', desc: 'Every submodule: the commit recorded against the one it has, its branch and its own changes; open, update, fetch or sync one', run: (ctx) => a.showSubmodules(ctx) },
   { name: 'submodule-update', args: '[path]', desc: 'Initialise and check out the recorded commit of every submodule, or one', run: (ctx, s) => a.updateSubmodules(ctx, s) },
   { name: 'lfs', args: '[pull|fetch|locks|lock <path>|unlock <path> [--force]]', desc: 'Git LFS: alone, its files (downloaded or only pointers) and git lfs status; pull or fetch the files; the locks, or lock or unlock a file', run: (ctx, s) => a.lfs(ctx, s) },
