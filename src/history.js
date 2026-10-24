@@ -5,6 +5,7 @@ import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
 import { claudeBlame, future, shareFileLine } from './actions.js';
 import { HISTORY_FORMAT, isoDate, parseBlame, parseFileHistory, relTime } from './parse.js';
 import { parseDiff } from './patch.js';
+import { ownersLine, ownersOf } from './codeowners.js';
 import { theme } from './theme.js';
 import { fit, stringWidth } from './text.js';
 
@@ -182,8 +183,9 @@ export async function lineHistory(ctx, path, from, to, rev) {
 export function blamePicker(ctx, path, { rev = null, line = null } = {}) {
   // Every row, for the file around lines Claude explains.
   let all = [];
+  const owners = ownersLine(ownersOf(ctx.data?.codeowners, path).owners);
   return {
-    title: `Blame ${path}${rev ? ` at ${rev.replace(/^[0-9a-f]{40,64}/, short)}` : ''}${line ? `, line ${line}` : ''}`,
+    title: `Blame ${path}${rev ? ` at ${rev.replace(/^[0-9a-f]{40,64}/, short)}` : ''}${line ? `, line ${line}` : ''}${owners ? ` · owners ${owners}` : ''}`,
     // The cursor starts on `line` (Picker.jsx's `index`), once the lines are in.
     index: line ? line - 1 : undefined,
     hint: '↵ diff · H history · v/L lines’ history · e why · F PRs',

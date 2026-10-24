@@ -65,6 +65,7 @@ import { fit } from './text.js';
 import { futureItems, futureRefspecs, lineInBase, nameList, touchingHunks } from './future.js';
 import { historyArgs, outgoingArgs, parseRiskLog, riskBlobs, riskFiles, riskSummary, riskText, scoreRisk } from './risk.js';
 import { familyOffers } from './siblings.js';
+import { CODEOWNERS_PATHS, changedOwnersText, ownersOfFiles, ownersText, reviewerNames } from './codeowners.js';
 import { TAKES, exceptionFrames, framesInRepo, pathAndLine } from './take.js';
 import { APP_NAMES, TAKEN_BY, contextIn, copiedNote, describeContext, matchFrameFile, notMine, projectAt, shareLine, takeLine } from './family.js';
 import { DEFAULT_ACCENT, applyTheme, isColour, setAccent, theme } from './theme.js';
@@ -2900,8 +2901,78 @@ export async function createPr(ctx, text) {
   if (r.ok) {
     ctx.prDraft = null;
     ctx.prsChanged();
+    const id = prIdFromUrl(r.out);
+    if (id != null) await suggestOwners(ctx, host, { id, label: `${host.kind === 'github' ? '#' : '!'}${id}` }, prBase(ctx, target));
   }
   return r;
+}
+
+/**
+ * After a pull request is opened (n and /pr, /draft-pr's /pr, /ship): the CODEOWNERS owners of the files it
+ * changes against `base`, less yourself, offered as its reviewers in a picker, all picked to start with:
+ * space drops or picks one again, ↵ asks the picked ones, esc asks nobody. Nothing when there's no
+ * CODEOWNERS or nobody to ask, and never on Azure DevOps, which has none.
+ */
+async function suggestOwners(ctx, host, pr, base) {
+  const co = ctx.data?.codeowners;
+  if (!co || !host.addReviewers || host.kind === 'azure') return;
+  const files = (await ctx.git(['diff', '--name-only', '-z', `${base}...HEAD`, '--']).catch(() => '')).split('\0').filter(Boolean);
+  const { owners } = ownersOfFiles(co, files);
+  const me = host.me ? await host.me().catch(() => '') : '';
+  const names = reviewerNames(owners.map((o) => o.owner), me);
+  if (!names.length) return;
+  const count = new Map(owners.map((o) => [o.owner.replace(/^@/, ''), o.files.length]));
+  const chosen = new Set(names);
+  const show = (replace, index) =>
+    ctx.showPicker(
+      {
+        title: `Ask the code owners to review ${pr.label}?`,
+        hint: `${chosen.size} picked · space pick or drop · ↵ ask them`,
+        index,
+        owners: true,
+        items: () =>
+          names.map((name) => ({
+            name,
+            segments: [
+              { text: chosen.has(name) ? '✓ ' : '  ', color: theme.add, bold: true },
+              { text: `@${name}`, strong: true },
+              { text: `  owns ${count.get(name)} of its ${files.length} file${files.length === 1 ? '' : 's'}`, color: theme.dim },
+            ],
+          })),
+        onPick: () => {
+          const list = names.filter((n) => chosen.has(n));
+          ctx.closeOverlay();
+          if (!list.length) return ctx.note(`Nobody picked, so nobody was asked to review ${pr.label}.`);
+          return prEdit(ctx, host, pr, `Ask ${list.join(', ')} to review ${pr.label}`, 'Adding reviewers', (signal) => host.addReviewers(pr, list, signal));
+        },
+        keys: {
+          ' ': (it) => {
+            if (chosen.has(it.name)) chosen.delete(it.name);
+            else chosen.add(it.name);
+            show(true, names.indexOf(it.name));
+          },
+        },
+      },
+      { replace },
+    );
+  show(false);
+}
+
+/** /owners [path]: who owns a path, by CODEOWNERS (and which line says so); alone, the owners of the changed files. */
+export function owners(ctx, text) {
+  if (!needRepo(ctx)) return;
+  const co = ctx.data.codeowners;
+  if (!co) return ctx.note(`This repository has no CODEOWNERS file (Splice looks in ${CODEOWNERS_PATHS.join(', ')}).`, 'error');
+  const problems = co.problems.length ? `\n\nLeft out of ${co.file}:\n${co.problems.map((p) => `  ${p}`).join('\n')}` : '';
+  const typed = (text ?? '').trim();
+  if (typed) {
+    const path = repoPath(ctx.data.root, typed);
+    return ctx.showText(`Owners of ${path}`, ownersText(co.file, co, path) + problems);
+  }
+  const { staged, unstaged, conflicts } = ctx.data.changes;
+  const paths = [...new Set([...conflicts, ...staged, ...unstaged].map((f) => f.path))];
+  if (!paths.length) return ctx.note('Nothing has changed. /owners <path> says who owns any path.');
+  ctx.showText('Owners of the changed files', changedOwnersText(co.file, co, paths) + problems);
 }
 
 // Claude, through the Claude Code CLI: App passes `ctx.askClaude` (claude.js's `ask`; tests pass a stub).
@@ -3428,6 +3499,8 @@ export async function ship(ctx, text) {
   const r = await hostTask(ctx, mergeTitle(host, pr, opts), (signal) => host.merge(pr, opts, signal), { label: 'Setting auto-merge', refresh: false });
   ctx.prsChanged();
   if (r.ok) ctx.note(`Shipped ${branch.head}: ${pr.label} merges into ${pr.target} once its checks and reviews pass.\nOnce it has, Splice offers to finish: switch to ${pr.target}, pull it and delete ${branch.head}.`, 'ok');
+  // A pull request /ship opened: its code owners, as reviewers.
+  if (!open) await suggestOwners(ctx, host, pr, base);
   return r;
 }
 

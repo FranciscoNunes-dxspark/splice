@@ -36,6 +36,7 @@ import { FACES, moodFor } from '../pet.js';
 import { worthNotifying } from '../notify.js';
 import { decodeContext, pastedLine, readMoods, writeMood } from '../family.js';
 import { droppedPaths } from '../drop.js';
+import { ownersLine, ownersOf } from '../codeowners.js';
 import { familyMood, moodsToShow, reactionText } from '../siblings.js';
 
 const VIEWS = [
@@ -604,7 +605,10 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
     // `paths` limits it to some files (a file's history: its path then, and the one before a rename).
     showPatch: (c, paths = []) =>
       showAsync(`${c.hash.slice(0, 7)} ${c.subject}${paths.length ? ` · ${paths.at(-1)}` : ''}`, () => commitPatch(dataRef.current.root, c.hash, paths), { diff: true }),
-    showChange: (f) => showAsync(`${f.path} (${f.area})`, () => changeDiff(dataRef.current.root, f), { diff: true }),
+    showChange: (f) => {
+      const owners = ownersLine(ownersOf(dataRef.current.codeowners, f.path).owners);
+      showAsync(`${f.path} (${f.area})${owners ? ` · ${owners}` : ''}`, () => changeDiff(dataRef.current.root, f), { diff: true });
+    },
     // The diff with its review comments, when the host can list them; a diff without them if that fails.
     showPrDiff: (pr) => {
       const host = ctx.host();

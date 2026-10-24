@@ -5,6 +5,7 @@ import * as a from '../actions.js';
 import { promptMessage } from '../message.js';
 import { hunkPicks, isChange, parseDiff } from '../patch.js';
 import { changeDiff } from '../repo.js';
+import { ownersLine, ownersOf } from '../codeowners.js';
 import { wordChanges } from '../search.js';
 import { SPLIT_WIDTH, rowLines, splitView } from '../split.js';
 import { codeColor, theme } from '../theme.js';
@@ -112,6 +113,8 @@ export function ChangesView({ data, ctx, width, height, active }) {
   const nav = useListNav(rows.length, innerH, { selectable: (i) => Boolean(rows[i]?.file || rows[i]?.sub), resetKey: data.root });
   const f = rows[nav.index]?.file;
   const sub = rows[nav.index]?.sub;
+  // Who owns the selected file (CODEOWNERS), beside it in the list and in the diff's title.
+  const owned = f && data.codeowners ? ownersLine(ownersOf(data.codeowners, f.path).owners) : '';
 
   // "files" moves through the list; "diff" puts a cursor in the diff to stage hunks and lines;
   // "conflict" (for a conflicted file) moves between its conflict blocks to take a side of each.
@@ -333,7 +336,7 @@ export function ChangesView({ data, ctx, width, height, active }) {
                 selected={idx === nav.index}
                 marked={fileSpan && idx >= fileSpan[0] && idx <= fileSpan[1]}
                 focused={active && pane === 'files'}
-                segments={fileSegments(row.file, data.lfs?.files)}
+                segments={idx === nav.index && owned ? [...fileSegments(row.file, data.lfs?.files), { text: `  ${owned}`, color: theme.hunk }] : fileSegments(row.file, data.lfs?.files)}
               />
             );
           })}
@@ -346,7 +349,7 @@ export function ChangesView({ data, ctx, width, height, active }) {
       ) : showDiff && target === 'conflict' ? (
         <ConflictPane cf={cf} f={f} hint={diffHint} width={diffW} height={height} focused={active && pane === 'conflict'} />
       ) : showDiff ? (
-        <Panel title={f ? f.path : 'Diff'} hint={diffHint + splitHint} width={diffW} height={height} focused={active && pane === 'diff'}>
+        <Panel title={f ? `${f.path}${owned ? ` · ${owned}` : ''}` : 'Diff'} hint={diffHint + splitHint} width={diffW} height={height} focused={active && pane === 'diff'}>
           {!f ? <Row pointer={false} width={diffW - 2} segments={[{ text: 'Working tree clean.', color: theme.dim }]} /> : null}
           {f
             ? shown.slice(dnav.offset, dnav.offset + innerH).map((r, i) => {

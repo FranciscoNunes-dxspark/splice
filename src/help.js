@@ -92,6 +92,7 @@ export const HELP = [
       ['O  T', 'On a conflict: take ours · take theirs, for the whole file'],
       ['C', 'On a conflict: Claude proposes the resolved file, shown as a diff; asks before writing it'],
       ['H  B', 'The file\'s history · Blame it (who last changed each line)'],
+      ['owners', 'The selected file\'s owners (CODEOWNERS) show beside it and in its diff\'s title; /owners [path] says who owns a path and which line says so, alone the owners of your changed files'],
       ['L', 'Git LFS: lock the file on the LFS server, or unlock it if it\'s locked by you (/lfs locks lists them); files LFS keeps say LFS, or LFS pointer when only the pointer is here (/lfs pull downloads them)'],
       ['↵  →  l', 'Step into the diff to stage hunks or single lines (on a conflict: into its conflict blocks)'],
       ['w', 'The diff side by side, old and new in two columns, or back in one (a window 156 columns wide or more; remembered)'],
@@ -156,7 +157,7 @@ export const HELP = [
   },
   {
     title: 'Blame',
-    about: 'B, /blame <path>[:<line>]: the working-tree file, so new lines show as not committed yet',
+    about: 'B, /blame <path>[:<line>]: the working-tree file, so new lines show as not committed yet; the title names the file\'s owners (CODEOWNERS)',
     rows: [
       ['↵', 'Diff of the commit that last changed the line (esc comes back here)'],
       ['H', 'The file\'s history'],
@@ -228,7 +229,7 @@ export const HELP = [
       ['D', 'Draft, or ready for review (/draft, /ready)'],
       ['E  B', 'Retitle it (/title <text>) · Edit its description: written to a file for your own editor, then /body --file <it> sends it (/body <text> sends text, \\n for a new line)'],
       ['o', 'Open in the browser'],
-      ['n', 'New pull request from the current branch (/pr <title> [--into <branch>] [--draft])'],
+      ['n', 'New pull request from the current branch (/pr <title> [--into <branch>] [--draft]); once it\'s open, the code owners of its files are offered as reviewers, all picked: space drops one, ↵ asks them, esc nobody'],
       ['W', 'Claude drafts one: title into the prompt, description offered when you open it'],
       ['e  R', 'Claude explains it · Claude reviews it'],
       { heading: 'From the prompt', about: 'on the current branch, or a pull request by its number' },

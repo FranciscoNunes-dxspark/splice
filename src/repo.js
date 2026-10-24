@@ -6,6 +6,7 @@ import { git } from './git.js';
 import { layoutGraph } from './graph.js';
 import { theme } from './theme.js';
 import { isPointer, lfsMissing, parseLfsFiles, usesLfs } from './lfs.js';
+import { CODEOWNERS_PATHS, parseCodeowners } from './codeowners.js';
 import {
   COMMIT_FORMAT,
   DECORATE_REFS,
@@ -407,19 +408,48 @@ async function readSubmodules(repo, state) {
   return raw;
 }
 
+// CODEOWNERS, by worktree: read again only when the file (the first of CODEOWNERS_PATHS there is) changes,
+// which a stat of each place says, so a load costs no git and no read when it's as it was.
+const ownerFiles = new Map();
+
+/** The repository's CODEOWNERS ({ file, ...parseCodeowners }), or null when it has none. */
+export async function readCodeowners(root) {
+  for (const file of CODEOWNERS_PATHS) {
+    const full = join(root, ...file.split('/'));
+    const stamp = await fileStamp(full);
+    if (!stamp) continue;
+    const kept = ownerFiles.get(root);
+    if (kept?.file === file && kept.stamp === stamp) return kept.value;
+    let text;
+    try {
+      text = await readFile(full, 'utf8');
+    } catch {
+      // Gone between the stat and the read (an editor saving it by renaming): the next place, or next time.
+      continue;
+    }
+    const value = { file, ...parseCodeowners(text) };
+    ownerFiles.delete(root);
+    ownerFiles.set(root, { file, stamp, value });
+    if (ownerFiles.size > 4) ownerFiles.delete(ownerFiles.keys().next().value);
+    return value;
+  }
+  return null;
+}
+
 /**
  * Loads everything the views show. `freshRefs` lists the refs even when their files look as they were: polling
  * listed them again and found a change.
  */
 export async function loadRepo(repo, { graphLimit = 400, freshRefs = false } = {}) {
   const state = readState(repo, REF_FORMAT, refsSignature, { allRefs: true, listRefs: () => loadRefs(repo, freshRefs), fresh: freshRefs });
-  const [{ snap, log, kept }, remotes, subs, lfs] = await Promise.all([
+  const [{ snap, log, kept }, remotes, subs, lfs, codeowners] = await Promise.all([
     readStateAndLog(repo, graphLimit, state),
     readRemotes(repo),
     // Only a repository with submodules pays for asking about them. Not part of the signature: what
     // polling needs to notice (a submodule's commit or changes) is in the status already.
     existsSync(join(repo.root, '.gitmodules')) ? readSubmodules(repo, state) : '',
     readLfs(repo, state),
+    readCodeowners(repo.root),
   ]);
   const status = parseStatus(snap.status);
   const refs = parseRefs(snap.refs);
@@ -452,6 +482,8 @@ export async function loadRepo(repo, { graphLimit = 400, freshRefs = false } = {
     worktrees,
     submodules: parseSubmodules(subs, status.files),
     lfs: lfs && { ...lfs, files: await checkPointers(repo.root, lfs.files, status.files.map((f) => f.path)) },
+    // Not part of the signature either: editing CODEOWNERS shows in the status, which reloads.
+    codeowners,
     ...remotes,
   };
 }
