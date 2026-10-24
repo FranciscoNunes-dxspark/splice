@@ -36,6 +36,7 @@ import { FACES, moodFor } from '../pet.js';
 import { worthNotifying } from '../notify.js';
 import { decodeContext, pastedLine, readMoods, writeMood } from '../family.js';
 import { droppedPaths } from '../drop.js';
+import { ownersLine, ownersOf } from '../codeowners.js';
 import { familyMood, moodsToShow, reactionText } from '../siblings.js';
 
 const VIEWS = [
@@ -85,6 +86,8 @@ function Header({ data, width, loading, mood }) {
     if (b.behind) segs.push({ text: ` ↓${b.behind}`, color: theme.warn, bold: true });
     const n = data.status.files.length;
     segs.push({ text: n ? `  ● ${n} change${n === 1 ? '' : 's'}` : '  ✓ clean', color: n ? theme.warn : theme.dim });
+    // Only part of the repository is checked out (/sparse says which).
+    if (data.sparse?.on) segs.push({ text: '  sparse', color: theme.hunk, bold: true });
     if (data.state) segs.push({ text: '  ' }, { text: ` ${data.state.toUpperCase()} `, bg: data.state === 'bisecting' ? theme.hunk : theme.del, color: theme.ink, bold: true });
   } else if (loading) {
     segs.push({ text: '  loading…', color: theme.dim });
@@ -153,7 +156,7 @@ const DOUBLE_CLICK_MS = 400;
 // finished (cli.jsx rings the terminal's bell and raises a desktop notification); without it, as in most
 // tests, nothing is said. `familyHome` is the family's folder for the mascots' moods (family.js's familyDir,
 // from cli.jsx): without it, as in most tests, Twig neither tells the siblings its mood nor reads theirs;
-// `moodEvery` is how often theirs are read.
+// `moodEvery` is how often theirs are read. It's also where Splice logs what it did, for the family's /timeline.
 export function App({ initialPath, reopenLast = false, config: initialConfig, checkUpdate, installUpdate, askClaude, setTitle, makeHost = hostFor, mouse, copy, notify, familyHome = null, moodEvery = 30_000 }) {
   const { exit } = useApp();
   const { columns, rows } = useTerminalSize();
@@ -469,6 +472,9 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
     askClaude,
     // Whether this terminal can report the mouse at all (/settings says so).
     mouseAvailable: Boolean(mouse),
+    // The family's folder (cli.jsx's familyDir(); tests a temp one, or none): what Splice did goes into its
+    // activity log (/timeline) only when there is one.
+    familyHome,
     // /update: asks for the latest release now, whatever the daily check last said, and installs it.
     updateNow: () => {
       if (!checkUpdate) return note(`This Splice (${VERSION}) runs from a checkout: git pull updates it.`);
@@ -604,7 +610,10 @@ export function App({ initialPath, reopenLast = false, config: initialConfig, ch
     // `paths` limits it to some files (a file's history: its path then, and the one before a rename).
     showPatch: (c, paths = []) =>
       showAsync(`${c.hash.slice(0, 7)} ${c.subject}${paths.length ? ` · ${paths.at(-1)}` : ''}`, () => commitPatch(dataRef.current.root, c.hash, paths), { diff: true }),
-    showChange: (f) => showAsync(`${f.path} (${f.area})`, () => changeDiff(dataRef.current.root, f), { diff: true }),
+    showChange: (f) => {
+      const owners = ownersLine(ownersOf(dataRef.current.codeowners, f.path).owners);
+      showAsync(`${f.path} (${f.area})${owners ? ` · ${owners}` : ''}`, () => changeDiff(dataRef.current.root, f), { diff: true });
+    },
     // The diff with its review comments, when the host can list them; a diff without them if that fails.
     showPrDiff: (pr) => {
       const host = ctx.host();

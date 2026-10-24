@@ -438,7 +438,7 @@ export function firstBadCommit(out) {
 
 /** `git log` over the whole history (every branch and tag) for a -S or -G search, in LOG_FORMAT. */
 export function searchArgs(mode, query) {
-  return ['log', '--date-order', '--decorate=full', ...DECORATE_REFS, `-${mode}${query}`, `--format=${LOG_FORMAT}`, '--exclude=refs/stash', '--all'];
+  return ['log', '--date-order', '--decorate=full', ...DECORATE_REFS, `-${mode}${query}`, `--format=${LOG_FORMAT}`, '--exclude=refs/stash', '--exclude=refs/notes/*', '--all'];
 }
 
 /** Short relative age: "now", "5m", "3h", "2d", "4mo", "1y". */
@@ -572,7 +572,7 @@ export function filterLogArgs(f, limit = 2000) {
     ...(f.author ? [`--author=${f.author}`, '--regexp-ignore-case'] : []),
     ...(f.since ? [`--since=${f.since}`] : []),
     ...(f.until ? [`--until=${f.until}`] : []),
-    `--format=${LOG_FORMAT}`, '--exclude=refs/stash', '--all',
+    `--format=${LOG_FORMAT}`, '--exclude=refs/stash', '--exclude=refs/notes/*', '--all',
     ...(f.path ? ['--', f.path] : []),
   ];
 }

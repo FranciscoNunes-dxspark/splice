@@ -107,8 +107,8 @@ test('/take: an exception opens blame at its frame, a file at its line, a commit
     // Two: a list, top frame first; ↵ blames the picked one.
     const two = { ...one, frames: [{ file: 'C:\\build\\src\\pay.js', line: 2, method: 'charge' }, { file: '/srv/app/src/orders.js', line: 3, method: 'place' }] };
     await command(app, `take ${encodeContext('exception', two)}`);
-    await until(() => frame().includes('TypeError: x is undefined'), 'the frames');
-    assert.match(frame(), /❯\s+1 src\/pay\.js:2\s+charge/);
+    // The list itself, not its title: "Taking exception TypeError: x is undefined" is already in the log.
+    await until(() => /❯\s+1 src\/pay\.js:2\s+charge/.test(frame()), 'the frames');
     assert.match(frame(), /2 src\/orders\.js:3\s+place/);
     app.stdin.write('\r');
     await until(() => frame().includes('Blame src/pay.js, line 2'), 'blame of the picked frame');

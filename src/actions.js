@@ -1,7 +1,7 @@
 // Every git operation the UI offers, written once. Keys and slash commands both call these.
 // `ctx` is the app's handle: data, exec, confirm, note, prefill, and so on (see App.jsx).
 import { existsSync, realpathSync, statSync } from 'node:fs';
-import { readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { READ_ONLY, blameInput, blamePrompt, changelogPrompt, clip, commitPrompt, lookPrompt, parseCommitMessage, parsePrDraft, parseResolution, parseSplit, prPrompt, resolveInput, resolvePrompt, splitInput, splitPrompt } from './claude.js';
 import { absorbFiles, absorbSummary, absorbText, blameMap, blameTargets, groupPatch, lineRanges, planAbsorb } from './absorb.js';
@@ -54,10 +54,10 @@ import {
 } from './rebase.js';
 import { blobIds, checkCommits, foundCount, foundSummary, parseBatchCheck, parsePushLog, pushCheckText, pushLogArgs, pushRange } from './pushcheck.js';
 import { eachLimited, fetchRepo } from './repos.js';
-import { checkPointers } from './repo.js';
+import { checkPointers, readHooks } from './repo.js';
 import { nextTheme, settingRows, settingSegments } from './settings.js';
 import { forcePushes, forwardInput, planSync, rebasingElsewhere, syncSummary, syncText, updateBranchArgs } from './sync.js';
-import { SIGNING_KEYS, checkGpgKey, explainSigning, needsPinentryCheck, signingConfig } from './signing.js';
+import { SIGNING_KEYS, checkGpgKey, explainSigning, needsPinentryCheck, parseVerify, signingConfig, unsignedOf, verifyArgs, verifyText } from './signing.js';
 import { LFS_MISSING, lfsCommand, lfsError, lfsText, parseLfsFiles, parseLfsLocks, withoutHints } from './lfs.js';
 import { run as runGit } from './git.js';
 import { commitsLine, insideSummary, parseGitlinks, parseInside, submoduleInfo } from './submodules.js';
@@ -65,8 +65,12 @@ import { fit } from './text.js';
 import { futureItems, futureRefspecs, lineInBase, nameList, touchingHunks } from './future.js';
 import { historyArgs, outgoingArgs, parseRiskLog, riskBlobs, riskFiles, riskSummary, riskText, scoreRisk } from './risk.js';
 import { familyOffers } from './siblings.js';
+import { changedOutside, leavingFolders, sparseText } from './sparse.js';
+import { NOTES_REFSPEC, noteArgs, notePrefill, notesArgs, withKeptNote } from './notes.js';
+import { COMMIT_HOOKS, PUSH_HOOKS, hookArgs, hookRows, hookRunArgs } from './githooks.js';
+import { CODEOWNERS_PATHS, changedOwnersText, ownersOfFiles, ownersText, reviewerNames } from './codeowners.js';
 import { TAKES, exceptionFrames, framesInRepo, pathAndLine } from './take.js';
-import { APP_NAMES, TAKEN_BY, contextIn, copiedNote, describeContext, matchFrameFile, notMine, projectAt, shareLine, takeLine } from './family.js';
+import { APP_NAMES, FAMILY, TAKEN_BY, contextIn, copiedNote, describeContext, familyDir, logActivity, matchFrameFile, notMine, projectAt, projectWiring, readActivity, shareLine, takeLine } from './family.js';
 import { DEFAULT_ACCENT, applyTheme, isColour, setAccent, theme } from './theme.js';
 import {
   REFLOG_FORMAT,
@@ -99,6 +103,21 @@ function needRepo(ctx) {
 }
 
 const isInitial = (ctx) => !ctx.data.status.branch.oid;
+
+/**
+ * Adds what Splice just did to the family's activity log (family.js), for /timeline here and in the other
+ * apps, when `r` went through (a task's result, or true). Only with App's familyHome (cli.jsx gives it; most
+ * tests don't), and never anything from a diff: names, counts and where.
+ */
+function activity(ctx, r, text, kind = 'info') {
+  if (!ctx.familyHome || !(r === true || r?.ok) || !ctx.data) return r;
+  logActivity('splice', { text: `${text} (${ctx.data.name})`, kind, project: ctx.data.root }, { dir: ctx.familyHome });
+  return r;
+}
+
+// How many commits a push of `range` sends, for the activity log: one git, only when there's a log to write.
+const pushCount = async (ctx, range) => (ctx.familyHome ? count(ctx, range) : 0);
+const commitsText = (n) => (n ? ` (${n} commit${n === 1 ? '' : 's'})` : '');
 
 // After a merge, rebase or pick stops on conflicts, say what to do next.
 function afterConflicts(ctx) {
@@ -202,15 +221,24 @@ export async function push(ctx, args = []) {
       });
       if (!ok) return;
     }
-    if (!(await beforePush(ctx, pushRange({ upstream: branch.upstream, remote: named })))) return { ok: false };
+    const range = pushRange({ upstream: branch.upstream, remote: named });
+    if (!(await beforePush(ctx, range))) return { ok: false };
+    const extra = await pushQuestion(ctx, range);
+    if (!extra) return { ok: false };
+    const n = await pushCount(ctx, range);
     // Only a branch without an upstream starts tracking the remote it was pushed to.
-    return ctx.exec(['push', ...flags, ...(branch.upstream ? [] : ['-u']), named, branch.head], { label: 'Pushing' });
+    const r = await ctx.exec(['push', ...flags, ...extra, ...(branch.upstream ? [] : ['-u']), named, branch.head], { label: 'Pushing' });
+    return activity(ctx, r, `${flags.includes('--force-with-lease') ? 'force-pushed' : 'pushed'} ${branch.head} to ${named}${commitsText(n)}`, 'push');
   }
   if (!branch.upstream) {
     const remote = remotes.includes('origin') ? 'origin' : remotes[0];
     if (!remote) return ctx.note('This repository has no remote. Add one with: !remote add origin <url>', 'error');
     if (!(await beforePush(ctx, pushRange()))) return { ok: false };
-    return ctx.exec(['push', ...flags, '-u', remote, branch.head], { label: 'Pushing' });
+    const extra = await pushQuestion(ctx, pushRange());
+    if (!extra) return { ok: false };
+    const n = await pushCount(ctx, pushRange());
+    const r = await ctx.exec(['push', ...flags, ...extra, '-u', remote, branch.head], { label: 'Pushing' });
+    return activity(ctx, r, `pushed ${branch.head} to ${remote}, a new branch there${commitsText(n)}`, 'push');
   }
   if (flags.includes('--force-with-lease')) {
     const ok = await ctx.confirm({
@@ -222,7 +250,110 @@ export async function push(ctx, args = []) {
     if (!ok) return;
   }
   if (!(await beforePush(ctx, pushRange({ upstream: branch.upstream })))) return { ok: false };
-  return ctx.exec(['push', ...flags], { label: 'Pushing' });
+  const extra = await pushQuestion(ctx, pushRange({ upstream: branch.upstream }));
+  if (!extra) return { ok: false };
+  const force = flags.includes('--force-with-lease');
+  const n = force ? 0 : branch.ahead;
+  const r = await ctx.exec(['push', ...flags, ...extra], { label: 'Pushing' });
+  return activity(ctx, r, `${force ? 'force-pushed' : 'pushed'} ${branch.head} to ${branch.upstream.split('/')[0]}${commitsText(n)}`, 'push');
+}
+
+// The config a commit and a push look at: the signing settings and core.hooksPath, read with one git for
+// each load of the repository (when something first asks), and the hooks that path leads to.
+const CONFIG_KEYS = SIGNING_KEYS.replace(/\)\$$/, '|core\\.hookspath)$');
+const configRead = new WeakMap();
+function configFor(ctx) {
+  const d = ctx.data;
+  if (!configRead.has(d)) {
+    const raw = ctx.git(['config', '--get-regexp', CONFIG_KEYS]).catch(() => '');
+    const hooksPath = raw.then((r) => /^core\.hookspath (.+)$/m.exec(r)?.[1].trim() ?? '');
+    configRead.set(d, { signing: raw.then(signingConfig), hooks: hooksPath.then((p) => readHooks(d, p)) });
+  }
+  return configRead.get(d);
+}
+const signingFor = (ctx) => configFor(ctx).signing;
+const hooksFor = (ctx) => configFor(ctx).hooks;
+
+/**
+ * Whether to run the hooks `names` guard (a commit's pre-commit and commit-msg, a push's pre-push), when
+ * one is active: resolves to [] to run them, ['--no-verify'] to skip them this once, or null for neither.
+ * `warning` ({ title, detail }) is a question of its own to ask with it (unsigned commits before a push).
+ */
+async function hookQuestion(ctx, names, { verb, title, detail, warning = null } = {}) {
+  const hooks = await hooksFor(ctx);
+  const active = hooks.hooks.filter((h) => names.includes(h.name)).map((h) => h.name);
+  if (!active.length && !warning) return [];
+  if (!active.length) {
+    const ok = await ctx.confirm({ ...warning, options: YES_NO(`Yes, ${verb} anyway`), danger: true });
+    return ok ? [] : null;
+  }
+  const which = `the ${active.join(' and ')} hook${active.length === 1 ? '' : 's'}`;
+  const answer = await ctx.confirm({
+    title: warning?.title ?? title,
+    detail: warning ? `${warning.detail} It runs ${which} first.` : detail ?? `It runs ${which} first (/hooks shows ${active.length === 1 ? 'it' : 'them'}).`,
+    options: [
+      { label: `Yes, ${verb}, running ${which}`, value: 'run' },
+      { label: `Yes, ${verb}, and skip the hooks this once (--no-verify)`, value: 'skip' },
+      { label: 'No', value: false },
+    ],
+    danger: Boolean(warning),
+  });
+  return answer === 'run' ? [] : answer === 'skip' ? ['--no-verify'] : null;
+}
+
+/**
+ * The last question before a push, when there's something to say: with commit.gpgsign or tag.gpgsign on,
+ * which of the commits in `range` aren't signed (or have a bad signature). Resolves to the extra flags for
+ * git push ([] for none), or null when you'd rather not push.
+ */
+async function pushQuestion(ctx, range) {
+  const signing = await signingFor(ctx);
+  let warning = null;
+  if (signing.commits || signing.tags) {
+    let unsigned = [];
+    let total = 0;
+    const r = await ctx.task(
+      'Checking the signatures of the commits to push',
+      async (signal) => {
+        const list = parseVerify(await ctx.git(verifyArgs(range), { signal }));
+        total = list.length;
+        unsigned = unsignedOf(list);
+        return { stdout: '', stderr: '' };
+      },
+      { label: 'Checking signatures', refresh: false, quiet: true, quietError: true },
+    );
+    if (r.error?.cancelled) return null;
+    if (r.ok && unsigned.length) {
+      const setting = signing.commits ? 'commit.gpgsign' : 'tag.gpgsign';
+      const list = unsigned.slice(0, 3).map((c) => `${short(c.hash)} ${c.subject}`).join(' · ');
+      warning = {
+        title: `Push ${unsigned.length === total ? (total === 1 ? 'a commit' : `${total} commits`) : `${unsigned.length} of ${total} commits`} that ${unsigned.length === 1 ? "isn't" : "aren't"} signed?`,
+        detail: `${setting} is on here, but ${list}${unsigned.length > 3 ? ` and ${unsigned.length - 3} more` : ''} ${unsigned.length === 1 ? 'has' : 'have'} no good signature (/verify lists them).`,
+      };
+    }
+  }
+  return hookQuestion(ctx, PUSH_HOOKS, { verb: 'push', title: `Push ${ctx.data.status.branch.head}?`, warning });
+}
+
+/** /verify [range]: each commit's signature in the outgoing commits (those a push would send), or in a range. */
+export async function verify(ctx, text) {
+  if (!needRepo(ctx)) return;
+  const typed = splitArgs(text ?? '');
+  const range = typed.length ? typed : currentPushRange(ctx);
+  const what = typed.length ? typed.join(' ') : 'the commits to push';
+  let list = [];
+  const r = await ctx.task(
+    `git log --format=%G? ${typed.join(' ')}`.trim(),
+    async (signal) => {
+      list = parseVerify(await ctx.git(verifyArgs(range, 1000), { signal }));
+      return { stdout: '', stderr: '' };
+    },
+    { label: 'Checking signatures', refresh: false, quiet: true },
+  );
+  if (!r.ok) return r;
+  if (!list.length) return ctx.note(typed.length ? `No commits in ${what}.` : 'Nothing to push, so nothing to verify. /verify <range> checks any commits (main..feature, HEAD~5..).');
+  const bad = unsignedOf(list).length;
+  ctx.showText(`Signatures: ${bad ? `${bad} not signed or bad` : 'all signed'} (${list.length})`, verifyText(list, what));
 }
 
 /** Both checks before a push: big files and secrets, then the risk score. True to push. */
@@ -432,8 +563,11 @@ export async function commit(ctx, text, { amend = false } = {}) {
   }
   const signing = await readySigning(ctx);
   if (signing === false) return;
+  // With a pre-commit or commit-msg hook: run it, or skip it this once.
+  const verify = await hookQuestion(ctx, COMMIT_HOOKS, { verb: amend ? 'amend' : 'commit', title: amend ? 'Amend the last commit?' : `Commit ${typed.text ? `"${firstLine(typed.text).slice(0, 60)}"` : 'the staged changes'}?` });
+  if (!verify) return;
   const how = file ? ['--cleanup=strip', '-F', file] : typed.text ? ['-m', typed.text] : ['--no-edit'];
-  const r = await ctx.exec(['commit', ...(amend ? ['--amend'] : []), ...how], {
+  const r = await ctx.exec(['commit', ...(amend ? ['--amend'] : []), ...verify, ...how], {
     label: `${signing ? 'Signing and ' : ''}${amend ? 'amending' : 'committing'}`.replace(/^./, (c) => c.toUpperCase()),
   });
   // A message file Splice wrote has done its job.
@@ -496,7 +630,7 @@ export async function editMessage(ctx, { amend = false, message = '' } = {}) {
  * can't be used without typing its passphrase into a terminal, which git doesn't have here (said in a note).
  */
 async function readySigning(ctx) {
-  const cfg = signingConfig(await ctx.git(['config', '--get-regexp', SIGNING_KEYS]).catch(() => ''));
+  const cfg = await signingFor(ctx);
   if (!cfg.commits) return null;
   if (!needsPinentryCheck(cfg)) return cfg;
   try {
@@ -550,7 +684,7 @@ export async function deleteRef(ctx, name) {
     const r = await ctx.exec(['branch', '-d', name], { label: 'Deleting', quietError: true });
     if (r.ok || !/not fully merged/.test(r.error?.message ?? '')) {
       if (!r.ok) ctx.note(r.error.message, 'error');
-      return r;
+      return activity(ctx, r, `deleted the branch ${name}`, 'delete');
     }
     const force = await ctx.confirm({
       title: `${name} has commits that aren't merged anywhere. Delete it anyway?`,
@@ -558,7 +692,7 @@ export async function deleteRef(ctx, name) {
       options: YES_NO('Yes, force-delete'),
       danger: true,
     });
-    if (force) return ctx.exec(['branch', '-D', name], { label: 'Deleting' });
+    if (force) return activity(ctx, await ctx.exec(['branch', '-D', name], { label: 'Deleting' }), `force-deleted the branch ${name}, unmerged`, 'delete');
     return;
   }
   const rb = remote.find((b) => b.name === name);
@@ -570,7 +704,7 @@ export async function deleteRef(ctx, name) {
       options: YES_NO('Yes, delete it on the remote'),
       danger: true,
     });
-    if (ok) return ctx.exec(['push', rb.remote, '--delete', branch], { label: 'Deleting remote branch' });
+    if (ok) return activity(ctx, await ctx.exec(['push', rb.remote, '--delete', branch], { label: 'Deleting remote branch' }), `deleted the branch ${branch} on ${rb.remote}`, 'delete');
     return;
   }
   if (tags.some((t) => t.name === name)) return deleteTag(ctx, name);
@@ -619,7 +753,7 @@ export function pushTag(ctx, text) {
   if (!ctx.data.refs.tags.some((t) => t.name === name)) return ctx.note(`No tag called ${name}.`, 'error');
   const remote = given ?? mainRemote(ctx);
   if (!remote) return ctx.note('This repository has no remote. Add one with: /remote add origin <url>', 'error');
-  return ctx.exec(['push', remote, `refs/tags/${name}`], { label: 'Pushing tag' });
+  return ctx.exec(['push', remote, `refs/tags/${name}`], { label: 'Pushing tag' }).then((r) => activity(ctx, r, `pushed the tag ${name} to ${remote}`, 'push'));
 }
 
 /**
@@ -687,8 +821,11 @@ export async function merge(ctx, ref, { ask = false } = {}) {
     const ok = await ctx.confirm({ title: `Merge ${ref} into ${currentName(ctx)}?`, ...(detail ? { detail } : {}), options: YES_NO('Yes, merge') });
     if (!ok) return;
   }
-  await ctx.exec(['merge', '--no-edit', ref], { label: 'Merging' });
+  const into = currentName(ctx);
+  const r = await ctx.exec(['merge', '--no-edit', ref], { label: 'Merging' });
+  activity(ctx, r, `merged ${ref} into ${into}`, 'merge');
   afterConflicts(ctx);
+  return r;
 }
 
 export async function rebase(ctx, ref) {
@@ -704,8 +841,12 @@ export async function rebase(ctx, ref) {
   });
   if (!ok) return;
   const was = ctx.data.status.branch.oid;
+  const name = currentName(ctx);
   const r = await ctx.exec(['rebase', ref], { label: 'Rebasing' });
-  if (r.ok && !ctx.data.state) afterRewrite(ctx, was);
+  if (r.ok && !ctx.data.state) {
+    afterRewrite(ctx, was);
+    activity(ctx, r, `rebased ${name} onto ${ref}`, 'rebase');
+  }
   afterConflicts(ctx);
 }
 
@@ -796,6 +937,7 @@ export async function sync(ctx) {
   }
   await ctx.reload();
   const result = { moved, failed };
+  activity(ctx, true, `synced: ${moved.length ? `fast-forwarded ${names(moved)}` : 'nothing to fast-forward'}${failed.length ? `, ${failed.length} couldn't move` : ''}`, 'sync');
   ctx.showText('Sync', syncText(plan, result));
   ctx.note(syncSummary(plan, result), failed.length ? 'error' : 'ok');
   const mine = plan.diverged.find((b) => b.current);
@@ -930,6 +1072,7 @@ export async function updateBranch(ctx, text) {
     );
     return r;
   }
+  activity(ctx, r, `rebased ${top ? `the stack under ${top}` : head} onto ${base}`, 'rebase');
   // Back on the branch you were on, also when the rebase couldn't start.
   if (top) {
     const back = await ctx.exec(['switch', head], { label: 'Switching back' });
@@ -947,6 +1090,7 @@ export async function updateBranch(ctx, text) {
     const done = await ctx.exec(p, { label: 'Pushing' });
     if (!done.ok) return done;
   }
+  activity(ctx, true, `force-pushed ${names(pushed.map((p) => p.name))} after rebasing`, 'push');
 }
 
 const OP = { merging: 'merge', rebasing: 'rebase', 'cherry-picking': 'cherry-pick', reverting: 'revert', bisecting: 'bisect' };
@@ -1556,6 +1700,14 @@ async function removeCleanup(ctx, { worktrees, branches, remote }) {
     ...problems,
   ];
   ctx.note([head, ...lines].join('\n'), problems.length || stopped ? 'error' : 'ok');
+  if (done) {
+    const parts = [
+      deleted.length ? `deleted ${deleted.length > 4 ? `${deleted.length} branches` : deleted.join(', ')}` : '',
+      deletedRemote.length ? `deleted on ${deletedRemote[0].remote}: ${deletedRemote.map((b) => b.branch).join(', ')}` : '',
+      removed.size ? `removed ${removed.size} worktree${removed.size === 1 ? '' : 's'}` : '',
+    ].filter(Boolean);
+    activity(ctx, true, `cleaned up: ${parts.join('; ')}`, 'delete');
+  }
   return { deleted, removed: [...removed], problems, stopped };
 }
 
@@ -1739,7 +1891,9 @@ export async function reset(ctx, ref, label = ref) {
       { label: 'Cancel', value: null },
     ],
   });
-  if (mode) return ctx.exec(['reset', `--${mode}`, ref], { label: 'Resetting' });
+  if (!mode) return;
+  const name = currentName(ctx);
+  return activity(ctx, await ctx.exec(['reset', `--${mode}`, ref], { label: 'Resetting' }), `reset ${name} to ${label} (${mode})`, 'reset');
 }
 
 const paths = (f) => ['--', ...(f.orig ? [f.orig] : []), f.path];
@@ -1811,10 +1965,13 @@ export async function discard(ctx, f) {
   if (untracked) {
     await rm(join(ctx.data.root, f.path), { force: true, recursive: true });
     ctx.note(`Deleted ${f.path}`);
+    activity(ctx, true, `discarded the untracked ${f.path}`, 'discard');
     return settleCopy(ctx, copy);
   }
   const args = f.area === 'staged' ? ['restore', '--staged', '--worktree', ...paths(f)] : ['restore', ...paths(f)];
-  return settleCopy(ctx, copy, await ctx.exec(args, { label: 'Discarding', refresh: false }));
+  const r = await ctx.exec(args, { label: 'Discarding', refresh: false });
+  activity(ctx, r, `discarded the changes to ${f.path}`, 'discard');
+  return settleCopy(ctx, copy, r);
 }
 
 /** Puts every file back the way the last commit has it, staged or not. Ignored files stay. */
@@ -1857,6 +2014,7 @@ export async function discardAll(ctx) {
       return r;
     }
   }
+  activity(ctx, r, `discarded the changes to ${gone} file${gone === 1 ? '' : 's'}`, 'discard');
   return settleCopy(ctx, copy, r);
 }
 
@@ -2197,7 +2355,9 @@ export async function applyLines(ctx, f, diffText, picks, { discard = false } = 
     // Applied forwards, the same patch puts back what applying it in reverse takes out.
     const copy = await keepForUndo(ctx, { what: `the discarded ${all ? 'changes' : 'lines'} in ${f.path}`, patch });
     if (copy === false) return;
-    return settleCopy(ctx, copy, await apply(ctx, patch, ['--reverse'], 'Discarding', { refresh: false }));
+    const r = await apply(ctx, patch, ['--reverse'], 'Discarding', { refresh: false });
+    activity(ctx, r, `discarded some ${all ? 'changes' : 'lines'} in ${f.path}`, 'discard');
+    return settleCopy(ctx, copy, r);
   }
   // When every line is picked, the plain file commands also cover what a patch can't (modes, binaries).
   if (f.area === 'staged') return all ? unstage(ctx, f) : apply(ctx, buildPatch(diff, picks, { reverse: true }), ['--cached', '--reverse'], 'Unstaging');
@@ -2253,6 +2413,7 @@ export async function runRebase(ctx, base, rows) {
   if (!ctx.data.state) {
     await cleanup(ctx.data.gitDir);
     if (r.ok) afterRewrite(ctx, was);
+    activity(ctx, r, `rewrote ${rows.length} commit${rows.length === 1 ? '' : 's'} of ${branch.head ?? 'HEAD'} (${planSummary(rows)})`, 'rebase');
   } else if (ctx.data.changes.conflicts.length) afterConflicts(ctx);
   else ctx.note('Stopped for editing. Change what you need, amend (A in Changes), then /continue.');
   return true;
@@ -2900,8 +3061,303 @@ export async function createPr(ctx, text) {
   if (r.ok) {
     ctx.prDraft = null;
     ctx.prsChanged();
+    const id = prIdFromUrl(r.out);
+    if (id != null) await suggestOwners(ctx, host, { id, label: `${host.kind === 'github' ? '#' : '!'}${id}` }, prBase(ctx, target));
   }
   return r;
+}
+
+/**
+ * After a pull request is opened (n and /pr, /draft-pr's /pr, /ship): the CODEOWNERS owners of the files it
+ * changes against `base`, less yourself, offered as its reviewers in a picker, all picked to start with:
+ * space drops or picks one again, ↵ asks the picked ones, esc asks nobody. Nothing when there's no
+ * CODEOWNERS or nobody to ask, and never on Azure DevOps, which has none.
+ */
+async function suggestOwners(ctx, host, pr, base) {
+  const co = ctx.data?.codeowners;
+  if (!co || !host.addReviewers || host.kind === 'azure') return;
+  const files = (await ctx.git(['diff', '--name-only', '-z', `${base}...HEAD`, '--']).catch(() => '')).split('\0').filter(Boolean);
+  const { owners } = ownersOfFiles(co, files);
+  const me = host.me ? await host.me().catch(() => '') : '';
+  const names = reviewerNames(owners.map((o) => o.owner), me);
+  if (!names.length) return;
+  const count = new Map(owners.map((o) => [o.owner.replace(/^@/, ''), o.files.length]));
+  const chosen = new Set(names);
+  const show = (replace, index) =>
+    ctx.showPicker(
+      {
+        title: `Ask the code owners to review ${pr.label}?`,
+        hint: `${chosen.size} picked · space pick or drop · ↵ ask them`,
+        index,
+        owners: true,
+        items: () =>
+          names.map((name) => ({
+            name,
+            segments: [
+              { text: chosen.has(name) ? '✓ ' : '  ', color: theme.add, bold: true },
+              { text: `@${name}`, strong: true },
+              { text: `  owns ${count.get(name)} of its ${files.length} file${files.length === 1 ? '' : 's'}`, color: theme.dim },
+            ],
+          })),
+        onPick: () => {
+          const list = names.filter((n) => chosen.has(n));
+          ctx.closeOverlay();
+          if (!list.length) return ctx.note(`Nobody picked, so nobody was asked to review ${pr.label}.`);
+          return prEdit(ctx, host, pr, `Ask ${list.join(', ')} to review ${pr.label}`, 'Adding reviewers', (signal) => host.addReviewers(pr, list, signal));
+        },
+        keys: {
+          ' ': (it) => {
+            if (chosen.has(it.name)) chosen.delete(it.name);
+            else chosen.add(it.name);
+            show(true, names.indexOf(it.name));
+          },
+        },
+      },
+      { replace },
+    );
+  show(false);
+}
+
+/**
+ * /sparse: alone, whether the working tree is a sparse checkout, in cone mode or not, and its folders.
+ * `set <folder…>` checks out only those folders (asking first, and refusing while a file that would leave
+ * the working tree has uncommitted changes); `add <folder…>` brings folders back (alone: a picker of HEAD's
+ * folders, listed only then); `off` checks out everything again.
+ */
+export async function sparse(ctx, text) {
+  if (!needRepo(ctx)) return;
+  const [how, ...rest] = splitArgs(text ?? '');
+  const state = ctx.data.sparse ?? { on: false, cone: false, folders: [], patterns: [] };
+  if (!how) return ctx.showText(`Sparse checkout: ${state.on ? (state.cone ? 'on, cone mode' : 'on, patterns') : 'off'}`, sparseText(state));
+  const dirs = rest.map((d) => repoPath(ctx.data.root, d)).filter(Boolean);
+  if (dirs.some((d) => d.startsWith('-'))) return ctx.note('Name the folders: /sparse set <folder…>', 'error');
+  if (how === 'off' || how === 'disable') {
+    if (!state.on) return ctx.note('Sparse checkout is off already: every file is checked out.');
+    return ctx.exec(['sparse-checkout', 'disable'], { label: 'Checking out every file' });
+  }
+  if (how === 'add') {
+    if (!state.on) return ctx.note('Sparse checkout is off, so every folder is here already. /sparse set <folder…> turns it on.', 'error');
+    if (!dirs.length) return pickSparseFolder(ctx, state);
+    return ctx.exec(['sparse-checkout', 'add', ...dirs], { label: 'Adding to the sparse checkout' });
+  }
+  if (how !== 'set') return ctx.note('Use: /sparse, /sparse set <folder…>, /sparse add [folder…], /sparse off', 'error');
+  if (!dirs.length) return ctx.prefill('/sparse set ');
+  const cone = !state.on || state.cone;
+  // Files with uncommitted changes that would leave the working tree: git would leave them behind, half
+  // out of the checkout, so Splice refuses first. (Pattern mode can't be worked out here; git warns.)
+  if (cone) {
+    const outside = changedOutside(ctx.data.status.files, dirs);
+    if (outside.length) {
+      const list = outside.slice(0, 5).map((f) => f.path).join(', ');
+      return ctx.note(`Not now: ${outside.length === 1 ? 'a file' : `${outside.length} files`} that would leave the working tree ${outside.length === 1 ? 'has' : 'have'} uncommitted changes (${list}${outside.length > 5 ? ', …' : ''}). Commit, stash or discard ${outside.length === 1 ? 'it' : 'them'} first.`, 'error');
+    }
+  }
+  const leaving = !state.on ? null : cone ? leavingFolders(state.folders, dirs) : state.patterns.filter((p) => !dirs.includes(p));
+  if (!state.on || leaving.length) {
+    const ok = await ctx.confirm({
+      title: state.on ? `Take ${leaving.join(', ')} out of the working tree?` : `Check out only ${dirs.join(', ')}?`,
+      detail: state.on
+        ? `Their files leave the working tree (they stay in git: /sparse add or /sparse off brings them back). Then: ${dirs.join(', ')}.`
+        : 'Every other folder\'s files leave the working tree (they stay in git: /sparse off brings them all back). The files at the top stay.',
+      options: YES_NO('Yes, check out less'),
+      danger: true,
+    });
+    if (!ok) return;
+  }
+  return ctx.exec(['sparse-checkout', 'set', ...dirs], { label: 'Changing the sparse checkout' });
+}
+
+// /sparse add alone: HEAD's folders (git ls-tree -d, read when the picker opens), less those checked out already.
+function pickSparseFolder(ctx, state) {
+  ctx.showPicker({
+    title: 'Add a folder to the sparse checkout',
+    hint: '↵ check it out',
+    empty: 'Every folder is checked out already.',
+    load: async () => {
+      const out = await ctx.git(['ls-tree', '-d', '-r', '-z', '--name-only', 'HEAD']);
+      const have = (d) => state.folders.some((f) => d === f || d.startsWith(`${f}/`));
+      return out
+        .split('\0')
+        .filter((d) => d && !have(d))
+        .map((d) => ({ dir: d, segments: [{ text: `${d}/`, strong: true }] }));
+    },
+    onPick: (it) => {
+      ctx.closeOverlay();
+      return ctx.exec(['sparse-checkout', 'add', it.dir], { label: 'Adding to the sparse checkout' });
+    },
+    keys: { y: (it) => ctx.copy(it.dir) },
+  });
+}
+
+/**
+ * /hooks: the active git hooks (in core.hooksPath, husky's .husky, or .git/hooks) and the hook frameworks
+ * the repository is set up for (lefthook, pre-commit). ↵ shows a hook's script (or the framework's file),
+ * r runs a hook now, y copies its path.
+ */
+export async function showHooks(ctx, { replace = false, index } = {}) {
+  if (!needRepo(ctx)) return;
+  const hooks = await hooksFor(ctx);
+  const rows = hookRows(hooks);
+  const nameW = Math.max(10, ...rows.map((r) => r.label.length));
+  ctx.showPicker(
+    {
+      title: `Git hooks in ${relative(ctx.data.root, hooks.dir).split(sep).join('/') || hooks.dir}`,
+      hint: '↵ show · r run it now · y copy its path',
+      empty: 'No hooks are active here: none in the hooks folder (only .sample files, if any), and no lefthook or pre-commit config.',
+      index,
+      items: rows.map((r) => ({
+        ...r,
+        segments: [
+          { text: fit(r.label, nameW), strong: true, color: r.framework ? theme.hunk : undefined },
+          { text: `  ${r.detail}`, color: theme.dim },
+        ],
+      })),
+      onPick: (it) => {
+        const file = it.hook ? it.hook.path : join(ctx.data.root, it.framework.file);
+        return ctx.showAsync(it.hook ? `${it.hook.name}: ${it.hook.shown}` : it.framework.file, () => readFile(file, 'utf8'));
+      },
+      keys: {
+        r: (it) => (it.hook ? runHook(ctx, it.hook) : ctx.note(`${it.framework.name} runs through the hooks it installs: r on one of those.`, 'error')),
+        y: (it) => ctx.copy(it.hook ? it.hook.path : join(ctx.data.root, it.framework.file)),
+      },
+    },
+    { replace },
+  );
+}
+
+/**
+ * r in /hooks: runs a hook now, as git would (git hook run, or the file itself on an older git), with the
+ * arguments it would get: a file holding HEAD's message for the commit message hooks, the remote for
+ * pre-push. Without a terminal and with nothing on stdin, so a hook can't wait for input. Its output opens
+ * in the viewer, whether it passed or failed.
+ */
+export async function runHook(ctx, hook) {
+  if (!needRepo(ctx)) return;
+  const messageFile = join(ctx.data.gitDir, 'splice-hook-message.txt');
+  if (['commit-msg', 'prepare-commit-msg', 'applypatch-msg'].includes(hook.name)) {
+    const last = await ctx.git(['log', '-1', '--format=%B']).catch(() => '');
+    await writeFile(messageFile, last || 'A message to check\n');
+  }
+  const remote = ctx.data.remotes.includes('origin') ? 'origin' : ctx.data.remotes[0];
+  const args = hookArgs(hook.name, { messageFile, remote, url: remote && ctx.data.remoteUrls[remote] });
+  const version = await gitVersion(ctx.data.root);
+  let output = '';
+  let failed = null;
+  const r = await ctx.task(
+    `Run the ${hook.name} hook`,
+    async (signal) => {
+      try {
+        const out = await runGit(ctx.data.root, hookRunArgs(hook.name, hook.file, version, args), { signal, input: '', tree: true });
+        output = [out.stdout.trimEnd(), out.stderr.trimEnd()].filter(Boolean).join('\n');
+      } catch (e) {
+        if (e.cancelled) throw e;
+        failed = e;
+        output = e.message;
+        throw new Error(`It failed${e.code != null ? ` (exit code ${e.code})` : ''}: the viewer has its output.`);
+      }
+      return { stdout: 'It passed.', stderr: '' };
+    },
+    { label: `Running ${hook.name}`, refresh: false },
+  );
+  await rm(messageFile, { force: true }).catch(() => {});
+  if (!r.ok && !failed) return r;
+  ctx.showText(`${hook.name}: ${failed ? 'failed' : 'passed'}`, `${output || '(no output)'}\n\n${failed ? 'It exited with an error' : 'It passed'}: git hook run ${hook.name}${args.length ? ` -- ${args.join(' ')}` : ''}`);
+  return failed ? { ok: false, error: failed } : r;
+}
+
+// Old notes /note replaced or removed, newest last, so /note --undo can put the latest back.
+const keptNotesFile = (ctx) => join(ctx.data.gitDir, 'splice-undo', 'notes.json');
+async function readKeptNotes(ctx) {
+  try {
+    const list = JSON.parse(await readFile(keptNotesFile(ctx), 'utf8'));
+    return Array.isArray(list) ? list : [];
+  } catch {
+    return [];
+  }
+}
+async function writeKeptNotes(ctx, list) {
+  await mkdir(dirname(keptNotesFile(ctx)), { recursive: true });
+  await writeFile(keptNotesFile(ctx), JSON.stringify(list));
+}
+
+/**
+ * /note [text] on the commit under the graph's cursor (HEAD when the graph isn't on screen): with text, adds
+ * its note or replaces it (\n for a line break); alone, puts the note it has in the prompt to edit; -d
+ * removes it, after asking. A note replaced or removed is kept first (in .git/splice-undo), and
+ * /note --undo puts the last one back.
+ */
+export async function note(ctx, text) {
+  if (!needRepo(ctx)) return;
+  const args = noteArgs(text);
+  if (args.undo) return undoNote(ctx);
+  const c = ctx.selectedCommit;
+  const hash = c?.hash ?? (await ctx.git(['rev-parse', '--verify', '-q', 'HEAD']).catch(() => '')).trim();
+  if (!hash) return ctx.note('There are no commits yet to put a note on.', 'error');
+  const label = `${short(hash)}${c?.subject ? ` ${c.subject}` : ''}`;
+  const old = (await ctx.git(['notes', 'show', hash]).catch(() => '')).trimEnd();
+  if (!args.text && !args.remove) return ctx.prefill(old ? notePrefill(old) : '/note ');
+  if (args.remove) {
+    if (!old) return ctx.note(`${label} has no note.`, 'error');
+    const ok = await ctx.confirm({
+      title: `Remove the note on ${label}?`,
+      detail: `"${firstLine(old).slice(0, 80)}"${old.includes('\n') ? ' …' : ''}. Splice keeps a copy: /note --undo puts it back.`,
+      options: YES_NO('Yes, remove it'),
+      danger: true,
+    });
+    if (!ok) return;
+  }
+  if (old) await writeKeptNotes(ctx, withKeptNote(await readKeptNotes(ctx), { hash, note: old, at: Date.now() }));
+  const r = args.remove
+    ? await ctx.exec(['notes', 'remove', hash], { label: 'Removing the note' })
+    : await ctx.exec(['notes', 'add', '-f', '-m', args.text, hash], { label: old ? 'Changing the note' : 'Adding a note' });
+  if (r.ok && old) ctx.note(`The old note on ${short(hash)} is kept: /note --undo puts it back.`);
+  return r;
+}
+
+/** /note --undo: the note /note last replaced or removed, back on its commit. */
+async function undoNote(ctx) {
+  const list = await readKeptNotes(ctx);
+  const last = list.at(-1);
+  if (!last) return ctx.note('No note to put back: /note keeps one when it replaces or removes it.', 'error');
+  const now = (await ctx.git(['notes', 'show', last.hash]).catch(() => '')).trimEnd();
+  const ok = await ctx.confirm({
+    title: `Put back the note on ${short(last.hash)}?`,
+    detail: `"${firstLine(last.note).slice(0, 80)}"${now ? `, in place of "${firstLine(now).slice(0, 40)}"` : ''}`,
+    options: YES_NO('Yes, put it back'),
+  });
+  if (!ok) return;
+  const r = await ctx.exec(['notes', 'add', '-f', '-m', last.note, last.hash], { label: 'Putting the note back' });
+  if (r.ok) await writeKeptNotes(ctx, list.slice(0, -1));
+  return r;
+}
+
+/** /notes push [remote]: pushes every notes ref (refs/notes/*) to the remote (the upstream's, else origin). */
+export function notes(ctx, text) {
+  if (!needRepo(ctx)) return;
+  const args = notesArgs(text);
+  if (args.error) return ctx.note(args.error, 'error');
+  const { remotes, status } = ctx.data;
+  const remote = args.remote ?? (status.branch.upstream ? status.branch.upstream.split('/')[0] : remotes.includes('origin') ? 'origin' : remotes[0]);
+  if (!remote) return ctx.note('This repository has no remote to push the notes to.', 'error');
+  if (!remotes.includes(remote)) return ctx.note(`No remote called ${remote}.`, 'error');
+  return ctx.exec(['push', remote, NOTES_REFSPEC], { label: 'Pushing the notes' }).then((r) => activity(ctx, r, `pushed the notes to ${remote}`, 'push'));
+}
+
+/** /owners [path]: who owns a path, by CODEOWNERS (and which line says so); alone, the owners of the changed files. */
+export function owners(ctx, text) {
+  if (!needRepo(ctx)) return;
+  const co = ctx.data.codeowners;
+  if (!co) return ctx.note(`This repository has no CODEOWNERS file (Splice looks in ${CODEOWNERS_PATHS.join(', ')}).`, 'error');
+  const problems = co.problems.length ? `\n\nLeft out of ${co.file}:\n${co.problems.map((p) => `  ${p}`).join('\n')}` : '';
+  const typed = (text ?? '').trim();
+  if (typed) {
+    const path = repoPath(ctx.data.root, typed);
+    return ctx.showText(`Owners of ${path}`, ownersText(co.file, co, path) + problems);
+  }
+  const { staged, unstaged, conflicts } = ctx.data.changes;
+  const paths = [...new Set([...conflicts, ...staged, ...unstaged].map((f) => f.path))];
+  if (!paths.length) return ctx.note('Nothing has changed. /owners <path> says who owns any path.');
+  ctx.showText('Owners of the changed files', changedOwnersText(co.file, co, paths) + problems);
 }
 
 // Claude, through the Claude Code CLI: App passes `ctx.askClaude` (claude.js's `ask`; tests pass a stub).
@@ -3427,7 +3883,10 @@ export async function ship(ctx, text) {
   const opts = { method, deleteBranch: true, auto: true };
   const r = await hostTask(ctx, mergeTitle(host, pr, opts), (signal) => host.merge(pr, opts, signal), { label: 'Setting auto-merge', refresh: false });
   ctx.prsChanged();
+  activity(ctx, r, `shipped ${branch.head}: ${pr.label} into ${pr.target}, merging once its checks and reviews pass`, 'ship');
   if (r.ok) ctx.note(`Shipped ${branch.head}: ${pr.label} merges into ${pr.target} once its checks and reviews pass.\nOnce it has, Splice offers to finish: switch to ${pr.target}, pull it and delete ${branch.head}.`, 'ok');
+  // A pull request /ship opened: its code owners, as reviewers.
+  if (!open) await suggestOwners(ctx, host, pr, base);
   return r;
 }
 
@@ -3623,6 +4082,64 @@ export function family(ctx) {
     items: offers.map((o) => ({ ...o, segments: [{ text: APP_NAMES[o.app].padEnd(appW), color: theme.accent, bold: true }, { text: `  ${o.line}` }, { text: `  ${o.what}`, color: theme.dim }] })),
     onPick: (o) => copyFor(ctx, o.app, o.line),
   });
+}
+
+/**
+ * /timeline: what the family's apps did (family.js's activity log: pushes, writes to a database, restarts),
+ * newest first, from all five. p shows this repository's alone (with what names no project), or everything
+ * again; ↵ shows an entry whole.
+ */
+export function timeline(ctx, { mine = false, replace = false } = {}) {
+  const dir = ctx.familyHome ?? familyDir();
+  const root = ctx.data?.root;
+  const list = readActivity({ dir, project: mine && root ? root : undefined, limit: 500 });
+  const appW = Math.max(...FAMILY.map((a) => APP_NAMES[a].length));
+  const where = (e) => (e.project ? basename(e.project) : '');
+  ctx.showPicker(
+    {
+      title: `Timeline${mine && root ? ` of ${ctx.data.name}` : ': the family'} (${list.length})`,
+      hint: `↵ the whole entry${root ? ` · p ${mine ? 'every project' : `${ctx.data.name} only`}` : ''}`,
+      empty: mine ? `Nothing logged for ${ctx.data?.name} yet. p shows every project.` : 'Nothing logged yet: the apps add what they do (a push, a restart, a write to a database) as they do it.',
+      timeline: true,
+      items: list.map((e) => ({
+        entry: e,
+        segments: [
+          { text: fit(relTime(Math.floor(e.at / 1000)), 4, 'right'), color: theme.dim },
+          { text: `  ${fit(APP_NAMES[e.app] ?? e.app, appW)}`, color: e.app === 'splice' ? theme.accent : theme.hunk, bold: true },
+          { text: `  ${e.text}` },
+          ...(!mine && where(e) ? [{ text: `  ${where(e)}`, color: theme.dim }] : []),
+        ],
+      })),
+      onPick: ({ entry: e }) =>
+        ctx.showText(
+          `${APP_NAMES[e.app] ?? e.app}, ${new Date(e.at).toLocaleString()}`,
+          [e.text, '', `App: ${APP_NAMES[e.app] ?? e.app}`, `When: ${new Date(e.at).toLocaleString()}`, `Kind: ${e.kind ?? 'info'}`, ...(e.project ? [`Project: ${e.project}`] : [])].join('\n'),
+        ),
+      keys: { y: ({ entry: e }) => ctx.copy(e.text, 'the entry') },
+      actions: root ? { p: () => timeline(ctx, { mine: !mine, replace: true }) } : {},
+    },
+    { replace },
+  );
+}
+
+/** /wiring: what this repository points at (family.js's projectWiring: hosts, ports, connection strings, secrets masked), by file. */
+export function wiring(ctx) {
+  if (!needRepo(ctx)) return;
+  const found = projectWiring(ctx.data.root);
+  if (!found.length) return ctx.note(`Nothing in ${ctx.data.name} points anywhere Splice can see: no addresses, hosts, ports or connection strings in appsettings*.json, .env files or http-client.env.json.`);
+  const bySource = new Map();
+  for (const w of found) {
+    if (!bySource.has(w.source)) bySource.set(w.source, []);
+    bySource.get(w.source).push(w);
+  }
+  const lines = [];
+  for (const [source, list] of bySource) {
+    const keyW = Math.min(40, Math.max(...list.map((w) => w.key.length)));
+    if (lines.length) lines.push('');
+    lines.push(source);
+    for (const w of list) lines.push(`  ${fit(w.key, keyW)}  ${w.value}`);
+  }
+  ctx.showText(`What ${ctx.data.name} points at (${found.length})`, lines.join('\n'));
 }
 
 // The siblings that take a kind of context, Splice aside (it takes some itself).

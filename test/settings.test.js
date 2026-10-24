@@ -13,7 +13,7 @@ import { App } from '../src/ui/App.jsx';
 test('the settings list: values, plurals, and what ↵ does', () => {
   const rows = settingRows({ recent: [], roots: [], history: [] }, { file: '/home/me/.splice/config.json' });
   const by = Object.fromEntries(rows.map((r) => [r.id, r]));
-  assert.deepEqual(rows.map((r) => r.id), ['accent', 'theme', 'mouse', 'checkForUpdates', 'autoUpdate', 'stashUntracked', 'notify', 'sideBySide', 'checkBeforePush', 'riskBeforePush', 'familyMoods', 'cleanupKeep', 'roots', 'recent', 'history', 'file']);
+  assert.deepEqual(rows.map((r) => r.id), ['accent', 'theme', 'mouse', 'checkForUpdates', 'autoUpdate', 'stashUntracked', 'notify', 'sideBySide', 'showSignatures', 'checkBeforePush', 'riskBeforePush', 'familyMoods', 'cleanupKeep', 'roots', 'recent', 'history', 'file']);
   assert.equal(by.accent.value, `${DEFAULT_ACCENT} (default)`);
   // The theme: auto unless set, saying which it is here; ↵ goes round dark, light, auto.
   assert.equal(by.theme.value, 'auto (dark here)');
@@ -35,6 +35,8 @@ test('the settings list: values, plurals, and what ↵ does', () => {
   assert.equal(by.sideBySide.value, 'off');
   assert.equal(by.sideBySide.off, true);
   assert.equal(settingRows({ sideBySide: true }).find((r) => r.id === 'sideBySide').value, 'on');
+  assert.equal(by.showSignatures.value, 'off', 'checking signatures runs gpg, so it waits to be asked for');
+  assert.equal(by.showSignatures.off, true);
   assert.equal(by.roots.value, 'none');
   assert.equal(by.cleanupKeep.value, 'none');
   assert.equal(settingRows({ cleanupKeep: ['develop', 'release/*'] }).find((r) => r.id === 'cleanupKeep').value, 'develop, release/*');
@@ -146,6 +148,10 @@ test('settings change in place, are saved as they change, and the accent repaint
     await until(() => /Side-by-side diffs\s+on/.test(frame()) && saved().sideBySide === true, 'side by side on, saved');
     app.stdin.write('\r');
     await until(() => /Side-by-side diffs\s+off/.test(frame()) && saved().sideBySide === false, 'side by side off again, saved');
+    // Signatures in the commit pane: off by default, ↵ turns it on.
+    await down('Show signatures');
+    app.stdin.write('\r');
+    await until(() => /Show signatures\s+on/.test(frame()) && saved().showSignatures === true, 'signatures on, saved');
     // Checking the commits before a push: on by default, ↵ turns it off.
     await down('Check before pushing');
     app.stdin.write('\r');

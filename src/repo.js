@@ -1,11 +1,16 @@
 import { existsSync, realpathSync, statSync } from 'node:fs';
 import { open, readFile, readdir, stat } from 'node:fs/promises';
+import { homedir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import { samePath } from './config.js';
 import { git } from './git.js';
 import { layoutGraph } from './graph.js';
 import { theme } from './theme.js';
 import { isPointer, lfsMissing, parseLfsFiles, usesLfs } from './lfs.js';
+import { CODEOWNERS_PATHS, parseCodeowners } from './codeowners.js';
+import { SIGNATURE_FORMAT, parseSignature } from './signing.js';
+import { sparseState } from './sparse.js';
+import { FRAMEWORK_FILES, KNOWN_HOOKS, frameworkIn, isHuskyRunner, lefthookHooks, preCommitHooks } from './githooks.js';
 import {
   COMMIT_FORMAT,
   DECORATE_REFS,
@@ -331,7 +336,8 @@ function readLog(repo, graphLimit) {
   // An empty repository has nothing to log, which git reports as an error.
   return git(repo.root, [
     'log', '--date-order', '--decorate=full', ...DECORATE_REFS, `-n${graphLimit}`,
-    `--format=${LOG_FORMAT}`, '--exclude=refs/stash', '--all',
+    // Not the stash, nor the notes' own history of commits (refs/notes/*), which are no branch's.
+    `--format=${LOG_FORMAT}`, '--exclude=refs/stash', '--exclude=refs/notes/*', '--all',
   ]).catch(() => '');
 }
 
@@ -407,19 +413,112 @@ async function readSubmodules(repo, state) {
   return raw;
 }
 
+// CODEOWNERS, by worktree: read again only when the file (the first of CODEOWNERS_PATHS there is) changes,
+// which a stat of each place says, so a load costs no git and no read when it's as it was.
+const ownerFiles = new Map();
+
+/** The repository's CODEOWNERS ({ file, ...parseCodeowners }), or null when it has none. */
+export async function readCodeowners(root) {
+  for (const file of CODEOWNERS_PATHS) {
+    const full = join(root, ...file.split('/'));
+    const stamp = await fileStamp(full);
+    if (!stamp) continue;
+    const kept = ownerFiles.get(root);
+    if (kept?.file === file && kept.stamp === stamp) return kept.value;
+    let text;
+    try {
+      text = await readFile(full, 'utf8');
+    } catch {
+      // Gone between the stat and the read (an editor saving it by renaming): the next place, or next time.
+      continue;
+    }
+    const value = { file, ...parseCodeowners(text) };
+    ownerFiles.delete(root);
+    ownerFiles.set(root, { file, stamp, value });
+    if (ownerFiles.size > 4) ownerFiles.delete(ownerFiles.keys().next().value);
+    return value;
+  }
+  return null;
+}
+
+/**
+ * The sparse checkout (sparse.js's sparseState), from the files git keeps it in: the config, the worktree's
+ * own config.worktree, and info/sparse-checkout. Three small reads, no git.
+ */
+export async function readSparse(repo) {
+  const read = (p) => readFile(p, 'utf8').catch(() => '');
+  const [config, worktreeConfig, file] = await Promise.all([
+    read(join(repo.commonDir, 'config')),
+    read(join(repo.gitDir, 'config.worktree')),
+    read(join(repo.gitDir, 'info', 'sparse-checkout')),
+  ]);
+  return sparseState({ config, worktreeConfig, file });
+}
+
+/**
+ * The active hooks: { dir, hooks: [{ name, file (what runs), shown (the script to show, relative to the
+ * root when inside it), framework }], frameworks: [{ name, file, hooks }] }. `hooksPath` is core.hooksPath
+ * (relative to the working tree's top, ~ for your home), else the hooks folder in .git. A hook is a file
+ * named for one git runs, executable (Windows has no such bit: git runs any file there), not a .sample;
+ * with husky 9's .husky/_ runners, only those with a script of yours in .husky. Files only, no git.
+ */
+export async function readHooks(repo, hooksPath = '') {
+  const dir = hooksPath ? resolve(repo.root, hooksPath.replace(/^~(?=$|[\\/])/, homedir())) : join(repo.commonDir, 'hooks');
+  const husky = isHuskyRunner(dir);
+  const rel = (p) => {
+    const r = p.startsWith(repo.root) ? p.slice(repo.root.length + 1) : p;
+    return r.split('\\').join('/');
+  };
+  const head = async (p) => {
+    let fh;
+    try {
+      fh = await open(p, 'r');
+      const { buffer, bytesRead } = await fh.read({ buffer: Buffer.alloc(600), position: 0 });
+      return buffer.subarray(0, bytesRead).toString('utf8');
+    } catch {
+      return '';
+    } finally {
+      await fh?.close();
+    }
+  };
+  const names = new Set(await readdir(dir).catch(() => []));
+  const found = await Promise.all(
+    KNOWN_HOOKS.filter((n) => names.has(n)).map(async (name) => {
+      const file = join(dir, name);
+      const info = await stat(file).catch(() => null);
+      if (!info?.isFile() || (process.platform !== 'win32' && !(info.mode & 0o111))) return null;
+      const shown = husky ? join(dir, '..', name) : file;
+      if (husky && !(await stat(shown).catch(() => null))?.isFile()) return null;
+      return { name, file, shown: rel(shown), path: shown, framework: husky ? 'husky' : frameworkIn(await head(file)) };
+    }),
+  );
+  const frameworks = [];
+  for (const [name, files] of Object.entries(FRAMEWORK_FILES)) {
+    for (const f of files) {
+      const text = await readFile(join(repo.root, f), 'utf8').catch(() => null);
+      if (text == null) continue;
+      frameworks.push({ name, file: f, hooks: name === 'lefthook' ? lefthookHooks(text) : preCommitHooks(text) });
+      break;
+    }
+  }
+  return { dir, hooks: found.filter(Boolean), frameworks };
+}
+
 /**
  * Loads everything the views show. `freshRefs` lists the refs even when their files look as they were: polling
  * listed them again and found a change.
  */
 export async function loadRepo(repo, { graphLimit = 400, freshRefs = false } = {}) {
   const state = readState(repo, REF_FORMAT, refsSignature, { allRefs: true, listRefs: () => loadRefs(repo, freshRefs), fresh: freshRefs });
-  const [{ snap, log, kept }, remotes, subs, lfs] = await Promise.all([
+  const [{ snap, log, kept }, remotes, subs, lfs, codeowners, sparse] = await Promise.all([
     readStateAndLog(repo, graphLimit, state),
     readRemotes(repo),
     // Only a repository with submodules pays for asking about them. Not part of the signature: what
     // polling needs to notice (a submodule's commit or changes) is in the status already.
     existsSync(join(repo.root, '.gitmodules')) ? readSubmodules(repo, state) : '',
     readLfs(repo, state),
+    readCodeowners(repo.root),
+    readSparse(repo),
   ]);
   const status = parseStatus(snap.status);
   const refs = parseRefs(snap.refs);
@@ -452,8 +551,22 @@ export async function loadRepo(repo, { graphLimit = 400, freshRefs = false } = {
     worktrees,
     submodules: parseSubmodules(subs, status.files),
     lfs: lfs && { ...lfs, files: await checkPointers(repo.root, lfs.files, status.files.map((f) => f.path)) },
+    // Not part of the signature either: editing CODEOWNERS shows in the status, which reloads.
+    codeowners,
+    // The notes' ref (refs/notes/commits), from the listing of every ref: a commit's note is read with its
+    // detail, again only when this moves.
+    notesRef: notesRef(snap.allRefs),
+    // The sparse checkout, which the header shows. Not part of the signature (polling reads nothing new):
+    // /sparse reloads after it, and a change made outside shows at the next load.
+    sparse,
     ...remotes,
   };
+}
+
+/** refs/notes/commits's commit in a REF_FORMAT listing of every ref, or null when there are no notes. */
+export function notesRef(listing) {
+  const line = (listing ?? '').split('\n').find((l) => l.startsWith('refs/notes/commits\x1f'));
+  return line ? line.split('\x1f')[1] : null;
 }
 
 /** `git remote -v` → the remote names, and each one's fetch URL. */
@@ -468,24 +581,39 @@ export function parseRemotes(raw) {
 
 /** Full message, author and changed files of one commit. */
 export async function commitDetail(root, hash) {
-  // One git: the header ends at \x1e, and the file list follows it.
-  // %G? and %GS: whether it's signed, and by whom (checking a signature never asks for a passphrase).
-  const out = await git(root, ['show', '--format=%H%x1f%an%x1f%ae%x1f%at%x1f%cn%x1f%P%x1f%G?%x1f%GS%x1f%B%x1e', '--name-status', '-M', '--diff-merges=first-parent', hash]);
+  // One git: the header ends at \x1e, and the file list follows it. Not its signature: %G? has git check
+  // it, running gpg or ssh-keygen, which commitSignature does only when asked to (Show signatures).
+  // Its note (refs/notes/commits) comes with it, at no cost: %N, ended by \x1d.
+  const out = await git(root, ['show', '--format=%H%x1f%an%x1f%ae%x1f%at%x1f%cn%x1f%P%x1f%N%x1d%B%x1e', '--name-status', '-M', '--diff-merges=first-parent', hash]);
   const end = out.indexOf('\x1e');
   const files = out.slice(end + 1);
-  const [full, author, email, time, committer, parents, signature, signer, ...body] = out.slice(0, end).split('\x1f');
+  const [full, author, email, time, committer, parents, ...rest] = out.slice(0, end).split('\x1f');
+  const text = rest.join('\x1f');
+  const cut = text.indexOf('\x1d');
+  const body = [cut < 0 ? text : text.slice(cut + 1)];
   return {
+    note: cut < 0 ? '' : text.slice(0, cut).trim(),
     hash: full,
     author,
     email,
     time: Number(time),
     committer,
     parents: parents ? parents.split(' ') : [],
-    signature: signature || 'N',
-    signer: signer ?? '',
     message: body.join('\x1f').trimEnd(),
     files: parseNameStatus(files),
   };
+}
+
+// Signatures checked, by commit: a commit's never changes (only the keys you have to check it with).
+const signatures = new Map();
+
+/** One commit's signature ({ code, signer, key }, signing.js's parseSignature): one git, kept by hash. */
+export async function commitSignature(root, hash) {
+  if (signatures.has(hash)) return signatures.get(hash);
+  const sig = parseSignature(await git(root, ['log', '-1', `--format=${SIGNATURE_FORMAT}`, hash, '--']));
+  signatures.set(hash, sig);
+  if (signatures.size > 500) signatures.delete(signatures.keys().next().value);
+  return sig;
 }
 
 /** The patch a commit introduces (first parent for merges), with its header; only to `paths`, if given. */

@@ -9,7 +9,7 @@ export const HELP = [
       ['1-7 / tab', 'Graph, Changes, Branches, Worktrees, Stash, PRs, Repos (shift+tab goes back)'],
       ['/ or :', 'Command prompt (slash commands, with completion)'],
       ['!', 'Run any git command, e.g.  !log --stat -5'],
-      ['f  p  P', 'Fetch all · Pull · Push (sets the upstream the first time; asks first if the commits have a file over 50 MB or what looks like a secret, or their risk scores high: /risk)'],
+      ['f  p  P', 'Fetch all · Pull · Push (sets the upstream the first time; asks first if the commits have a file over 50 MB or what looks like a secret, or their risk scores high: /risk; with commit.gpgsign or tag.gpgsign on, if some aren\'t signed)'],
       ['r', 'Refresh'],
       ['z', 'Undo the last commit, amend, merge, rebase, reset, switch or discard (asks first)'],
       ['esc', 'Cancel the running command, or clear the activity lines'],
@@ -21,6 +21,8 @@ export const HELP = [
       ['drop', 'Drop a folder on the terminal to open it (a folder of repositories lists them in Repos)\ndrop a file of the open repository to see its history'],
       ['paste', 'A command line (/…) or what another app copied (family:v1:…), pasted in a view, goes into the prompt to run with ↵'],
       ['/family  /take', 'What this repository offers the other apps (Bosun, Hail, Trawl), ↵ copies the line · /take <what one copied>: an exception, a file or a commit'],
+      ['/timeline', 'What the family\'s apps did, newest first (Splice\'s pushes, merges, rebases, resets, discards, deletions, /ship, /sync; the others\' restarts, writes, deploys): p this repository only, or all again · ↵ an entry whole'],
+      ['/wiring', 'What this repository points at (addresses, hosts, ports, connection strings in appsettings*.json, .env and http-client env files), by file, secrets masked'],
     ],
   },
   {
@@ -35,7 +37,7 @@ export const HELP = [
   },
   {
     title: 'Graph',
-    about: '● a commit · ○ a merge, < or > pointing into it from the branch it brings in · ◌ your uncommitted changes; the commit pane says whether the commit is signed, and if the signature is good',
+    about: '● a commit · ○ a merge, < or > pointing into it from the branch it brings in · ◌ your uncommitted changes; with Show signatures on (/settings), the commit pane says whether the commit is signed: Good, Bad, Unknown, None or Expired, with the signer',
     views: ['graph'],
     rows: [
       ['↵', 'Full diff of the commit'],
@@ -47,6 +49,8 @@ export const HELP = [
       ['X', 'Reset the current branch to it (soft, mixed or hard)'],
       ['i', 'Interactive rebase from it (included) up to HEAD'],
       ['B', 'Bisect: mark it bad or good (or skip); git checks out the commit halfway, to try\nWith both marked, /bisect run <command> tests each commit for you: exit 0 good, 125 skip, 1-127 bad'],
+      ['/note [text]', 'The commit\'s note (git notes, shown in the commit pane): text adds or replaces it (\\n for a new line); alone, the note goes in the prompt to edit; /note -d removes it (asks); /note --undo puts back the last one replaced or removed; /notes push [remote] pushes them'],
+      ['/verify [range]', 'The signatures of the commits a push would send (or of a range, main..feature): the unsigned and bad ones first'],
       ['Y', 'Copy /take commit for Sonar, which finds the deployments that carry it'],
       ['w', 'Run it: a worktree of its own at the commit (../<repo>-at-<hash>, /run-at [commit]), and Bosun\'s /move to it copied, to paste there; /cleanup removes it'],
       ['e  R', 'Claude explains it · Claude reviews it (R on the working tree: your changes)'],
@@ -92,6 +96,7 @@ export const HELP = [
       ['O  T', 'On a conflict: take ours · take theirs, for the whole file'],
       ['C', 'On a conflict: Claude proposes the resolved file, shown as a diff; asks before writing it'],
       ['H  B', 'The file\'s history · Blame it (who last changed each line)'],
+      ['owners', 'The selected file\'s owners (CODEOWNERS) show beside it and in its diff\'s title; /owners [path] says who owns a path and which line says so, alone the owners of your changed files'],
       ['L', 'Git LFS: lock the file on the LFS server, or unlock it if it\'s locked by you (/lfs locks lists them); files LFS keeps say LFS, or LFS pointer when only the pointer is here (/lfs pull downloads them)'],
       ['↵  →  l', 'Step into the diff to stage hunks or single lines (on a conflict: into its conflict blocks)'],
       ['w', 'The diff side by side, old and new in two columns, or back in one (a window 156 columns wide or more; remembered)'],
@@ -138,6 +143,26 @@ export const HELP = [
     ],
   },
   {
+    title: 'Sparse checkout',
+    about: 'only some folders in the working tree; the header says sparse while it\'s on',
+    rows: [
+      ['/sparse', 'Whether it\'s on, in cone mode or with patterns, and the folders checked out'],
+      ['/sparse set <folder…>', 'Check out only those folders (and the files at the top); asks first, and refuses while a file that would leave has uncommitted changes'],
+      ['/sparse add [folder…]', 'Bring folders back; alone, pick one from the commit\'s folders'],
+      ['/sparse off', 'Check out every file again'],
+    ],
+  },
+  {
+    title: 'Git hooks',
+    about: '/hooks: the active hooks (core.hooksPath, husky\'s .husky, .git/hooks) and the frameworks set up (lefthook, pre-commit)',
+    rows: [
+      ['↵', 'Show the hook\'s script (or the framework\'s config)'],
+      ['r', 'Run it now, as git would, with no terminal and nothing to type into; its output opens in the viewer'],
+      ['y', 'Copy its path'],
+      'With a pre-commit or commit-msg hook, committing asks first: run the hooks, or skip them this once (--no-verify); with a pre-push hook, so does pushing.',
+    ],
+  },
+  {
     title: 'Git LFS locks',
     about: '/lfs locks: the files locked on the LFS server, by whom and since when',
     rows: [
@@ -156,7 +181,7 @@ export const HELP = [
   },
   {
     title: 'Blame',
-    about: 'B, /blame <path>[:<line>]: the working-tree file, so new lines show as not committed yet',
+    about: 'B, /blame <path>[:<line>]: the working-tree file, so new lines show as not committed yet; the title names the file\'s owners (CODEOWNERS)',
     rows: [
       ['↵', 'Diff of the commit that last changed the line (esc comes back here)'],
       ['H', 'The file\'s history'],
@@ -228,7 +253,7 @@ export const HELP = [
       ['D', 'Draft, or ready for review (/draft, /ready)'],
       ['E  B', 'Retitle it (/title <text>) · Edit its description: written to a file for your own editor, then /body --file <it> sends it (/body <text> sends text, \\n for a new line)'],
       ['o', 'Open in the browser'],
-      ['n', 'New pull request from the current branch (/pr <title> [--into <branch>] [--draft])'],
+      ['n', 'New pull request from the current branch (/pr <title> [--into <branch>] [--draft]); once it\'s open, the code owners of its files are offered as reviewers, all picked: space drops one, ↵ asks them, esc nobody'],
       ['W', 'Claude drafts one: title into the prompt, description offered when you open it'],
       ['e  R', 'Claude explains it · Claude reviews it'],
       { heading: 'From the prompt', about: 'on the current branch, or a pull request by its number' },

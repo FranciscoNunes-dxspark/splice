@@ -855,6 +855,8 @@ function github(root, remote) {
     kind: 'github',
     name: 'GitHub',
     signIn: 'gh auth login',
+    // Your login, for leaving yourself out of the reviewers CODEOWNERS suggests.
+    me: whoami,
     async list() {
       const [login, list] = await Promise.all([
         whoami(),
@@ -1146,6 +1148,7 @@ function gitlab(root, remote, remoteName) {
   return {
     kind: 'gitlab',
     name: 'GitLab',
+    me: whoami,
     signIn: remote.host === 'gitlab.com' ? 'glab auth login' : `glab auth login --hostname ${remote.host}`,
     async list() {
       const [user, list] = await Promise.all([whoami().catch(() => ''), openMrs()]);
