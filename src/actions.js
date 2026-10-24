@@ -54,7 +54,7 @@ import {
 } from './rebase.js';
 import { blobIds, checkCommits, foundCount, foundSummary, parseBatchCheck, parsePushLog, pushCheckText, pushLogArgs, pushRange } from './pushcheck.js';
 import { eachLimited, fetchRepo } from './repos.js';
-import { checkPointers } from './repo.js';
+import { checkPointers, readHooks } from './repo.js';
 import { nextTheme, settingRows, settingSegments } from './settings.js';
 import { forcePushes, forwardInput, planSync, rebasingElsewhere, syncSummary, syncText, updateBranchArgs } from './sync.js';
 import { SIGNING_KEYS, checkGpgKey, explainSigning, needsPinentryCheck, parseVerify, signingConfig, unsignedOf, verifyArgs, verifyText } from './signing.js';
@@ -66,6 +66,7 @@ import { futureItems, futureRefspecs, lineInBase, nameList, touchingHunks } from
 import { historyArgs, outgoingArgs, parseRiskLog, riskBlobs, riskFiles, riskSummary, riskText, scoreRisk } from './risk.js';
 import { familyOffers } from './siblings.js';
 import { changedOutside, leavingFolders, sparseText } from './sparse.js';
+import { COMMIT_HOOKS, PUSH_HOOKS, hookArgs, hookRows, hookRunArgs } from './githooks.js';
 import { CODEOWNERS_PATHS, changedOwnersText, ownersOfFiles, ownersText, reviewerNames } from './codeowners.js';
 import { TAKES, exceptionFrames, framesInRepo, pathAndLine } from './take.js';
 import { APP_NAMES, TAKEN_BY, contextIn, copiedNote, describeContext, matchFrameFile, notMine, projectAt, shareLine, takeLine } from './family.js';
@@ -234,12 +235,47 @@ export async function push(ctx, args = []) {
   return ctx.exec(['push', ...flags, ...extra], { label: 'Pushing' });
 }
 
-// The signing settings (signing.js's signingConfig), read with one git for each load of the repository.
-const signingRead = new WeakMap();
-function signingFor(ctx) {
+// The config a commit and a push look at: the signing settings and core.hooksPath, read with one git for
+// each load of the repository (when something first asks), and the hooks that path leads to.
+const CONFIG_KEYS = SIGNING_KEYS.replace(/\)\$$/, '|core\\.hookspath)$');
+const configRead = new WeakMap();
+function configFor(ctx) {
   const d = ctx.data;
-  if (!signingRead.has(d)) signingRead.set(d, ctx.git(['config', '--get-regexp', SIGNING_KEYS]).catch(() => '').then(signingConfig));
-  return signingRead.get(d);
+  if (!configRead.has(d)) {
+    const raw = ctx.git(['config', '--get-regexp', CONFIG_KEYS]).catch(() => '');
+    const hooksPath = raw.then((r) => /^core\.hookspath (.+)$/m.exec(r)?.[1].trim() ?? '');
+    configRead.set(d, { signing: raw.then(signingConfig), hooks: hooksPath.then((p) => readHooks(d, p)) });
+  }
+  return configRead.get(d);
+}
+const signingFor = (ctx) => configFor(ctx).signing;
+const hooksFor = (ctx) => configFor(ctx).hooks;
+
+/**
+ * Whether to run the hooks `names` guard (a commit's pre-commit and commit-msg, a push's pre-push), when
+ * one is active: resolves to [] to run them, ['--no-verify'] to skip them this once, or null for neither.
+ * `warning` ({ title, detail }) is a question of its own to ask with it (unsigned commits before a push).
+ */
+async function hookQuestion(ctx, names, { verb, title, detail, warning = null } = {}) {
+  const hooks = await hooksFor(ctx);
+  const active = hooks.hooks.filter((h) => names.includes(h.name)).map((h) => h.name);
+  if (!active.length && !warning) return [];
+  if (!active.length) {
+    const ok = await ctx.confirm({ ...warning, options: YES_NO(`Yes, ${verb} anyway`), danger: true });
+    return ok ? [] : null;
+  }
+  const which = `the ${active.join(' and ')} hook${active.length === 1 ? '' : 's'}`;
+  const answer = await ctx.confirm({
+    title: warning?.title ?? title,
+    detail: warning ? `${warning.detail} It runs ${which} first.` : detail ?? `It runs ${which} first (/hooks shows ${active.length === 1 ? 'it' : 'them'}).`,
+    options: [
+      { label: `Yes, ${verb}, running ${which}`, value: 'run' },
+      { label: `Yes, ${verb}, and skip the hooks this once (--no-verify)`, value: 'skip' },
+      { label: 'No', value: false },
+    ],
+    danger: Boolean(warning),
+  });
+  return answer === 'run' ? [] : answer === 'skip' ? ['--no-verify'] : null;
 }
 
 /**
@@ -249,30 +285,31 @@ function signingFor(ctx) {
  */
 async function pushQuestion(ctx, range) {
   const signing = await signingFor(ctx);
-  if (!signing.commits && !signing.tags) return [];
-  let unsigned = [];
-  let total = 0;
-  const r = await ctx.task(
-    'Checking the signatures of the commits to push',
-    async (signal) => {
-      const list = parseVerify(await ctx.git(verifyArgs(range), { signal }));
-      total = list.length;
-      unsigned = unsignedOf(list);
-      return { stdout: '', stderr: '' };
-    },
-    { label: 'Checking signatures', refresh: false, quiet: true, quietError: true },
-  );
-  if (r.error?.cancelled) return null;
-  if (!r.ok || !unsigned.length) return [];
-  const setting = signing.commits ? 'commit.gpgsign' : 'tag.gpgsign';
-  const list = unsigned.slice(0, 3).map((c) => `${short(c.hash)} ${c.subject}`).join(' · ');
-  const ok = await ctx.confirm({
-    title: `Push ${unsigned.length === total ? (total === 1 ? 'a commit' : `${total} commits`) : `${unsigned.length} of ${total} commits`} that ${unsigned.length === 1 ? "isn't" : "aren't"} signed?`,
-    detail: `${setting} is on here, but ${list}${unsigned.length > 3 ? ` and ${unsigned.length - 3} more` : ''} ${unsigned.length === 1 ? 'has' : 'have'} no good signature (/verify lists them).`,
-    options: YES_NO('Yes, push anyway'),
-    danger: true,
-  });
-  return ok ? [] : null;
+  let warning = null;
+  if (signing.commits || signing.tags) {
+    let unsigned = [];
+    let total = 0;
+    const r = await ctx.task(
+      'Checking the signatures of the commits to push',
+      async (signal) => {
+        const list = parseVerify(await ctx.git(verifyArgs(range), { signal }));
+        total = list.length;
+        unsigned = unsignedOf(list);
+        return { stdout: '', stderr: '' };
+      },
+      { label: 'Checking signatures', refresh: false, quiet: true, quietError: true },
+    );
+    if (r.error?.cancelled) return null;
+    if (r.ok && unsigned.length) {
+      const setting = signing.commits ? 'commit.gpgsign' : 'tag.gpgsign';
+      const list = unsigned.slice(0, 3).map((c) => `${short(c.hash)} ${c.subject}`).join(' · ');
+      warning = {
+        title: `Push ${unsigned.length === total ? (total === 1 ? 'a commit' : `${total} commits`) : `${unsigned.length} of ${total} commits`} that ${unsigned.length === 1 ? "isn't" : "aren't"} signed?`,
+        detail: `${setting} is on here, but ${list}${unsigned.length > 3 ? ` and ${unsigned.length - 3} more` : ''} ${unsigned.length === 1 ? 'has' : 'have'} no good signature (/verify lists them).`,
+      };
+    }
+  }
+  return hookQuestion(ctx, PUSH_HOOKS, { verb: 'push', title: `Push ${ctx.data.status.branch.head}?`, warning });
 }
 
 /** /verify [range]: each commit's signature in the outgoing commits (those a push would send), or in a range. */
@@ -503,8 +540,11 @@ export async function commit(ctx, text, { amend = false } = {}) {
   }
   const signing = await readySigning(ctx);
   if (signing === false) return;
+  // With a pre-commit or commit-msg hook: run it, or skip it this once.
+  const verify = await hookQuestion(ctx, COMMIT_HOOKS, { verb: amend ? 'amend' : 'commit', title: amend ? 'Amend the last commit?' : `Commit ${typed.text ? `"${firstLine(typed.text).slice(0, 60)}"` : 'the staged changes'}?` });
+  if (!verify) return;
   const how = file ? ['--cleanup=strip', '-F', file] : typed.text ? ['-m', typed.text] : ['--no-edit'];
-  const r = await ctx.exec(['commit', ...(amend ? ['--amend'] : []), ...how], {
+  const r = await ctx.exec(['commit', ...(amend ? ['--amend'] : []), ...verify, ...how], {
     label: `${signing ? 'Signing and ' : ''}${amend ? 'amending' : 'committing'}`.replace(/^./, (c) => c.toUpperCase()),
   });
   // A message file Splice wrote has done its job.
@@ -3097,6 +3137,82 @@ function pickSparseFolder(ctx, state) {
     },
     keys: { y: (it) => ctx.copy(it.dir) },
   });
+}
+
+/**
+ * /hooks: the active git hooks (in core.hooksPath, husky's .husky, or .git/hooks) and the hook frameworks
+ * the repository is set up for (lefthook, pre-commit). ↵ shows a hook's script (or the framework's file),
+ * r runs a hook now, y copies its path.
+ */
+export async function showHooks(ctx, { replace = false, index } = {}) {
+  if (!needRepo(ctx)) return;
+  const hooks = await hooksFor(ctx);
+  const rows = hookRows(hooks);
+  const nameW = Math.max(10, ...rows.map((r) => r.label.length));
+  ctx.showPicker(
+    {
+      title: `Git hooks in ${relative(ctx.data.root, hooks.dir).split(sep).join('/') || hooks.dir}`,
+      hint: '↵ show · r run it now · y copy its path',
+      empty: 'No hooks are active here: none in the hooks folder (only .sample files, if any), and no lefthook or pre-commit config.',
+      index,
+      items: rows.map((r) => ({
+        ...r,
+        segments: [
+          { text: fit(r.label, nameW), strong: true, color: r.framework ? theme.hunk : undefined },
+          { text: `  ${r.detail}`, color: theme.dim },
+        ],
+      })),
+      onPick: (it) => {
+        const file = it.hook ? it.hook.path : join(ctx.data.root, it.framework.file);
+        return ctx.showAsync(it.hook ? `${it.hook.name}: ${it.hook.shown}` : it.framework.file, () => readFile(file, 'utf8'));
+      },
+      keys: {
+        r: (it) => (it.hook ? runHook(ctx, it.hook) : ctx.note(`${it.framework.name} runs through the hooks it installs: r on one of those.`, 'error')),
+        y: (it) => ctx.copy(it.hook ? it.hook.path : join(ctx.data.root, it.framework.file)),
+      },
+    },
+    { replace },
+  );
+}
+
+/**
+ * r in /hooks: runs a hook now, as git would (git hook run, or the file itself on an older git), with the
+ * arguments it would get: a file holding HEAD's message for the commit message hooks, the remote for
+ * pre-push. Without a terminal and with nothing on stdin, so a hook can't wait for input. Its output opens
+ * in the viewer, whether it passed or failed.
+ */
+export async function runHook(ctx, hook) {
+  if (!needRepo(ctx)) return;
+  const messageFile = join(ctx.data.gitDir, 'splice-hook-message.txt');
+  if (['commit-msg', 'prepare-commit-msg', 'applypatch-msg'].includes(hook.name)) {
+    const last = await ctx.git(['log', '-1', '--format=%B']).catch(() => '');
+    await writeFile(messageFile, last || 'A message to check\n');
+  }
+  const remote = ctx.data.remotes.includes('origin') ? 'origin' : ctx.data.remotes[0];
+  const args = hookArgs(hook.name, { messageFile, remote, url: remote && ctx.data.remoteUrls[remote] });
+  const version = await gitVersion(ctx.data.root);
+  let output = '';
+  let failed = null;
+  const r = await ctx.task(
+    `Run the ${hook.name} hook`,
+    async (signal) => {
+      try {
+        const out = await runGit(ctx.data.root, hookRunArgs(hook.name, hook.file, version, args), { signal, input: '', tree: true });
+        output = [out.stdout.trimEnd(), out.stderr.trimEnd()].filter(Boolean).join('\n');
+      } catch (e) {
+        if (e.cancelled) throw e;
+        failed = e;
+        output = e.message;
+        throw new Error(`It failed${e.code != null ? ` (exit code ${e.code})` : ''}: the viewer has its output.`);
+      }
+      return { stdout: 'It passed.', stderr: '' };
+    },
+    { label: `Running ${hook.name}`, refresh: false },
+  );
+  await rm(messageFile, { force: true }).catch(() => {});
+  if (!r.ok && !failed) return r;
+  ctx.showText(`${hook.name}: ${failed ? 'failed' : 'passed'}`, `${output || '(no output)'}\n\n${failed ? 'It exited with an error' : 'It passed'}: git hook run ${hook.name}${args.length ? ` -- ${args.join(' ')}` : ''}`);
+  return failed ? { ok: false, error: failed } : r;
 }
 
 /** /owners [path]: who owns a path, by CODEOWNERS (and which line says so); alone, the owners of the changed files. */

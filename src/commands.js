@@ -92,6 +92,7 @@ export const COMMANDS = [
   { name: 'blame', args: '<path>[:<line>]', desc: 'Who last changed each line of a file (from that line, given one)', complete: 'files', run: (ctx, s) => a.blame(ctx, s) },
   { name: 'owners', args: '[path]', desc: 'Who owns a path by CODEOWNERS, and which line says so; alone, the owners of your changed files', complete: 'files', run: (ctx, s) => a.owners(ctx, s) },
   { name: 'future', args: '[<path>:<line>]', desc: "The open pull requests whose changes touch a line (none given: the line under the cursor of the blame open, or the last one shown; F in blame)", complete: 'files', run: (ctx, s) => a.future(ctx, s) },
+  { name: 'hooks', desc: 'The active git hooks (core.hooksPath, husky, .git/hooks) and hook frameworks (lefthook, pre-commit): ↵ shows one, r runs it now', run: (ctx) => a.showHooks(ctx) },
   { name: 'family', desc: 'What this repository offers the other apps (Bosun, Hail, Trawl): ↵ copies the command to paste into one', run: (ctx) => a.family(ctx) },
   { name: 'take', args: '<context>', desc: 'What another app copied for Splice: an exception or a file opens blame at its line, a commit its diff', run: (ctx, s) => a.take(ctx, s) },
   {

@@ -150,6 +150,16 @@ export const HELP = [
     ],
   },
   {
+    title: 'Git hooks',
+    about: '/hooks: the active hooks (core.hooksPath, husky\'s .husky, .git/hooks) and the frameworks set up (lefthook, pre-commit)',
+    rows: [
+      ['↵', 'Show the hook\'s script (or the framework\'s config)'],
+      ['r', 'Run it now, as git would, with no terminal and nothing to type into; its output opens in the viewer'],
+      ['y', 'Copy its path'],
+      'With a pre-commit or commit-msg hook, committing asks first: run the hooks, or skip them this once (--no-verify); with a pre-push hook, so does pushing.',
+    ],
+  },
+  {
     title: 'Git LFS locks',
     about: '/lfs locks: the files locked on the LFS server, by whom and since when',
     rows: [

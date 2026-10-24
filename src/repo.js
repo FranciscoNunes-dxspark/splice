@@ -1,5 +1,6 @@
 import { existsSync, realpathSync, statSync } from 'node:fs';
 import { open, readFile, readdir, stat } from 'node:fs/promises';
+import { homedir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import { samePath } from './config.js';
 import { git } from './git.js';
@@ -9,6 +10,7 @@ import { isPointer, lfsMissing, parseLfsFiles, usesLfs } from './lfs.js';
 import { CODEOWNERS_PATHS, parseCodeowners } from './codeowners.js';
 import { SIGNATURE_FORMAT, parseSignature } from './signing.js';
 import { sparseState } from './sparse.js';
+import { FRAMEWORK_FILES, KNOWN_HOOKS, frameworkIn, isHuskyRunner, lefthookHooks, preCommitHooks } from './githooks.js';
 import {
   COMMIT_FORMAT,
   DECORATE_REFS,
@@ -450,6 +452,55 @@ export async function readSparse(repo) {
     read(join(repo.gitDir, 'info', 'sparse-checkout')),
   ]);
   return sparseState({ config, worktreeConfig, file });
+}
+
+/**
+ * The active hooks: { dir, hooks: [{ name, file (what runs), shown (the script to show, relative to the
+ * root when inside it), framework }], frameworks: [{ name, file, hooks }] }. `hooksPath` is core.hooksPath
+ * (relative to the working tree's top, ~ for your home), else the hooks folder in .git. A hook is a file
+ * named for one git runs, executable (Windows has no such bit: git runs any file there), not a .sample;
+ * with husky 9's .husky/_ runners, only those with a script of yours in .husky. Files only, no git.
+ */
+export async function readHooks(repo, hooksPath = '') {
+  const dir = hooksPath ? resolve(repo.root, hooksPath.replace(/^~(?=$|[\\/])/, homedir())) : join(repo.commonDir, 'hooks');
+  const husky = isHuskyRunner(dir);
+  const rel = (p) => {
+    const r = p.startsWith(repo.root) ? p.slice(repo.root.length + 1) : p;
+    return r.split('\\').join('/');
+  };
+  const head = async (p) => {
+    let fh;
+    try {
+      fh = await open(p, 'r');
+      const { buffer, bytesRead } = await fh.read({ buffer: Buffer.alloc(600), position: 0 });
+      return buffer.subarray(0, bytesRead).toString('utf8');
+    } catch {
+      return '';
+    } finally {
+      await fh?.close();
+    }
+  };
+  const names = new Set(await readdir(dir).catch(() => []));
+  const found = await Promise.all(
+    KNOWN_HOOKS.filter((n) => names.has(n)).map(async (name) => {
+      const file = join(dir, name);
+      const info = await stat(file).catch(() => null);
+      if (!info?.isFile() || (process.platform !== 'win32' && !(info.mode & 0o111))) return null;
+      const shown = husky ? join(dir, '..', name) : file;
+      if (husky && !(await stat(shown).catch(() => null))?.isFile()) return null;
+      return { name, file, shown: rel(shown), path: shown, framework: husky ? 'husky' : frameworkIn(await head(file)) };
+    }),
+  );
+  const frameworks = [];
+  for (const [name, files] of Object.entries(FRAMEWORK_FILES)) {
+    for (const f of files) {
+      const text = await readFile(join(repo.root, f), 'utf8').catch(() => null);
+      if (text == null) continue;
+      frameworks.push({ name, file: f, hooks: name === 'lefthook' ? lefthookHooks(text) : preCommitHooks(text) });
+      break;
+    }
+  }
+  return { dir, hooks: found.filter(Boolean), frameworks };
 }
 
 /**
