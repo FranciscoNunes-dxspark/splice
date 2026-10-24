@@ -127,12 +127,14 @@ test('Splice logs what it did for the family; /timeline shows it all or this rep
 
     // Another app's entries: one in another project, one naming none.
     logActivity('bosun', { text: 'restarted api', kind: 'restart', project: join(base, 'elsewhere') }, { dir: home });
+    logActivity('hail', { text: 'ran a load test', kind: 'load' }, { dir: home, now: Date.now() - 2 * 3600_000 });
     logActivity('trawl', { text: 'ran an UPDATE on orders (3 rows)', kind: 'write' }, { dir: home });
 
     await command(app, 'timeline');
     await until(() => frame().includes('Timeline: the family') && frame().includes('restarted api'), 'the timeline');
-    assert.match(frame(), /❯ +\S+ +Trawl +ran an UPDATE on orders \(3 rows\)/, 'newest first');
+    assert.match(frame(), /❯ +now +Trawl +ran an UPDATE on orders \(3 rows\)/, 'newest first, and just now');
     assert.match(frame(), /Bosun +restarted api +elsewhere/);
+    assert.match(frame(), / 2h +Hail +ran a load test/, 'an older entry says how long ago');
     assert.match(frame(), /Splice +pushed the tag v1 to origin \(shop\)/);
     app.stdin.write('p');
     await until(() => frame().includes('Timeline of shop'), 'this repository only');
